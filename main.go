@@ -45,6 +45,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "netstat:", err)
 			os.Exit(2)
 		}
+	case "xargs":
+		if err := xargsCmd(args); err != nil {
+			fmt.Fprintln(os.Stderr, "xargs:", err)
+			os.Exit(2)
+		}
 	case "--help", "-h", "help":
 		usage()
 	case "--version", "version", "-v":
@@ -68,6 +73,7 @@ func usage() {
 	fmt.Println("  top      Live process viewer")
 	fmt.Println("  iostat   Show block device I/O stats (Linux cgroup/blkio)")
 	fmt.Println("  netstat  Show network conn status")
+	fmt.Println("  xargs    Build and execute command lines from stdin")
 	fmt.Println("  version  Print program version (-v, --version)")
 	fmt.Println()
 	fmt.Println("Flags differ from BusyBox; this is a best-effort minimal implementation.")
