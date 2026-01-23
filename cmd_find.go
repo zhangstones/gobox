@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -309,13 +310,16 @@ func matchTime(info fs.FileInfo, timeSpec string, timeType string) bool {
 
 	var fileTime time.Time
 	if timeType == "atime" {
-		// Try to get access time (Sys() contains platform-specific info)
-		// On most Unix systems, this is available via stat
+		// Get access time from platform-specific stat info
 		stat := info.Sys()
 		if stat != nil {
-			// This is platform-specific, we'll use ModTime as fallback
-			// A more complete implementation would parse platform-specific atime
-			fileTime = info.ModTime()
+			// On Unix systems, extract atime from stat structure
+			if st, ok := stat.(*syscall.Stat_t); ok {
+				fileTime = time.Unix(st.Atim.Sec, st.Atim.Nsec)
+			} else {
+				// Fallback to mtime if unable to extract atime
+				fileTime = info.ModTime()
+			}
 		} else {
 			return false
 		}
