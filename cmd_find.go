@@ -39,6 +39,14 @@ func findCmd(args []string) error {
 		return err
 	}
 
+	if fsFlags.NArg() > 0 {
+		for _, arg := range fsFlags.Args() {
+			if strings.HasPrefix(arg, "-") {
+				return fmt.Errorf("unexpected option %q found after flags", arg)
+			}
+		}
+	}
+
 	paths := fsFlags.Args()
 	if len(paths) == 0 {
 		paths = []string{"."}
