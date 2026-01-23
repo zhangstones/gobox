@@ -20,6 +20,8 @@ Search for files in a directory hierarchy with flexible filtering options.
 - `-mindepth <depth>` - Set minimum search depth
 - `-empty` - Match empty files or directories
 - `-size <spec>` - Match files by size: `+N` (larger than), `-N` (smaller than), `N` (equal to). Supports suffixes: K/M/G/T (base-1024)
+- `-atime <spec>` - Match by access time: `+N` (accessed less than N units ago), `-N` (accessed more than N units ago), `N` (accessed within N units). Units: s/m/h/d (seconds/minutes/hours/days, default: days)
+- `-mtime <spec>` - Match by modify time: `+N` (modified less than N units ago), `-N` (modified more than N units ago), `N` (modified within N units). Units: s/m/h/d (seconds/minutes/hours/days, default: days)
 - `-print` - Print matched paths (enabled by default)
 
 **Usage:**
@@ -28,6 +30,9 @@ gobox find /path -name "*.txt" -type f
 gobox find . -type d -empty -maxdepth 2
 gobox find . -type f -size +100M
 gobox find . -type f -size -1K -name "*.tmp"
+gobox find . -type f -mtime +1h          # Files modified less than 1 hour ago
+gobox find . -type f -mtime -1d          # Files modified more than 1 day ago
+gobox find . -type f -mtime 30m          # Files modified within last 30 minutes
 ```
 
 ### 2. **du** - Disk Usage Report

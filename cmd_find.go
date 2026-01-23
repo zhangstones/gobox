@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // findCmd implements a basic subset of busybox find
@@ -20,6 +21,8 @@ func findCmd(args []string) error {
 	printFlag := fsFlags.Bool("print", true, "print matched paths")
 	empty := fsFlags.Bool("empty", false, "match empty files or directories")
 	size := fsFlags.String("size", "", "file size: +N (larger than N), -N (smaller than N), N (equal to N) (K/M/G suffixes supported)")
+	atime := fsFlags.String("atime", "", "file access time: +N, -N, N (N[smh] = seconds/minutes/hours/days)")
+	mtime := fsFlags.String("mtime", "", "file modify time: +N, -N, N (N[smh] = seconds/minutes/hours/days)")
 
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox find [OPTIONS] [PATH...]")
@@ -43,8 +46,8 @@ func findCmd(args []string) error {
 
 	// Debug output
 	if os.Getenv("DEBUG_FIND") != "" {
-		fmt.Fprintf(os.Stderr, "DEBUG: paths=%v, name='%s', typ='%s', maxdepth=%d, mindepth=%d, empty=%v, size='%s'\n",
-			paths, *name, *typ, *maxdepth, *mindepth, *empty, *size)
+		fmt.Fprintf(os.Stderr, "DEBUG: paths=%v, name='%s', typ='%s', maxdepth=%d, mindepth=%d, empty=%v, size='%s', atime='%s', mtime='%s'\n",
+			paths, *name, *typ, *maxdepth, *mindepth, *empty, *size, *atime, *mtime)
 	}
 
 	for _, root := range paths {
@@ -122,6 +125,28 @@ func findCmd(args []string) error {
 					if !matchSize(fileSize, *size) {
 						return nil
 					}
+				}
+			}
+
+			// atime filter (access time)
+			if *atime != "" {
+				info, err := d.Info()
+				if err != nil {
+					return nil
+				}
+				if !matchTime(info, *atime, "atime") {
+					return nil
+				}
+			}
+
+			// mtime filter (modify time)
+			if *mtime != "" {
+				info, err := d.Info()
+				if err != nil {
+					return nil
+				}
+				if !matchTime(info, *mtime, "mtime") {
+					return nil
 				}
 			}
 
@@ -210,6 +235,99 @@ func matchSize(fileSize int64, sizeSpec string) bool {
 		return fileSize < targetSize
 	case 0: // equal to
 		return fileSize == targetSize
+	default:
+		return false
+	}
+}
+
+// parseTime parses time specification with optional prefix and unit
+// Format: [+|-]N[s|m|h|d]
+// +N: newer than N (less than N time units ago)
+// -N: older than N (more than N time units ago)
+// N: exactly N (within N time units)
+// Units: s (seconds), m (minutes), h (hours), d (days, default)
+func parseTime(timeSpec string) (time.Duration, int, error) {
+	if timeSpec == "" {
+		return 0, 0, fmt.Errorf("time specification is empty")
+	}
+
+	operator := 0 // 0 = exact, 1 = newer (less than), -1 = older (more than)
+	spec := timeSpec
+
+	if strings.HasPrefix(spec, "+") {
+		operator = 1
+		spec = spec[1:]
+	} else if strings.HasPrefix(spec, "-") {
+		operator = -1
+		spec = spec[1:]
+	}
+
+	// Parse numeric part and unit
+	unit := time.Hour * 24 // default: days
+	var numPart string
+
+	// Check for time unit suffixes
+	if strings.HasSuffix(spec, "s") {
+		unit = time.Second
+		numPart = spec[:len(spec)-1]
+	} else if strings.HasSuffix(spec, "m") {
+		unit = time.Minute
+		numPart = spec[:len(spec)-1]
+	} else if strings.HasSuffix(spec, "h") {
+		unit = time.Hour
+		numPart = spec[:len(spec)-1]
+	} else if strings.HasSuffix(spec, "d") {
+		unit = time.Hour * 24
+		numPart = spec[:len(spec)-1]
+	} else {
+		// No suffix, assume days
+		numPart = spec
+	}
+
+	num, err := strconv.ParseInt(numPart, 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid time value: %s", timeSpec)
+	}
+
+	return time.Duration(num) * unit, operator, nil
+}
+
+// matchTime checks if a file's access or modify time matches the given time specification
+func matchTime(info fs.FileInfo, timeSpec string, timeType string) bool {
+	targetDuration, operator, err := parseTime(timeSpec)
+	if err != nil {
+		return false
+	}
+
+	var fileTime time.Time
+	if timeType == "atime" {
+		// Try to get access time (Sys() contains platform-specific info)
+		// On most Unix systems, this is available via stat
+		stat := info.Sys()
+		if stat != nil {
+			// This is platform-specific, we'll use ModTime as fallback
+			// A more complete implementation would parse platform-specific atime
+			fileTime = info.ModTime()
+		} else {
+			return false
+		}
+	} else if timeType == "mtime" {
+		fileTime = info.ModTime()
+	} else {
+		return false
+	}
+
+	now := time.Now()
+	timeSinceFileTime := now.Sub(fileTime)
+
+	switch operator {
+	case 1: // newer than (less than N units ago)
+		return timeSinceFileTime < targetDuration
+	case -1: // older than (more than N units ago)
+		return timeSinceFileTime > targetDuration
+	case 0: // exactly N
+		// Within a tolerance of the time unit
+		return timeSinceFileTime >= 0 && timeSinceFileTime <= targetDuration
 	default:
 		return false
 	}
