@@ -19,12 +19,15 @@ Search for files in a directory hierarchy with flexible filtering options.
 - `-maxdepth <depth>` - Limit search depth
 - `-mindepth <depth>` - Set minimum search depth
 - `-empty` - Match empty files or directories
+- `-size <spec>` - Match files by size: `+N` (larger than), `-N` (smaller than), `N` (equal to). Supports suffixes: K/M/G/T (base-1024)
 - `-print` - Print matched paths (enabled by default)
 
 **Usage:**
 ```bash
 gobox find /path -name "*.txt" -type f
 gobox find . -type d -empty -maxdepth 2
+gobox find . -type f -size +100M
+gobox find . -type f -size -1K -name "*.tmp"
 ```
 
 ### 2. **du** - Disk Usage Report
