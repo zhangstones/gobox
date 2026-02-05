@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -60,21 +61,8 @@ func xargsCmd(args []string) error {
 	}
 
 	// Read input
-	var inputs []string
-	scanner := bufio.NewScanner(os.Stdin)
-	if *delimiter != "\n" {
-		scanner = bufio.NewScanner(os.Stdin)
-		scanner.Split(makeDelimiterSplitFunc(*delimiter))
-	}
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
-			inputs = append(inputs, line)
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
+	inputs, err := parseXargsInputs(os.Stdin, *delimiter)
+	if err != nil {
 		return err
 	}
 
@@ -103,6 +91,29 @@ func xargsCmd(args []string) error {
 		// Append mode: append inputs to command
 		return executeAppendMode(cmdArgs, inputs, *numArgs, *verbose, *maxProcs)
 	}
+}
+
+func parseXargsInputs(r io.Reader, delimiter string) ([]string, error) {
+	var inputs []string
+	scanner := bufio.NewScanner(r)
+	if delimiter != "\n" {
+		scanner.Split(makeDelimiterSplitFunc(delimiter))
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if delimiter == "\n" {
+			line = strings.TrimSpace(line)
+		}
+		if line != "" {
+			inputs = append(inputs, line)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return inputs, nil
 }
 
 // executeReplaceMode replaces the placeholder with inputs

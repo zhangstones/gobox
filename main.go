@@ -72,7 +72,7 @@ func usage() {
 	fmt.Println("  ps       List processes")
 	fmt.Println("  top      Live process viewer")
 	fmt.Println("  iostat   Show block device I/O stats (Linux cgroup/blkio)")
-	fmt.Println("  netstat  Show network conn status")
+	fmt.Println("  netstat  Show network connection status")
 	fmt.Println("  xargs    Build and execute command lines from stdin")
 	fmt.Println("  version  Print program version (-v, --version)")
 	fmt.Println()
