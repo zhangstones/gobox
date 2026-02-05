@@ -22,7 +22,7 @@ func netstatCmd(args []string) error {
 	sortBy := fsFlags.String("sort", "", "sort by recvq|sendq|local|remote|pid")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox netstat")
-		fmt.Fprintln(os.Stderr, "Print simple network device statistics (Linux /proc/net/dev).")
+		fmt.Fprintln(os.Stderr, "Print network connection statistics (Linux /proc/net/tcp*, /proc/net/udp*).")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fsFlags.PrintDefaults()
 	}
