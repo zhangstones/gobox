@@ -76,6 +76,13 @@ Linux commands read from `/proc` filesystem.
 
 ## Project Status
 
-Current commands: `find`, `du`, `ps`, `top`, `iostat`, `netstat`, `xargs`, `grep`, `sed`
+Current commands: `find`, `du`, `ps`, `top`, `iostat`, `netstat`, `xargs`, `grep`, `sed`, `head`, `tail`, `curl`, `sort`, `uniq`, `wc`, `nslookup`, `dig`, `nc`, `tw`
 
-See PLAN.md for planned additions (head/tail, curl, sort, uniq, wc, nslookup/dig).
+Planned additions: `ifstat`, `np` (netping). See PLAN.md for details.
+
+## Git Commit Guidelines
+
+**Consolidate interim changes**: Use `git rebase -i` or `git commit --amend` to merge non-substantive, consecutive micro-commits.
+- Documentation changes (README.md, PLAN.md) should be squashed into the feature commit they belong to
+- Avoid fragmenting PRs with "docs: fix typo", "docs: update example" style commits
+- Each commit should be atomic and self-contained
