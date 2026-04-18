@@ -386,10 +386,129 @@ gobox ifstat -a               # 显示绝对值（累计值）
 6. ~~**nslookup / dig**~~ ✅ - DNS调试
 7. ~~**nc**~~ ✅ - TCP/UDP连接测试
 8. ~~**tw**~~ ✅ - 轻量级HTTP服务器
-9. **ifstat** - 网络接口流量监控（待实现）
-10. **hping** - TCP/IP包生成器和端口扫描（待实现）
+9. **ioperf** - I/O 性能基准测试（待实现）
+10. **ifstat** - 网络接口流量监控（待实现）
+11. **hping** - TCP/IP包生成器和端口扫描（待实现）
+12. **np** - 网络连通性排障（待实现）
+13. **md5sum** - 文件校验和（待实现）
+14. **rand** - 随机数生成（待实现）
+15. **seq** - 序列数生成（待实现）
 
-### 10. np (netping)
+### 10. ioperf (I/O performance benchmark)
+**优先级**: P1
+**用途**: 块设备/文件系统 I/O 性能测试，类 fio 简化版
+
+#### 支持参数
+- `--rw` - I/O 模式 (`read`/`write`/`randread`/`randwrite`/`readwrite`)
+- `--rwmixread` - 读比例 (0-100，`readwrite` 模式时有效)
+- `--filename` - 测试文件路径（每个 job 会创建 `filename.0`, `filename.1`...）
+- `--bs` - 块大小 (默认 `4k`，支持 `4k`/`8k`/`128k` 等)
+- `--size` - 总 I/O 数据量 (如 `1G`, `10G`)
+- `--numjobs` - 并行 job 数 (默认 1)
+- `--iodepth` - 队列深度 (默认 1)
+- `--direct=1` - 使用 `O_DIRECT` 绕过缓存
+- `--fsync=1` - 每次写入后执行 `fsync`
+- `--sync=1` - 使用 `O_SYNC`
+- `--rate` - 限速 (如 `100M`)
+- `--time_based` - 基于时间运行（与 `--runtime` 配合）
+- `--runtime` - 运行时长（秒，`time_based` 模式）
+- `--group_reporting` - 聚合多 job 报告
+- `--percentile` - 延迟百分位 (如 `99`)
+- `--latency` - 输出延迟分布直方图（统计I/O延迟分布，排障核心指标）
+
+#### 输出格式
+```
+ioperf: bs=4k, jobs=4, iodepth=4
+READ:  IOPS=125432, BW=489.00MB/s, lat=avg=128.00us, p99=256.00us
+WRITE: IOPS=54321, BW=212.00MB/s, lat=avg=145.00us, p99=300.00us
+```
+
+#### 限制
+- 只能写普通文件，禁止写设备文件 (`/dev/*`)
+
+#### 常见用法
+```bash
+# 顺序写性能
+gobox ioperf --rw=write --filename=/tmp/testfile --size=1G --bs=4k
+
+# 随机读写混合 (70%读)
+gobox ioperf --rw=readwrite --rwmixread=70 --filename=/tmp/testfile --size=1G --numjobs=4 --iodepth=4
+
+# 随机读性能
+gobox ioperf --rw=randread --filename=/tmp/testfile --size=1G --numjobs=2 --direct=1
+
+# 时间基准模式 (60秒)
+gobox ioperf --rw=randwrite --filename=/tmp/testfile --time_based --runtime=60 --iodepth=32
+```
+
+---
+
+### 11. md5sum
+**优先级**: P1
+**用途**: 文件校验和计算（下载完整性验证、日志完整性检查）
+
+#### 支持参数
+- `file...` - 计算文件 MD5（默认模式）
+- `-c`, `--check` - 校验模式（读取 MD5 文件验证）
+- `--tag` - BSD 格式输出 (`MD5 (file) = xxx`)
+- `-q`, `--quiet` - 静默模式
+- `-s`, `--status` - 只返回状态码
+- `-w`, `--warn` - 警告格式错误
+
+#### 常见用法
+```bash
+gobox md5sum file.tar.gz                      # 计算 MD5
+gobox md5sum file1 file2 file3               # 批量计算
+gobox md5sum -c checksums.md5               # 校验文件
+echo "abc123" | gobox md5sum                 # 计算字符串 MD5
+```
+
+---
+
+### 12. rand
+**优先级**: P2
+**用途**: 生成随机数（类 openssl rand）
+
+#### 支持参数
+- `NUM` - 生成 NUM 字节随机数
+- `-n NUM` - 同上，字节数
+- `-hex` - 十六进制输出（默认）
+- `-base64` - Base64 输出
+- `-out FILE` - 输出到文件
+
+#### 常见用法
+```bash
+gobox rand 32                                 # 生成 32 字节随机数
+gobox rand -n 32 -hex                        # 32 字节 hex
+gobox rand -n 24 -base64                     # 24 字节 base64
+gobox rand -n 16 -out /tmp/secret.key      # 输出到文件
+```
+
+---
+
+### 13. seq
+**优先级**: P2
+**用途**: 生成序列数（日志分析、批量操作）
+
+#### 支持参数
+- `[FIRST [INC]] LAST` - 序列范围（默认 FIRST=1, INC=1）
+- `-f`, `--format` - 格式字符串（默认 `%g`）
+- `-s`, `--separator` - 分隔符（默认 `\n`）
+- `-w`, `--equal-width` - 等宽输出（自动补零）
+
+#### 常见用法
+```bash
+gobox seq 5                                  # 1 2 3 4 5
+gobox seq 2 5                              # 2 3 4 5
+gobox seq 0 2 10                          # 0 2 4 6 8 10
+gobox seq -f "%02g" 5                     # 01 02 03 04 05
+gobox seq -s "," 3                        # 1,2,3
+gobox seq -w 9                            # 01 02 ... 09
+```
+
+---
+
+### 14. np (netping)
 **优先级**: P1
 **用途**: 网络连通性排障（端口扫描、TCP/UDP/ICMP/ARP ping）
 
