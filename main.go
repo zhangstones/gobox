@@ -4,6 +4,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"gobox/cmds/disk"
+	"gobox/cmds/fs"
+	"gobox/cmds/net"
+	"gobox/cmds/proc"
+	"gobox/cmds/text"
 )
 
 func main() {
@@ -19,97 +25,44 @@ func run(args []string, stdout, stderr io.Writer) int {
 	cmd := args[0]
 	args = args[1:]
 
+	var err error
 	switch cmd {
 	case "find":
-		if err := findCmd(args); err != nil {
-			fmt.Fprintln(stderr, "find:", err)
-			return 2
-		}
+		err = fs.FindCmd(args)
 	case "du":
-		if err := duCmd(args); err != nil {
-			fmt.Fprintln(stderr, "du:", err)
-			return 2
-		}
+		err = fs.DuCmd(args)
 	case "ps":
-		if err := psCmd(args); err != nil {
-			fmt.Fprintln(stderr, "ps:", err)
-			return 2
-		}
+		err = proc.PsCmd(args)
 	case "top":
-		if err := topCmd(args); err != nil {
-			fmt.Fprintln(stderr, "top:", err)
-			return 2
-		}
+		err = proc.TopCmd(args)
 	case "iostat":
-		if err := iostatCmd(args); err != nil {
-			fmt.Fprintln(stderr, "iostat:", err)
-			return 2
-		}
+		err = disk.IostatCmd(args)
 	case "netstat":
-		if err := netstatCmd(args); err != nil {
-			fmt.Fprintln(stderr, "netstat:", err)
-			return 2
-		}
+		err = net.NetstatCmd(args)
 	case "xargs":
-		if err := xargsCmd(args); err != nil {
-			fmt.Fprintln(stderr, "xargs:", err)
-			return 2
-		}
+		err = proc.XargsCmd(args)
 	case "grep":
-		if err := grepCmd(args); err != nil {
-			fmt.Fprintln(stderr, "grep:", err)
-			return 2
-		}
+		err = text.GrepCmd(args)
 	case "sed":
-		if err := sedCmd(args); err != nil {
-			fmt.Fprintln(stderr, "sed:", err)
-			return 2
-		}
-	case "dig":
-		if err := digCmd(args); err != nil {
-			fmt.Fprintln(stderr, "dig:", err)
-			return 2
-		}
+		err = text.SedCmd(args)
+	case "dig", "nslookup":
+		err = net.DigCmd(args)
 	case "sort":
-		if err := sortCmd(args); err != nil {
-			fmt.Fprintln(stderr, "sort:", err)
-			return 2
-		}
+		err = text.SortCmd(args)
 	case "head":
-		if err := headCmd(args); err != nil {
-			fmt.Fprintln(stderr, "head:", err)
-			return 2
-		}
+		err = text.HeadCmd(args)
 	case "tail":
-		if err := tailCmd(args); err != nil {
-			fmt.Fprintln(stderr, "tail:", err)
-			return 2
-		}
+		err = text.TailCmd(args)
 	case "curl":
-		if err := curlCmd(args); err != nil {
-			fmt.Fprintln(stderr, "curl:", err)
-			return 2
-		}
+		err = net.CurlCmd(args)
 	case "wc":
-		if err := wcCmd(args); err != nil {
-			fmt.Fprintln(stderr, "wc:", err)
-			return 2
-		}
+		err = text.WcCmd(args)
 	case "uniq":
-		if err := uniqCmd(args); err != nil {
-			fmt.Fprintln(stderr, "uniq:", err)
-			return 2
-		}
+		err = text.UniqCmd(args)
 	case "nc":
-		if err := ncCmd(args); err != nil {
-			fmt.Fprintln(stderr, "nc:", err)
-			return 2
-		}
+		err = net.NcCmd(args)
 	case "tw":
-		if err := twCmd(args); err != nil {
-			fmt.Fprintln(stderr, "tw:", err)
-			return 2
-		}
+		err = net.TwCmd(args)
 	case "--help", "-h", "help":
 		usage(stdout)
 		return 0
@@ -120,6 +73,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "unknown command:", cmd)
 		usage(stdout)
 		return 127
+	}
+
+	if err != nil {
+		fmt.Fprintln(stderr, cmd+":", err)
+		return 2
 	}
 	return 0
 }
