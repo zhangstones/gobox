@@ -40,6 +40,8 @@ func PsCmd(args []string) error {
 	limit := fsFlags.Int("n", 0, "show only N entries (0 = all)")
 	sampleMs := fsFlags.Int("i", 500, "CPU sample interval in milliseconds")
 	maxCmd := fsFlags.Int("l", 40, "max command length (0 = unlimited)")
+	wideWide := fsFlags.Bool("ww", false, "do not truncate command width")
+	outputFormat := fsFlags.String("o", "", "custom output fields (e.g. pid,ppid,cmd,pcpu,pmem)")
 
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox ps [OPTIONS]")
@@ -54,6 +56,17 @@ func PsCmd(args []string) error {
 			return nil
 		}
 		return err
+	}
+	if *wideWide {
+		*maxCmd = 0
+	}
+
+	var customFields []string
+	if *outputFormat != "" {
+		customFields = parsePSOutputFields(*outputFormat)
+		if len(customFields) == 0 {
+			return fmt.Errorf("no valid output fields in %q", *outputFormat)
+		}
 	}
 
 	if runtime.GOOS == "linux" {
@@ -97,7 +110,13 @@ func PsCmd(args []string) error {
 			infos = infos[:*limit]
 		}
 
+		memTotal := readMemTotalBytes()
+
 		// print
+		if len(customFields) > 0 {
+			printCustomPS(infos, customFields, *maxCmd, memTotal)
+			return nil
+		}
 		if *full {
 			fmt.Printf("%6s %6s %6s %8s %8s %s\n", "PID", "PPID", "%CPU", "RSS", "VMS", "EXE")
 			for _, pi := range infos {
@@ -129,6 +148,9 @@ func PsCmd(args []string) error {
 	}
 
 	// Non-Linux fallback using go-ps (limited info)
+	if len(customFields) > 0 {
+		return psFallbackCustom(customFields, *maxCmd)
+	}
 	return psFallback(fsFlags, all, full)
 }
 
@@ -150,6 +172,43 @@ func psFallback(fsFlags *flag.FlagSet, all, full *bool) error {
 	fmt.Printf("PID\tEXE\n")
 	for _, p := range procs {
 		fmt.Printf("%d\t%s\n", p.Pid(), p.Executable())
+	}
+	return nil
+}
+
+func psFallbackCustom(fields []string, maxCmd int) error {
+	procs, err := ps.Processes()
+	if err != nil {
+		return err
+	}
+	sort.Slice(procs, func(i, j int) bool { return procs[i].Pid() < procs[j].Pid() })
+
+	headers := make([]string, 0, len(fields))
+	for _, field := range fields {
+		headers = append(headers, psFieldHeader(field))
+	}
+	fmt.Println(strings.Join(headers, " "))
+	for _, p := range procs {
+		values := make([]string, 0, len(fields))
+		for _, field := range fields {
+			switch field {
+			case "pid":
+				values = append(values, strconv.Itoa(p.Pid()))
+			case "ppid":
+				values = append(values, strconv.Itoa(p.PPid()))
+			case "cmd", "exe":
+				cmd := p.Executable()
+				if maxCmd > 0 {
+					cmd = truncateString(cmd, maxCmd)
+				}
+				values = append(values, cmd)
+			case "pcpu", "pmem", "rss", "vms":
+				values = append(values, "0")
+			default:
+				values = append(values, "-")
+			}
+		}
+		fmt.Println(strings.Join(values, " "))
 	}
 	return nil
 }
@@ -242,6 +301,116 @@ func truncateString(s string, max int) string {
 		return string(rs[:max])
 	}
 	return string(rs[:max-3]) + "..."
+}
+
+func parsePSOutputFields(spec string) []string {
+	parts := strings.Split(spec, ",")
+	fields := make([]string, 0, len(parts))
+	for _, part := range parts {
+		field := strings.ToLower(strings.TrimSpace(part))
+		switch field {
+		case "pid", "ppid", "cmd", "exe", "pcpu", "pmem", "rss", "vms":
+			fields = append(fields, field)
+		}
+	}
+	return fields
+}
+
+func psFieldHeader(field string) string {
+	switch field {
+	case "pid":
+		return "PID"
+	case "ppid":
+		return "PPID"
+	case "cmd":
+		return "CMD"
+	case "exe":
+		return "EXE"
+	case "pcpu":
+		return "%CPU"
+	case "pmem":
+		return "%MEM"
+	case "rss":
+		return "RSS"
+	case "vms":
+		return "VMS"
+	default:
+		return strings.ToUpper(field)
+	}
+}
+
+func printCustomPS(infos []procInfo, fields []string, maxCmd int, memTotal int64) {
+	headers := make([]string, 0, len(fields))
+	for _, field := range fields {
+		headers = append(headers, psFieldHeader(field))
+	}
+	fmt.Println(strings.Join(headers, " "))
+	for _, pi := range infos {
+		values := make([]string, 0, len(fields))
+		for _, field := range fields {
+			values = append(values, renderPSField(pi, field, maxCmd, memTotal))
+		}
+		fmt.Println(strings.Join(values, " "))
+	}
+}
+
+func renderPSField(pi procInfo, field string, maxCmd int, memTotal int64) string {
+	switch field {
+	case "pid":
+		return strconv.Itoa(pi.pid)
+	case "ppid":
+		return strconv.Itoa(pi.ppid)
+	case "cmd":
+		cmd := pi.cmdline
+		if maxCmd > 0 {
+			cmd = truncateString(cmd, maxCmd)
+		}
+		return cmd
+	case "exe":
+		exe := pi.exe
+		if exe == "" {
+			exe = pi.cmdline
+		}
+		if maxCmd > 0 {
+			exe = truncateString(exe, maxCmd)
+		}
+		return exe
+	case "pcpu":
+		return fmt.Sprintf("%.1f", pi.cpu)
+	case "pmem":
+		if memTotal <= 0 {
+			return "0.0"
+		}
+		return fmt.Sprintf("%.1f", (float64(pi.rss)/float64(memTotal))*100.0)
+	case "rss":
+		return utils.HumanSize(pi.rss)
+	case "vms":
+		return utils.HumanSize(pi.vsize)
+	default:
+		return "-"
+	}
+}
+
+func readMemTotalBytes() int64 {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "MemTotal:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return 0
+		}
+		v, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil {
+			return 0
+		}
+		return v * 1024
+	}
+	return 0
 }
 
 func readTotalJiffies() (int64, error) {

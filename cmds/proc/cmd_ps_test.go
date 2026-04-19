@@ -138,3 +138,40 @@ func TestPsCmdNameFilterMatchesSubstring(t *testing.T) {
 		t.Fatalf("expected at least one row to contain substring %q, got %q", filter, output)
 	}
 }
+
+func TestPsCmdWideWideDisablesTruncation(t *testing.T) {
+	exePath, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	filter := filepath.Base(exePath)
+
+	output, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"-name", filter, "-n", "1", "-l", "4", "-ww", "-i", "1", "-sort", "pid", "-r"})
+	})
+	if err != nil {
+		t.Fatalf("PsCmd failed: %v", err)
+	}
+	if strings.Contains(output, "...") {
+		t.Fatalf("expected -ww to disable truncation, got %q", output)
+	}
+}
+
+func TestPsCmdCustomOutputFields(t *testing.T) {
+	output, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"-o", "pid,ppid,cmd,pcpu,pmem", "-n", "1", "-i", "1"})
+	})
+	if err != nil {
+		t.Fatalf("PsCmd failed: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected custom output header and row, got %q", output)
+	}
+	header := lines[0]
+	for _, field := range []string{"PID", "PPID", "CMD", "%CPU", "%MEM"} {
+		if !strings.Contains(header, field) {
+			t.Fatalf("expected custom header to contain %s, got %q", field, header)
+		}
+	}
+}

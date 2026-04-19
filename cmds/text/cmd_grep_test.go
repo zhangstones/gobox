@@ -423,6 +423,121 @@ func TestGrepLineBuffered(t *testing.T) {
 	}
 }
 
+func TestGrepAfterContext(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "after.txt")
+	os.WriteFile(filename, []byte("a\nmatch\nafter1\nafter2\n"), 0o644)
+
+	output, err := runGrepCmd([]string{"-A", "1", "match", filename})
+	if err != nil {
+		t.Fatalf("grep command failed: %v", err)
+	}
+	result := string(output)
+	if !strings.Contains(result, "match") || !strings.Contains(result, "after1") {
+		t.Fatalf("expected match and after-context in output, got: %s", result)
+	}
+	if strings.Contains(result, "after2") {
+		t.Fatalf("expected only one line of after-context, got: %s", result)
+	}
+}
+
+func TestGrepBeforeContext(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "before.txt")
+	os.WriteFile(filename, []byte("before1\nbefore2\nmatch\nafter\n"), 0o644)
+
+	output, err := runGrepCmd([]string{"-B", "1", "match", filename})
+	if err != nil {
+		t.Fatalf("grep command failed: %v", err)
+	}
+	result := string(output)
+	if !strings.Contains(result, "before2") || !strings.Contains(result, "match") {
+		t.Fatalf("expected before-context and match in output, got: %s", result)
+	}
+	if strings.Contains(result, "before1") {
+		t.Fatalf("expected only one line of before-context, got: %s", result)
+	}
+}
+
+func TestGrepContext(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "context.txt")
+	os.WriteFile(filename, []byte("before\nmatch\nafter\n"), 0o644)
+
+	output, err := runGrepCmd([]string{"-C", "1", "match", filename})
+	if err != nil {
+		t.Fatalf("grep command failed: %v", err)
+	}
+	result := string(output)
+	if !strings.Contains(result, "before") || !strings.Contains(result, "after") {
+		t.Fatalf("expected context lines in output, got: %s", result)
+	}
+}
+
+func TestGrepIncludeAndExcludeDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	keepDir := filepath.Join(tmpDir, "keep")
+	skipDir := filepath.Join(tmpDir, "metrics")
+	if err := os.MkdirAll(keepDir, 0o755); err != nil {
+		t.Fatalf("mkdir keep: %v", err)
+	}
+	if err := os.MkdirAll(skipDir, 0o755); err != nil {
+		t.Fatalf("mkdir skip: %v", err)
+	}
+	keepFile := filepath.Join(keepDir, "app.log")
+	skipFile := filepath.Join(skipDir, "app.log")
+	otherFile := filepath.Join(keepDir, "note.txt")
+	os.WriteFile(keepFile, []byte("hello keep\n"), 0o644)
+	os.WriteFile(skipFile, []byte("hello skip\n"), 0o644)
+	os.WriteFile(otherFile, []byte("hello other\n"), 0o644)
+
+	output, err := runGrepCmd([]string{"-r", "--include=*.log", "--exclude-dir=metrics", "hello", tmpDir})
+	if err != nil {
+		t.Fatalf("grep command failed: %v", err)
+	}
+	result := string(output)
+	if !strings.Contains(result, keepFile) {
+		t.Fatalf("expected included log file in output, got: %s", result)
+	}
+	if strings.Contains(result, skipFile) || strings.Contains(result, otherFile) {
+		t.Fatalf("expected excluded directory and non-matching include pattern to be skipped, got: %s", result)
+	}
+}
+
+func TestGrepFilesWithMatches(t *testing.T) {
+	tmpDir := t.TempDir()
+	matchFile := filepath.Join(tmpDir, "match.txt")
+	noMatchFile := filepath.Join(tmpDir, "nomatch.txt")
+	os.WriteFile(matchFile, []byte("hello\n"), 0o644)
+	os.WriteFile(noMatchFile, []byte("world\n"), 0o644)
+
+	output, err := runGrepCmd([]string{"-l", "hello", matchFile, noMatchFile})
+	if err != nil {
+		t.Fatalf("grep command failed: %v", err)
+	}
+	result := strings.TrimSpace(output)
+	if result != matchFile {
+		t.Fatalf("expected only matching filename %s, got %q", matchFile, result)
+	}
+}
+
+func TestGrepFilesWithoutMatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	matchFile := filepath.Join(tmpDir, "match.txt")
+	noMatchFile := filepath.Join(tmpDir, "nomatch.txt")
+	os.WriteFile(matchFile, []byte("hello\n"), 0o644)
+	os.WriteFile(noMatchFile, []byte("world\n"), 0o644)
+
+	output, err := runGrepCmd([]string{"-L", "hello", matchFile, noMatchFile})
+	if err != nil {
+		t.Fatalf("grep command failed: %v", err)
+	}
+	result := strings.TrimSpace(output)
+	if result != noMatchFile {
+		t.Fatalf("expected only non-matching filename %s, got %q", noMatchFile, result)
+	}
+}
+
 // writeTestFile helper kept for compatibility with other test files in this package
 func writeTestFile(t *testing.T, filename, content string) {
 	err := os.WriteFile(filename, []byte(content), 0644)

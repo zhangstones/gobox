@@ -1,14 +1,17 @@
 package net
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +28,18 @@ type resolveHost struct {
 type curlCommandError struct {
 	err            error
 	suppressStderr bool
+}
+
+type curlFormField struct {
+	name     string
+	filename string
+	data     []byte
+}
+
+type curlRequestPayload struct {
+	body        []byte
+	contentType string
+	method      string
 }
 
 func (e curlCommandError) Error() string {
@@ -54,6 +69,8 @@ func CurlCmd(args []string) error {
 		request         string
 		headers         []string
 		postData        string
+		uploadFile      string
+		formFields      []curlFormField
 		insecure        bool
 		connectTimeout  time.Duration
 		resolveHosts    []resolveHost
@@ -123,6 +140,22 @@ func CurlCmd(args []string) error {
 			}
 			i++
 			postData = args[i]
+		case arg == "-T" || arg == "--upload-file":
+			if i+1 >= len(args) {
+				return fmt.Errorf("-T requires an argument")
+			}
+			i++
+			uploadFile = args[i]
+		case arg == "-F" || arg == "--form":
+			if i+1 >= len(args) {
+				return fmt.Errorf("-F requires an argument")
+			}
+			i++
+			field, err := parseCurlFormField(args[i])
+			if err != nil {
+				return err
+			}
+			formFields = append(formFields, field)
 		case arg == "-k" || arg == "--insecure":
 			insecure = true
 		case arg == "--connect-timeout":
@@ -209,6 +242,9 @@ doneFlags:
 		return fmt.Errorf("URL required")
 	}
 	targetURL := remaining[0]
+	if (uploadFile != "" && postData != "") || (uploadFile != "" && len(formFields) > 0) || (postData != "" && len(formFields) > 0) {
+		return fmt.Errorf("only one of -d, -T, or -F may be used at a time")
+	}
 
 	// Set defaults for benchmark mode
 	if benchMode {
@@ -279,7 +315,7 @@ doneFlags:
 	}
 
 	// Normal mode
-	return runSingle(client, targetURL, request, headers, postData, head,
+	return runSingle(client, targetURL, request, headers, postData, uploadFile, formFields, head,
 		outputFile, writeOut, showHeaders, failOnError, silent, showError)
 }
 
@@ -291,6 +327,103 @@ func wrapCurlError(err error, silent, showError bool) error {
 		err:            err,
 		suppressStderr: silent && !showError,
 	}
+}
+
+func parseCurlFormField(spec string) (curlFormField, error) {
+	name, value, ok := strings.Cut(spec, "=")
+	if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(value) == "" {
+		return curlFormField{}, fmt.Errorf("invalid form field %q", spec)
+	}
+	filePath := strings.TrimSpace(value)
+	if strings.HasPrefix(filePath, "@") {
+		filePath = strings.TrimPrefix(filePath, "@")
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return curlFormField{}, fmt.Errorf("cannot read form file %s: %w", filePath, err)
+	}
+	return curlFormField{
+		name:     strings.TrimSpace(name),
+		filename: filepath.Base(filePath),
+		data:     data,
+	}, nil
+}
+
+func buildCurlPayload(method, postData, uploadFile string, formFields []curlFormField, head bool) (*curlRequestPayload, error) {
+	payload := &curlRequestPayload{method: "GET"}
+	if method != "" {
+		payload.method = method
+	} else if head {
+		payload.method = "HEAD"
+	}
+	switch {
+	case uploadFile != "":
+		data, err := os.ReadFile(uploadFile)
+		if err != nil {
+			return nil, fmt.Errorf("cannot read upload file %s: %w", uploadFile, err)
+		}
+		payload.body = data
+		payload.contentType = "application/octet-stream"
+		if method == "" {
+			payload.method = "PUT"
+		}
+	case len(formFields) > 0:
+		var buf bytes.Buffer
+		writer := multipart.NewWriter(&buf)
+		for _, field := range formFields {
+			part, err := writer.CreateFormFile(field.name, field.filename)
+			if err != nil {
+				return nil, fmt.Errorf("create form file %s: %w", field.name, err)
+			}
+			if _, err := part.Write(field.data); err != nil {
+				return nil, fmt.Errorf("write form file %s: %w", field.name, err)
+			}
+		}
+		if err := writer.Close(); err != nil {
+			return nil, fmt.Errorf("finalize multipart body: %w", err)
+		}
+		payload.body = buf.Bytes()
+		payload.contentType = writer.FormDataContentType()
+		if method == "" {
+			payload.method = "POST"
+		}
+	case postData != "":
+		payload.body = []byte(postData)
+		payload.contentType = "application/x-www-form-urlencoded"
+		if method == "" {
+			payload.method = "POST"
+		}
+	}
+	return payload, nil
+}
+
+func applyCurlHeaders(req *http.Request, headers []string, contentType string) {
+	for _, h := range headers {
+		parts := strings.SplitN(h, ":", 2)
+		if len(parts) == 2 {
+			req.Header.Add(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
+		}
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+}
+
+func buildCurlRequest(targetURL, method string, headers []string, postData, uploadFile string, formFields []curlFormField, head bool) (*http.Request, error) {
+	payload, err := buildCurlPayload(method, postData, uploadFile, formFields, head)
+	if err != nil {
+		return nil, err
+	}
+	var body io.Reader
+	if len(payload.body) > 0 {
+		body = bytes.NewReader(payload.body)
+	}
+	req, err := http.NewRequest(payload.method, targetURL, body)
+	if err != nil {
+		return nil, err
+	}
+	applyCurlHeaders(req, headers, payload.contentType)
+	return req, nil
 }
 
 func printCurlUsage(w io.Writer) {
@@ -309,6 +442,8 @@ func printCurlUsage(w io.Writer) {
 	fmt.Fprintln(w, "  -X, --request CMD     Specify HTTP method (GET/POST/PUT/DELETE)")
 	fmt.Fprintln(w, "  -H, --header LINE     Add header to request")
 	fmt.Fprintln(w, "  -d, --data DATA       POST data")
+	fmt.Fprintln(w, "  -T, --upload-file FILE Upload FILE with PUT")
+	fmt.Fprintln(w, "  -F, --form NAME=FILE  Send multipart form data")
 	fmt.Fprintln(w, "  -k, --insecure        Ignore certificate errors")
 	fmt.Fprintln(w, "  --connect-timeout SEC Connection timeout")
 	fmt.Fprintln(w, "  --resolve HOST:PORT:ADDR Force resolve HOST:PORT to ADDR")
@@ -333,41 +468,20 @@ func printCurlUsage(w io.Writer) {
 	fmt.Fprintln(w, "  gobox curl -I https://example.com")
 	fmt.Fprintln(w, "  gobox curl -w 'Status: %{http_code}' https://example.com")
 	fmt.Fprintln(w, "  gobox curl -X POST -d 'data=test' https://example.com")
+	fmt.Fprintln(w, "  gobox curl -T file.bin https://example.com/upload")
+	fmt.Fprintln(w, "  gobox curl -F file=@archive.tar.gz https://example.com/upload")
 	fmt.Fprintln(w, "  gobox curl --bench -c 10 -n 100 https://example.com")
 }
 
-func runSingle(client *http.Client, targetURL, method string, headers []string, postData string,
+func runSingle(client *http.Client, targetURL, method string, headers []string, postData, uploadFile string, formFields []curlFormField,
 	head bool, outputFile, writeOut string, showHeaders, failOnError, silent, showError bool) error {
 
-	req, err := http.NewRequest("GET", targetURL, nil)
+	req, err := buildCurlRequest(targetURL, method, headers, postData, uploadFile, formFields, head)
 	if err != nil {
-		return wrapCurlError(fmt.Errorf("invalid URL: %w", err), silent, showError)
+		return wrapCurlError(err, silent, showError)
 	}
 
 	start := time.Now()
-
-	// Set method
-	if method != "" {
-		req.Method = method
-	} else if postData != "" {
-		req.Method = "POST"
-	} else if head {
-		req.Method = "HEAD"
-	}
-
-	// Set headers
-	for _, h := range headers {
-		parts := strings.SplitN(h, ":", 2)
-		if len(parts) == 2 {
-			req.Header.Add(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
-		}
-	}
-
-	// Set POST data
-	if postData != "" {
-		req.Body = io.NopCloser(strings.NewReader(postData))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	}
 
 	// Execute request
 	resp, err := client.Do(req)
@@ -551,30 +665,9 @@ func runBench(client *http.Client, targetURL, method string, headers []string, p
 
 func doRequest(client *http.Client, targetURL, method string, headers []string, postData string,
 	head bool, timeout time.Duration, failOnError bool) (int, error) {
-
-	req, err := http.NewRequest("GET", targetURL, nil)
+	req, err := buildCurlRequest(targetURL, method, headers, postData, "", nil, head)
 	if err != nil {
 		return 0, err
-	}
-
-	if method != "" {
-		req.Method = method
-	} else if postData != "" {
-		req.Method = "POST"
-	} else if head {
-		req.Method = "HEAD"
-	}
-
-	for _, h := range headers {
-		parts := strings.SplitN(h, ":", 2)
-		if len(parts) == 2 {
-			req.Header.Add(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
-		}
-	}
-
-	if postData != "" {
-		req.Body = io.NopCloser(strings.NewReader(postData))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 
 	resp, err := client.Do(req)

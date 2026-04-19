@@ -1,11 +1,33 @@
 package fs
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func runFindCmd(t *testing.T, args []string) (string, error) {
+	t.Helper()
+	oldStdout := os.Stdout
+	rOut, wOut, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stdout: %v", err)
+	}
+	defer rOut.Close()
+
+	os.Stdout = wOut
+	runErr := FindCmd(args)
+	_ = wOut.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, rOut)
+	return buf.String(), runErr
+}
 
 func TestPathDepth(t *testing.T) {
 	cases := map[string]int{
@@ -105,5 +127,72 @@ func TestMatchTimeATimeOlder(t *testing.T) {
 	}
 	if !matchTime(info, "+1h", "atime") {
 		t.Fatalf("expected atime older than 1h to match")
+	}
+}
+
+func TestFindPathFilter(t *testing.T) {
+	dir := t.TempDir()
+	nested := filepath.Join(dir, "pods", "app.log")
+	if err := os.MkdirAll(filepath.Dir(nested), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(nested, []byte("data"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	output, err := runFindCmd(t, []string{"-path", "*/pods/*", dir})
+	if err != nil {
+		t.Fatalf("FindCmd failed: %v", err)
+	}
+	if !strings.Contains(output, nested) {
+		t.Fatalf("expected path-filtered output to contain %s, got %q", nested, output)
+	}
+}
+
+func TestFindNotPathFilter(t *testing.T) {
+	dir := t.TempDir()
+	keep := filepath.Join(dir, "keep.log")
+	skip := filepath.Join(dir, "skip", "skip.log")
+	if err := os.MkdirAll(filepath.Dir(skip), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(keep, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write keep: %v", err)
+	}
+	if err := os.WriteFile(skip, []byte("skip"), 0o644); err != nil {
+		t.Fatalf("write skip: %v", err)
+	}
+
+	output, err := runFindCmd(t, []string{"-not", "-path", "*/skip/*", dir})
+	if err != nil {
+		t.Fatalf("FindCmd failed: %v", err)
+	}
+	if strings.Contains(output, skip) {
+		t.Fatalf("expected negated path filter to exclude %s, got %q", skip, output)
+	}
+	if !strings.Contains(output, keep) {
+		t.Fatalf("expected negated path filter to keep %s, got %q", keep, output)
+	}
+}
+
+func TestFindBangAliasForNot(t *testing.T) {
+	dir := t.TempDir()
+	match := filepath.Join(dir, "visible.txt")
+	hidden := filepath.Join(dir, "hidden", "secret.txt")
+	if err := os.MkdirAll(filepath.Dir(hidden), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	_ = os.WriteFile(match, []byte("x"), 0o644)
+	_ = os.WriteFile(hidden, []byte("x"), 0o644)
+
+	output, err := runFindCmd(t, []string{"!", "-path", "*/hidden/*", dir})
+	if err != nil {
+		t.Fatalf("FindCmd failed: %v", err)
+	}
+	if strings.Contains(output, hidden) {
+		t.Fatalf("expected ! alias to exclude hidden path, got %q", output)
+	}
+	if !strings.Contains(output, match) {
+		t.Fatalf("expected ! alias to keep visible path, got %q", output)
 	}
 }

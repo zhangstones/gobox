@@ -21,7 +21,30 @@ func (e ExitCodeError) Error() string {
 
 var errExitQuiet = ExitCodeError(1)
 
-// GrepCmd implements a basic subset of grep functionality
+type grepOptions struct {
+	ignoreCase        bool
+	invert            bool
+	count             bool
+	lineNumber        bool
+	recursive         bool
+	fixedString       bool
+	onlyMatching      bool
+	quiet             bool
+	lineBuffered      bool
+	filesWithMatches  bool
+	filesWithoutMatch bool
+	beforeContext     int
+	afterContext      int
+	includePattern    string
+	excludeDir        string
+}
+
+type grepResult struct {
+	matches int
+	matched bool
+}
+
+// GrepCmd implements a basic subset of grep functionality.
 func GrepCmd(args []string) error {
 	fsFlags := flag.NewFlagSet("grep", flag.ContinueOnError)
 	ignoreCase := fsFlags.Bool("i", false, "ignore case")
@@ -34,6 +57,18 @@ func GrepCmd(args []string) error {
 	onlyMatching := fsFlags.Bool("o", false, "print only the matched parts of a line")
 	quiet := fsFlags.Bool("q", false, "suppress all normal output (exit code only)")
 	lineBuffered := fsFlags.Bool("line-buffered", false, "use line buffering (flush after each line)")
+	afterContext := fsFlags.Int("A", 0, "print NUM lines of trailing context")
+	beforeContext := fsFlags.Int("B", 0, "print NUM lines of leading context")
+	context := fsFlags.Int("C", 0, "print NUM lines of output context")
+	afterContextLong := fsFlags.Int("after-context", 0, "print NUM lines of trailing context")
+	beforeContextLong := fsFlags.Int("before-context", 0, "print NUM lines of leading context")
+	contextLong := fsFlags.Int("context", 0, "print NUM lines of output context")
+	includePattern := fsFlags.String("include", "", "search only files that match PATTERN")
+	excludeDir := fsFlags.String("exclude-dir", "", "skip directories named DIR")
+	filesWithMatches := fsFlags.Bool("l", false, "print only names of files with selected lines")
+	filesWithoutMatch := fsFlags.Bool("L", false, "print only names of files without selected lines")
+	filesWithMatchesLong := fsFlags.Bool("files-with-matches", false, "print only names of files with selected lines")
+	filesWithoutMatchLong := fsFlags.Bool("files-without-match", false, "print only names of files without selected lines")
 	help := fsFlags.Bool("help", false, "show help")
 
 	fsFlags.Usage = func() {
@@ -63,21 +98,63 @@ func GrepCmd(args []string) error {
 		fsFlags.Usage()
 		return nil
 	}
-
 	if fsFlags.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "grep: PATTERN is required")
 		fsFlags.Usage()
 		return fmt.Errorf("pattern required")
 	}
+	if *afterContextLong > 0 {
+		*afterContext = *afterContextLong
+	}
+	if *beforeContextLong > 0 {
+		*beforeContext = *beforeContextLong
+	}
+	if *contextLong > 0 {
+		*context = *contextLong
+	}
+	if *filesWithMatchesLong {
+		*filesWithMatches = true
+	}
+	if *filesWithoutMatchLong {
+		*filesWithoutMatch = true
+	}
+	if *filesWithMatches && *filesWithoutMatch {
+		return fmt.Errorf("-l and -L cannot be used together")
+	}
 
 	pattern := fsFlags.Arg(0)
 	files := fsFlags.Args()[1:]
 
-	// Compile regex or use fixed string matching
+	opts := grepOptions{
+		ignoreCase:        *ignoreCase,
+		invert:            *invert,
+		count:             *count,
+		lineNumber:        *lineNumber,
+		recursive:         *recursive,
+		fixedString:       *fixedString,
+		onlyMatching:      *onlyMatching,
+		quiet:             *quiet,
+		lineBuffered:      *lineBuffered,
+		filesWithMatches:  *filesWithMatches,
+		filesWithoutMatch: *filesWithoutMatch,
+		beforeContext:     *beforeContext,
+		afterContext:      *afterContext,
+		includePattern:    *includePattern,
+		excludeDir:        *excludeDir,
+	}
+	if *context > 0 {
+		if opts.beforeContext == 0 {
+			opts.beforeContext = *context
+		}
+		if opts.afterContext == 0 {
+			opts.afterContext = *context
+		}
+	}
+
 	var regex *regexp.Regexp
-	if !*fixedString {
+	if !opts.fixedString {
 		var err error
-		if *ignoreCase {
+		if opts.ignoreCase {
 			regex, err = regexp.Compile("(?i)" + pattern)
 		} else {
 			regex, err = regexp.Compile(pattern)
@@ -87,157 +164,219 @@ func GrepCmd(args []string) error {
 		}
 	}
 
-	// If no files specified, read from stdin
+	matchedAny := false
 	if len(files) == 0 {
-		if err := grepReader(os.Stdin, pattern, regex, *ignoreCase, *invert, *count, *lineNumber, *fixedString, *onlyMatching, *quiet, *lineBuffered, ""); err != nil {
+		result, err := grepReader(os.Stdin, pattern, regex, opts, "")
+		if err != nil {
 			return err
 		}
-		return nil
-	}
-
-	// Process files
-	totalMatches := 0
-	for _, file := range files {
-		if *recursive {
-			err := filepath.WalkDir(file, func(path string, d os.DirEntry, err error) error {
-				if err != nil {
-					return nil // Skip errors, continue
-				}
-				if d.IsDir() {
+		matchedAny = result.matched
+	} else {
+		for _, file := range files {
+			var err error
+			if opts.recursive {
+				err = filepath.WalkDir(file, func(path string, d os.DirEntry, walkErr error) error {
+					if walkErr != nil {
+						return nil
+					}
+					if d.IsDir() {
+						if opts.excludeDir != "" && d.Name() == opts.excludeDir {
+							return filepath.SkipDir
+						}
+						return nil
+					}
+					if opts.includePattern != "" {
+						matched, matchErr := filepath.Match(opts.includePattern, d.Name())
+						if matchErr != nil || !matched {
+							return nil
+						}
+					}
+					result, err := grepFile(path, pattern, regex, opts)
+					if err != nil {
+						return err
+					}
+					matchedAny = matchedAny || result.matched
+					if opts.quiet && matchedAny {
+						return errExitQuiet
+					}
 					return nil
+				})
+				if err == errExitQuiet {
+					err = nil
 				}
-				return grepFile(path, pattern, regex, *ignoreCase, *invert, *count, *lineNumber, *fixedString, *onlyMatching, *quiet, *lineBuffered, &totalMatches)
-			})
+			} else {
+				result, grepErr := grepFile(file, pattern, regex, opts)
+				if grepErr != nil {
+					return grepErr
+				}
+				matchedAny = matchedAny || result.matched
+				if opts.quiet && matchedAny {
+					break
+				}
+			}
 			if err != nil {
 				return err
 			}
-		} else {
-			if err := grepFile(file, pattern, regex, *ignoreCase, *invert, *count, *lineNumber, *fixedString, *onlyMatching, *quiet, *lineBuffered, &totalMatches); err != nil {
-				return err
-			}
 		}
 	}
 
+	if opts.quiet && !matchedAny {
+		return errExitQuiet
+	}
 	return nil
 }
 
-func grepFile(path, pattern string, regex *regexp.Regexp, ignoreCase, invert, count, lineNumber, fixedString, onlyMatching, quiet, lineBuffered bool, totalMatches *int) error {
+func grepFile(path, pattern string, regex *regexp.Regexp, opts grepOptions) (grepResult, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("cannot open %s: %w", path, err)
+		return grepResult{}, fmt.Errorf("cannot open %s: %w", path, err)
 	}
 	defer file.Close()
-
-	return grepReader(file, pattern, regex, ignoreCase, invert, count, lineNumber, fixedString, onlyMatching, quiet, lineBuffered, path)
+	return grepReader(file, pattern, regex, opts, path)
 }
 
-func grepReader(r io.Reader, pattern string, regex *regexp.Regexp, ignoreCase, invert, count, lineNumber, fixedString, onlyMatching, quiet, lineBuffered bool, filename string) error {
+func grepReader(r io.Reader, pattern string, regex *regexp.Regexp, opts grepOptions, filename string) (grepResult, error) {
 	scanner := bufio.NewScanner(r)
-	lineNum := 0
-	matches := 0
-	var out io.Writer = os.Stdout
-
-	// Enable line buffering if requested
-	if lineBuffered {
-		out = os.Stdout // Go's stdout is already line-buffered when connected to terminal
-	}
-
+	lines := make([]string, 0)
 	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
-
-		var matched bool
-		if fixedString {
-			// Fixed string matching
-			if ignoreCase {
-				matched = strings.Contains(strings.ToLower(line), strings.ToLower(pattern))
-			} else {
-				matched = strings.Contains(line, pattern)
-			}
-		} else {
-			// Regex matching
-			matched = regex.MatchString(line)
-		}
-
-		// Invert match if -v is specified
-		if invert {
-			matched = !matched
-		}
-
-		if matched {
-			matches++
-			if !quiet && !count {
-				if onlyMatching {
-					// Print only matched parts
-					if fixedString {
-						// Fixed string matching with -o: find all occurrences
-						searchPattern := pattern
-						searchLine := line
-						if ignoreCase {
-							searchPattern = strings.ToLower(pattern)
-							searchLine = strings.ToLower(line)
-						}
-
-						start := 0
-						for {
-							idx := strings.Index(searchLine[start:], searchPattern)
-							if idx == -1 {
-								break
-							}
-							actualIdx := start + idx
-							matchedStr := line[actualIdx : actualIdx+len(pattern)]
-							if filename != "" {
-								fmt.Fprintf(out, "%s:", filename)
-							}
-							if lineNumber {
-								fmt.Fprintf(out, "%d:", lineNum)
-							}
-							fmt.Fprintln(out, matchedStr)
-							start = actualIdx + len(pattern)
-						}
-					} else {
-						// Regex matching with -o
-						foundMatches := regex.FindAllString(line, -1)
-						for _, m := range foundMatches {
-							if filename != "" {
-								fmt.Fprintf(out, "%s:", filename)
-							}
-							if lineNumber {
-								fmt.Fprintf(out, "%d:", lineNum)
-							}
-							fmt.Fprintln(out, m)
-						}
-					}
-				} else {
-					// Print entire line
-					if filename != "" {
-						fmt.Fprintf(out, "%s:", filename)
-					}
-					if lineNumber {
-						fmt.Fprintf(out, "%d:", lineNum)
-					}
-					fmt.Fprintln(out, line)
-				}
-			}
-		}
+		lines = append(lines, scanner.Text())
 	}
-
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("error reading %s: %w", filename, err)
+		name := filename
+		if name == "" {
+			name = "stdin"
+		}
+		return grepResult{}, fmt.Errorf("error reading %s: %w", name, err)
 	}
+	return grepLines(lines, pattern, regex, opts, filename)
+}
 
-	if count && !quiet {
+func grepLines(lines []string, pattern string, regex *regexp.Regexp, opts grepOptions, filename string) (grepResult, error) {
+	matchedLines := make([]bool, len(lines))
+	matches := 0
+	for i, line := range lines {
+		matched := grepLineMatches(line, pattern, regex, opts)
+		if matched {
+			matchedLines[i] = true
+			matches++
+			if opts.quiet {
+				return grepResult{matches: matches, matched: true}, nil
+			}
+		}
+	}
+	matched := matches > 0
+
+	if opts.filesWithMatches {
+		if matched {
+			fmt.Fprintln(os.Stdout, filename)
+		}
+		return grepResult{matches: matches, matched: matched}, nil
+	}
+	if opts.filesWithoutMatch {
+		if !matched {
+			fmt.Fprintln(os.Stdout, filename)
+		}
+		return grepResult{matches: matches, matched: matched}, nil
+	}
+	if opts.count && !opts.quiet {
 		if filename != "" {
 			fmt.Printf("%s:%d\n", filename, matches)
 		} else {
 			fmt.Println(matches)
 		}
+		return grepResult{matches: matches, matched: matched}, nil
+	}
+	if opts.quiet || !matched {
+		return grepResult{matches: matches, matched: matched}, nil
 	}
 
-	// Exit with code 1 if no matches found and not quiet
-	if quiet && matches == 0 {
-		return errExitQuiet
+	if opts.onlyMatching {
+		for i, line := range lines {
+			if !matchedLines[i] {
+				continue
+			}
+			for _, part := range grepFindMatches(line, pattern, regex, opts) {
+				printGrepLine(part, filename, i+1, opts.lineNumber)
+			}
+		}
+		return grepResult{matches: matches, matched: matched}, nil
 	}
 
-	return nil
+	toPrint := make([]bool, len(lines))
+	for i, ok := range matchedLines {
+		if !ok {
+			continue
+		}
+		start := i - opts.beforeContext
+		if start < 0 {
+			start = 0
+		}
+		end := i + opts.afterContext
+		if end >= len(lines) {
+			end = len(lines) - 1
+		}
+		for j := start; j <= end; j++ {
+			toPrint[j] = true
+		}
+	}
+	for i, line := range lines {
+		if toPrint[i] {
+			printGrepLine(line, filename, i+1, opts.lineNumber)
+		}
+	}
+	return grepResult{matches: matches, matched: matched}, nil
+}
+
+func grepLineMatches(line, pattern string, regex *regexp.Regexp, opts grepOptions) bool {
+	var matched bool
+	if opts.fixedString {
+		if opts.ignoreCase {
+			matched = strings.Contains(strings.ToLower(line), strings.ToLower(pattern))
+		} else {
+			matched = strings.Contains(line, pattern)
+		}
+	} else {
+		matched = regex.MatchString(line)
+	}
+	if opts.invert {
+		matched = !matched
+	}
+	return matched
+}
+
+func grepFindMatches(line, pattern string, regex *regexp.Regexp, opts grepOptions) []string {
+	if opts.invert {
+		return nil
+	}
+	if opts.fixedString {
+		searchPattern := pattern
+		searchLine := line
+		if opts.ignoreCase {
+			searchPattern = strings.ToLower(pattern)
+			searchLine = strings.ToLower(line)
+		}
+		parts := make([]string, 0)
+		start := 0
+		for {
+			idx := strings.Index(searchLine[start:], searchPattern)
+			if idx == -1 {
+				break
+			}
+			actualIdx := start + idx
+			parts = append(parts, line[actualIdx:actualIdx+len(pattern)])
+			start = actualIdx + len(pattern)
+		}
+		return parts
+	}
+	return regex.FindAllString(line, -1)
+}
+
+func printGrepLine(line, filename string, lineNum int, showLineNumber bool) {
+	if filename != "" {
+		fmt.Fprintf(os.Stdout, "%s:", filename)
+	}
+	if showLineNumber {
+		fmt.Fprintf(os.Stdout, "%d:", lineNum)
+	}
+	fmt.Fprintln(os.Stdout, line)
 }

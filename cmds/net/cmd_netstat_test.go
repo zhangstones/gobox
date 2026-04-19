@@ -233,3 +233,37 @@ func TestNetstatCmdPortFilterDoesNotDoRangeMatch(t *testing.T) {
 		t.Fatalf("expected exact port filtering, but matched listener on %d for filter %d: %q", port, missPort, output)
 	}
 }
+
+func TestNetstatCmdListeningOnly(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("netstat is only supported on Linux")
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	output, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"-l", "-port", strconv.Itoa(port)})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd failed: %v", err)
+	}
+	if !strings.Contains(output, "LISTEN") {
+		t.Fatalf("expected listening-only output to contain LISTEN, got %q", output)
+	}
+}
+
+func TestNetstatCmdNumericFlagAccepted(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("netstat is only supported on Linux")
+	}
+	if _, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"-n"})
+	}); err != nil {
+		t.Fatalf("expected -n to be accepted, got %v", err)
+	}
+}

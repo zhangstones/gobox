@@ -75,7 +75,7 @@ output, err := cmd.Output()
 
 Smoke tests (`tests/smoke/`) provide a quick sanity check that every command can run without crashing. They cover the 1-3 most core features of each command:
 - Cross-platform: `find`, `du`, `xargs`, `grep`, `sed`, `head`, `tail`, `sort`, `uniq`, `wc`
-- Network: `dig`, `curl`, `nc`, `tw`, `ifstat`, `np`, `hping`
+- Network: `dig`, `curl`, `nc`, `tw`, `ifstat`, `np`
 - System: `ps`, `top`, `iostat`, `netstat`, `md5sum`, `ioperf`, `rand`, `seq`
 
 Run smoke tests before submitting PRs:

@@ -77,8 +77,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = net.IfstatCmd(args)
 	case "np":
 		err = net.NpCmd(args)
-	case "hping":
-		err = net.HpingCmd(args)
 	case "seq":
 		err = text.SeqCmd(args)
 	case "--help", "-h", "help":
@@ -131,7 +129,6 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  tw       Tiny web server for static files or benchmark")
 	fmt.Fprintln(w, "  ifstat   Network interface statistics monitoring")
 	fmt.Fprintln(w, "  np       Network ping/connectivity tool (TCP/UDP/ICMP/ARP/scan)")
-	fmt.Fprintln(w, "  hping    TCP/IP packet generator and port scanner")
 	fmt.Fprintln(w, "  seq      Generate sequences of numbers")
 	fmt.Fprintln(w, "  version  Print program version (-v, --version)")
 	fmt.Fprintln(w)

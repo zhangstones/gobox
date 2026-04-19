@@ -239,22 +239,6 @@
 | `gobox ifstat -n int` | `ifstat -n` | ✅ 一致 | 采样次数（0=连续） |
 | `gobox ifstat -p int` | `ifstat -i` | ✅ 一致 | 采样间隔秒数（默认 1） |
 
-### hping
-
-| gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
-|------------|---------------|------------|----------|
-| `gobox hping -F` | `hping -F` | ✅ 一致 | FIN 标志（stealth 扫描） |
-| `gobox hping -S` | `hping -S` | ✅ 一致 | SYN 标志（TCP SYN 扫描） |
-| `gobox hping -a string` | `hping -a` | ⚠️ 部分一致 | 仅尽力通过本地地址绑定模拟源地址，非 raw socket 级别源 IP 欺骗 |
-| `gobox hping -c int` | `hping -c` | ✅ 一致 | 发送数据包数量（默认 4） |
-| `gobox hping -i int` | `hping -i` | ✅ 一致 | 数据包间隔（毫秒，默认 1000） |
-| `gobox hping -p int` | `hping -p` | ✅ 一致 | 目标端口（默认 80） |
-| `gobox hping -q` | `hping -q` | ✅ 一致 | 静默模式 |
-| `gobox hping -spoof string` | `hping --spoof` | ⚠️ 部分一致 | 仅尽力通过本地地址绑定模拟源地址，非 raw socket 级别源地址欺骗 |
-| `gobox hping -tr, --trace` | `hping --tr` | ✅ 一致 | 路由追踪模式 |
-| `gobox hping -v` | `hping -v` | ✅ 一致 | 详细输出 |
-| `gobox hping -w int` | `hping -w` | ✅ 一致 | TCP 超时（秒，默认 5） |
-
 ### np/netping
 
 | gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
@@ -266,15 +250,15 @@
 | `gobox np -flood` | `ping -f` | ✅ 一致 | 洪水模式（最大速度） |
 | `gobox np -i int` | `ping -i` | ⚠️ 部分一致 | 数据包间隔（微秒，默认 1000000），ping 默认秒 |
 | `gobox np -icmp` | `ping` | ✅ 一致 | ICMP 模式 |
-| `gobox np -l int` | `hping -icmp` (监听模式) | 🆕 gobox扩展 | 长连接模式 |
+| `gobox np -l int` | 长连接探测 | 🆕 gobox扩展 | 长连接模式 |
 | `gobox np -p int` | `nc -p` | 🆕 gobox扩展 | 目标端口 |
 | `gobox np -q` | `ping -q` | ✅ 一致 | 静默模式 |
-| `gobox np -s int` | `hping -s` | 🆕 gobox扩展 | 源端口 |
+| `gobox np -s int` | 源端口绑定 | 🆕 gobox扩展 | 源端口 |
 | `gobox np -scan` | `nc -z` | 🆕 gobox扩展 | 端口扫描模式 |
 | `gobox np -tcp` | `nc` | ✅ 一致 | TCP 模式（默认） |
 | `gobox np -udp` | `nc -u` | ✅ 一致 | UDP 模式 |
 | `gobox np -v` | `ping -v` | ✅ 一致 | 详细输出 |
-| `gobox np -w int` | `hping -c` | 🆕 gobox扩展 | 并发工作数（默认 1） |
+| `gobox np -w int` | 工作池并发 | 🆕 gobox扩展 | 并发工作数（默认 1） |
 
 ---
 
@@ -393,7 +377,6 @@
 | tw | 网络 | Web 服务器 |
 | nslookup/dig | 网络 | DNS 查询 |
 | ifstat | 网络 | 网络接口统计 |
-| hping | 网络 | TCP/IP 包生成器 |
 | np | 网络 | 网络 ping |
 | ps | 进程 | 进程列表 |
 | top | 进程 | 进程监控 |

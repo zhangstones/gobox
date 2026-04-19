@@ -97,7 +97,7 @@ func TestRunCurlSilentShowErrorKeepsTopLevelErrorOutput(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("expected exit code 2, got %d", code)
 	}
-	if !strings.Contains(err.String(), "curl: invalid URL:") {
+	if !strings.Contains(err.String(), "curl: parse \"://bad-url\":") {
 		t.Fatalf("expected stderr for silent+show-error failure, got %q", err.String())
 	}
 }

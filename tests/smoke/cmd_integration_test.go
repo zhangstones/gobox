@@ -302,15 +302,6 @@ func TestNpCmdHelp(t *testing.T) {
 	}
 }
 
-func TestHpingCmdHelp(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("hping supported only on Linux")
-	}
-	if err := net.HpingCmd([]string{"-h"}); err != nil {
-		t.Fatalf("HpingCmd -h returned error: %v", err)
-	}
-}
-
 // ============ Disk/System Commands ============
 
 func TestMd5sumCmdBasic(t *testing.T) {

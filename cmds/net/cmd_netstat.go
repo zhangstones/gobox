@@ -20,6 +20,10 @@ func NetstatCmd(args []string) error {
 	stateFilter := fsFlags.String("state", "", "filter by connection state (comma-separated, e.g., LISTEN,ESTABLISHED)")
 	portFilter := fsFlags.Int("port", 0, "filter by local or remote port")
 	sortBy := fsFlags.String("sort", "", "sort by recvq|sendq|local|remote|pid")
+	listeningOnly := fsFlags.Bool("l", false, "show listening sockets only")
+	listeningOnlyLong := fsFlags.Bool("listening", false, "show listening sockets only")
+	numericOnly := fsFlags.Bool("n", false, "show numeric addresses and ports")
+	numericOnlyLong := fsFlags.Bool("numeric", false, "show numeric addresses and ports")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox netstat")
 		fmt.Fprintln(os.Stderr, "Print network connection statistics (Linux /proc/net/tcp*, /proc/net/udp*).")
@@ -31,6 +35,10 @@ func NetstatCmd(args []string) error {
 			return nil
 		}
 		return err
+	}
+	_ = *numericOnly || *numericOnlyLong
+	if *listeningOnlyLong {
+		*listeningOnly = true
 	}
 
 	if runtime.GOOS != "linux" {
@@ -78,6 +86,15 @@ func NetstatCmd(args []string) error {
 		}
 		conns = filtered
 	}
+	if *listeningOnly {
+		filtered := conns[:0]
+		for _, c := range conns {
+			if isListeningConn(c) {
+				filtered = append(filtered, c)
+			}
+		}
+		conns = filtered
+	}
 
 	// Sorting
 	switch strings.ToLower(*sortBy) {
@@ -120,6 +137,13 @@ func NetstatCmd(args []string) error {
 		fmt.Printf("%-7d %-7d %-6s %-25s %-25s %-12s %s\n", c.RxQueue, c.TxQueue, proto, local, remote, c.State, pid+"/"+pname)
 	}
 	return nil
+}
+
+func isListeningConn(c tcpConn) bool {
+	if strings.EqualFold(c.State, "LISTEN") {
+		return true
+	}
+	return strings.HasPrefix(c.Proto, "UDP") && c.RemotePort == 0
 }
 
 type tcpConn struct {

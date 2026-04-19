@@ -604,6 +604,74 @@ func TestCurlPostDataWithContentType(t *testing.T) {
 	}
 }
 
+func TestCurlUploadFile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PUT" {
+			t.Errorf("Expected PUT request, got %s", r.Method)
+		}
+		body, _ := io.ReadAll(r.Body)
+		if string(body) != "upload body" {
+			t.Errorf("Expected upload body, got %q", string(body))
+		}
+		fmt.Fprint(w, "uploaded")
+	}))
+	defer server.Close()
+
+	file := filepath.Join(t.TempDir(), "upload.txt")
+	if err := os.WriteFile(file, []byte("upload body"), 0o644); err != nil {
+		t.Fatalf("write upload file: %v", err)
+	}
+
+	output, err := runCurlCmd([]string{"-T", file, server.URL})
+	if err != nil {
+		t.Fatalf("curl command failed: %v", err)
+	}
+	if strings.TrimSpace(output) != "uploaded" {
+		t.Fatalf("expected uploaded response, got %q", output)
+	}
+}
+
+func TestCurlMultipartFormUpload(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+		reader, err := r.MultipartReader()
+		if err != nil {
+			t.Fatalf("expected multipart request: %v", err)
+		}
+		part, err := reader.NextPart()
+		if err != nil {
+			t.Fatalf("expected multipart part: %v", err)
+		}
+		if part.FormName() != "file" {
+			t.Errorf("Expected form field 'file', got %s", part.FormName())
+		}
+		if part.FileName() != "payload.txt" {
+			t.Errorf("Expected uploaded filename payload.txt, got %s", part.FileName())
+		}
+		data, _ := io.ReadAll(part)
+		if string(data) != "multipart body" {
+			t.Errorf("Expected multipart body, got %q", string(data))
+		}
+		fmt.Fprint(w, "multipart uploaded")
+	}))
+	defer server.Close()
+
+	file := filepath.Join(t.TempDir(), "payload.txt")
+	if err := os.WriteFile(file, []byte("multipart body"), 0o644); err != nil {
+		t.Fatalf("write multipart file: %v", err)
+	}
+
+	output, err := runCurlCmd([]string{"-F", "file=@" + file, server.URL})
+	if err != nil {
+		t.Fatalf("curl command failed: %v", err)
+	}
+	if strings.TrimSpace(output) != "multipart uploaded" {
+		t.Fatalf("expected multipart response, got %q", output)
+	}
+}
+
 // ============== INSECURE MODE TESTS (-k) ==============
 
 func TestCurlInsecureWithBadCert(t *testing.T) {

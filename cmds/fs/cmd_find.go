@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -14,8 +15,11 @@ import (
 
 // FindCmd implements a basic subset of busybox find
 func FindCmd(args []string) error {
+	args = normalizeFindArgs(args)
 	fsFlags := flag.NewFlagSet("find", flag.ContinueOnError)
 	name := fsFlags.String("name", "", "match basename with pattern (shell glob)")
+	pathPattern := fsFlags.String("path", "", "match full path with pattern (shell glob)")
+	negate := fsFlags.Bool("not", false, "negate the combined match result")
 	typ := fsFlags.String("type", "", "file type: f (file) or d (dir)")
 	maxdepth := fsFlags.Int("maxdepth", -1, "maximum depth")
 	mindepth := fsFlags.Int("mindepth", 0, "minimum depth")
@@ -59,8 +63,8 @@ func FindCmd(args []string) error {
 
 	// Debug output
 	if os.Getenv("DEBUG_FIND") != "" {
-		fmt.Fprintf(os.Stderr, "DEBUG: paths=%v, name='%s', typ='%s', maxdepth=%d, mindepth=%d, empty=%v, size='%s', atime='%s', mtime='%s'\n",
-			paths, *name, *typ, *maxdepth, *mindepth, *empty, *size, *atime, *mtime)
+		fmt.Fprintf(os.Stderr, "DEBUG: paths=%v, name='%s', path='%s', typ='%s', not=%v, maxdepth=%d, mindepth=%d, empty=%v, size='%s', atime='%s', mtime='%s'\n",
+			paths, *name, *pathPattern, *typ, *negate, *maxdepth, *mindepth, *empty, *size, *atime, *mtime)
 	}
 
 	for _, root := range paths {
@@ -82,88 +86,100 @@ func FindCmd(args []string) error {
 				return nil
 			}
 
+			matched := true
+
 			// type filter
 			if *typ != "" {
 				if *typ == "f" && d.IsDir() {
-					return nil
+					matched = false
 				}
 				if *typ == "d" && !d.IsDir() {
-					return nil
+					matched = false
 				}
 			}
 
 			// name filter (glob pattern matching, not regex)
-			if *name != "" {
+			if matched && *name != "" {
 				// Use filepath.Match for glob pattern matching
 				// Patterns: * matches any sequence, ? matches any single char, [abc] matches char class
-				matched, err := filepath.Match(*name, d.Name())
-				if err != nil || !matched {
-					return nil
+				nameMatched, err := filepath.Match(*name, d.Name())
+				if err != nil || !nameMatched {
+					matched = false
 				}
 			}
 
+			if matched && *pathPattern != "" {
+				matched = matchPathPattern(*pathPattern, p)
+			}
+
 			// empty filter
-			if *empty {
+			if matched && *empty {
 				if d.IsDir() {
 					// Check if directory is empty
 					entries, err := os.ReadDir(p)
 					if err != nil {
-						return nil
+						matched = false
 					}
-					if len(entries) > 0 {
-						return nil
+					if matched && len(entries) > 0 {
+						matched = false
 					}
 				} else {
 					// Check if file is empty
 					info, err := d.Info()
 					if err != nil {
-						return nil
+						matched = false
 					}
-					if info.Size() > 0 {
-						return nil
+					if matched && info.Size() > 0 {
+						matched = false
 					}
 				}
 			}
 
 			// size filter
-			if *size != "" {
+			if matched && *size != "" {
 				if d.IsDir() {
 					// Skip size filtering for directories
 				} else {
 					info, err := d.Info()
 					if err != nil {
-						return nil
+						matched = false
 					}
-					fileSize := info.Size()
-					if !matchSize(fileSize, *size) {
-						return nil
+					if matched {
+						fileSize := info.Size()
+						if !matchSize(fileSize, *size) {
+							matched = false
+						}
 					}
 				}
 			}
 
 			// atime filter (access time)
-			if *atime != "" {
+			if matched && *atime != "" {
 				info, err := d.Info()
 				if err != nil {
-					return nil
+					matched = false
 				}
-				if !matchTime(info, *atime, "atime") {
-					return nil
+				if matched && !matchTime(info, *atime, "atime") {
+					matched = false
 				}
 			}
 
 			// mtime filter (modify time)
-			if *mtime != "" {
+			if matched && *mtime != "" {
 				info, err := d.Info()
 				if err != nil {
-					return nil
+					matched = false
 				}
-				if !matchTime(info, *mtime, "mtime") {
-					return nil
+				if matched && !matchTime(info, *mtime, "mtime") {
+					matched = false
 				}
 			}
 
-			if *printFlag {
+			if *negate {
+				matched = !matched
+			}
+
+			if matched && *printFlag {
 				fmt.Println(p)
 			}
 			return nil
@@ -173,6 +189,48 @@ func FindCmd(args []string) error {
 		}
 	}
 	return nil
+}
+
+func normalizeFindArgs(args []string) []string {
+	normalized := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "!" {
+			normalized = append(normalized, "-not")
+			continue
+		}
+		normalized = append(normalized, arg)
+	}
+	return normalized
+}
+
+func matchPathPattern(pattern, path string) bool {
+	pattern = filepath.ToSlash(filepath.Clean(pattern))
+	candidate := filepath.ToSlash(filepath.Clean(path))
+	re, err := regexp.Compile(globToRegex(pattern))
+	if err != nil {
+		return false
+	}
+	return re.MatchString(candidate)
+}
+
+func globToRegex(pattern string) string {
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '*':
+			b.WriteString(".*")
+		case '?':
+			b.WriteString(".")
+		case '.', '+', '(', ')', '|', '^', '$', '{', '}', '[', ']', '\\':
+			b.WriteByte('\\')
+			b.WriteByte(pattern[i])
+		default:
+			b.WriteByte(pattern[i])
+		}
+	}
+	b.WriteString("$")
+	return b.String()
 }
 
 func pathDepth(p string) int {
