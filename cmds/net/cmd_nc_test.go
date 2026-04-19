@@ -13,29 +13,38 @@ import (
 	"time"
 )
 
-// runNcCmd runs NcCmd with args and captures stdout
+// runNcCmd runs NcCmd with args and captures stdout and stderr
 func runNcCmd(args []string) (string, error) {
 	var buf bytes.Buffer
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stderr = wErr
 
 	err := NcCmd(args)
 
-	w.Close()
-	io.Copy(&buf, r)
-	os.Stdout = old
+	wOut.Close()
+	wErr.Close()
+	io.Copy(&buf, rOut)
+	io.Copy(&buf, rErr)
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
 	return buf.String(), err
 }
 
-// runNcCmdWithStdin runs NcCmd with stdin input and captures stdout
+// runNcCmdWithStdin runs NcCmd with stdin input and captures stdout and stderr
 func runNcCmdWithStdin(args []string, stdinInput string) (string, error) {
 	var buf bytes.Buffer
 	oldStdout := os.Stdout
+	oldStderr := os.Stderr
 	oldStdin := os.Stdin
 	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
 	rIn, wIn, _ := os.Pipe()
 	os.Stdout = wOut
+	os.Stderr = wErr
 	os.Stdin = rIn
 
 	go func() {
@@ -46,8 +55,11 @@ func runNcCmdWithStdin(args []string, stdinInput string) (string, error) {
 	err := NcCmd(args)
 
 	wOut.Close()
+	wErr.Close()
 	io.Copy(&buf, rOut)
+	io.Copy(&buf, rErr)
 	os.Stdout = oldStdout
+	os.Stderr = oldStderr
 	os.Stdin = oldStdin
 	return buf.String(), err
 }
@@ -461,8 +473,7 @@ func TestNCWaitFlag(t *testing.T) {
 
 func TestNCInvalidPort(t *testing.T) {
 	// Try to listen on invalid port
-	cmd := exec.Command("./gobox", "nc", "-l", "invalid")
-	output, err := cmd.Output()
+	output, err := runNcCmd([]string{"-l", "invalid"})
 	result := string(output)
 	t.Logf("Invalid port output: %s, err: %v", result, err)
 
@@ -474,8 +485,7 @@ func TestNCInvalidPort(t *testing.T) {
 
 func TestNCMissingHost(t *testing.T) {
 	// Client mode without host should error
-	cmd := exec.Command("./gobox", "nc")
-	output, err := cmd.Output()
+	output, err := runNcCmd([]string{})
 	result := string(output)
 	t.Logf("Missing args output: %s, err: %v", result, err)
 
@@ -487,8 +497,8 @@ func TestNCMissingHost(t *testing.T) {
 
 func TestNCConnectionRefused(t *testing.T) {
 	// Try to connect to a port with no server listening
-	cmd := exec.Command("./gobox", "nc", "-zj", "127.0.0.1", "59999")
-	output, err := cmd.Output()
+	output, err := runNcCmd([]string{"-zj", "127.0.0.1", "59999"})
+	_ = output
 	result := string(output)
 	t.Logf("Connection refused output: %s, err: %v", result, err)
 

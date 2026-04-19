@@ -1,23 +1,34 @@
 package net
 
 import (
+	"bytes"
+	"io"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
-// runNpCmd runs the np command with given args and returns output and error
+// runNpCmd runs NpCmd and captures stdout and stderr
 func runNpCmd(args []string) (string, error) {
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, append([]string{"np"}, args...)...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(output), err
-	}
-	return string(output), nil
+	var buf bytes.Buffer
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stderr = wErr
+
+	err := NpCmd(args)
+
+	wOut.Close()
+	wErr.Close()
+	io.Copy(&buf, rOut)
+	io.Copy(&buf, rErr)
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
+	return buf.String(), err
 }
 
 // skipIfNotLinux skips the test if not running on Linux
@@ -201,12 +212,14 @@ func TestNpCmdScanModeNoValidPorts(t *testing.T) {
 func TestNpCmdHelp(t *testing.T) {
 	skipIfNotLinux(t)
 
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, "np", "--help")
-	err := cmd.Run()
+	output, err := runNpCmd([]string{"--help"})
 	// flag.ErrHelp causes exit code 1
 	if err != nil && !strings.Contains(err.Error(), "exit status 1") {
 		t.Fatalf("np --help failed unexpectedly: %v", err)
+	}
+	result := string(output)
+	if !strings.Contains(result, "Usage") && !strings.Contains(result, "np") {
+		t.Errorf("expected help output to contain 'Usage' and 'np', got: %s", result)
 	}
 }
 
@@ -680,11 +693,3 @@ func TestNpCmdPingOutputFormat(t *testing.T) {
 	_ = result
 }
 
-// ============== BINARY EXISTENCE TEST ==============
-
-func TestNpCmdBinaryExists(t *testing.T) {
-	goboxPath := findGoboxBinary()
-	if _, err := os.Stat(goboxPath); os.IsNotExist(err) {
-		t.Fatalf("gobox binary not found at %s", goboxPath)
-	}
-}

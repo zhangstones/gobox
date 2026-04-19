@@ -1,60 +1,59 @@
 package text
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// Helper function to build the gobox binary path
-func getGoboxBinary(t *testing.T) string {
-	// Try /root/openclaw/gobox/gobox first (absolute path for test context)
-	if _, err := os.Stat("/root/openclaw/gobox/gobox"); err == nil {
-		return "/root/openclaw/gobox/gobox"
-	}
-	// Fall back to ./gobox (for running from project root)
-	if _, err := os.Stat("./gobox"); err == nil {
-		return "./gobox"
-	}
-	// Fall back to looking in current directory
-	execPath, err := os.Executable()
-	if err != nil {
-		t.Fatalf("Cannot find executable: %v", err)
-	}
-	return execPath
+// runRandCmd runs RandCmd with args and captures stdout
+func runRandCmd(args []string) (string, error) {
+	var buf bytes.Buffer
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := RandCmd(args)
+
+	w.Close()
+	io.Copy(&buf, r)
+	os.Stdout = old
+	return buf.String(), err
 }
 
-// Helper function to run gobox rand command
-func runRandCmd(t *testing.T, args []string) (string, error) {
-	binary := getGoboxBinary(t)
-	cmd := exec.Command(binary, append([]string{"rand"}, args...)...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", err
-	}
-	return string(output), nil
-}
+// runRandCmdWithStdin runs RandCmd with stdin input and captures stdout
+func runRandCmdWithStdin(args []string, stdinInput string) (string, error) {
+	var buf bytes.Buffer
+	oldStdout := os.Stdout
+	oldStdin := os.Stdin
+	rOut, wOut, _ := os.Pipe()
+	rIn, wIn, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stdin = rIn
 
-// Helper function to run gobox rand command with stdin input
-func runRandCmdWithStdin(t *testing.T, args []string, stdin string) (string, error) {
-	binary := getGoboxBinary(t)
-	cmd := exec.Command(binary, append([]string{"rand"}, args...)...)
-	cmd.Stdin = strings.NewReader(stdin)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", err
-	}
-	return string(output), nil
+	go func() {
+		wIn.WriteString(stdinInput)
+		wIn.Close()
+	}()
+
+	err := RandCmd(args)
+
+	wOut.Close()
+	io.Copy(&buf, rOut)
+	os.Stdout = oldStdout
+	os.Stdin = oldStdin
+	return buf.String(), err
 }
 
 // ============== NORMAL CASES TESTS ==============
 
 func TestRandCmdDefault(t *testing.T) {
-	output, err := runRandCmd(t, []string{})
+	output, err := runRandCmd([]string{})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -73,7 +72,7 @@ func TestRandCmdDefault(t *testing.T) {
 }
 
 func TestRandCmdHexExplicit(t *testing.T) {
-	output, err := runRandCmd(t, []string{"-hex"})
+	output, err := runRandCmd([]string{"-hex"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -91,7 +90,7 @@ func TestRandCmdHexExplicit(t *testing.T) {
 }
 
 func TestRandCmdBase64(t *testing.T) {
-	output, err := runRandCmd(t, []string{"-base64"})
+	output, err := runRandCmd([]string{"-base64"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -110,7 +109,7 @@ func TestRandCmdBase64(t *testing.T) {
 }
 
 func TestRandCmdBytes16(t *testing.T) {
-	output, err := runRandCmd(t, []string{"-n", "16"})
+	output, err := runRandCmd([]string{"-n", "16"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -129,7 +128,7 @@ func TestRandCmdBytes16(t *testing.T) {
 }
 
 func TestRandCmdBytes8(t *testing.T) {
-	output, err := runRandCmd(t, []string{"-n", "8"})
+	output, err := runRandCmd([]string{"-n", "8"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -148,7 +147,7 @@ func TestRandCmdBytes8(t *testing.T) {
 }
 
 func TestRandCmdPositionalArg(t *testing.T) {
-	output, err := runRandCmd(t, []string{"16"})
+	output, err := runRandCmd([]string{"16"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -162,7 +161,7 @@ func TestRandCmdPositionalArg(t *testing.T) {
 
 func TestRandCmdCombinedFlags(t *testing.T) {
 	// Test -n16 (combined flag)
-	output, err := runRandCmd(t, []string{"-n16"})
+	output, err := runRandCmd([]string{"-n16"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -175,7 +174,7 @@ func TestRandCmdCombinedFlags(t *testing.T) {
 
 func TestRandCmdShortFlagN(t *testing.T) {
 	// Test -n with separate argument
-	output, err := runRandCmd(t, []string{"-n", "10"})
+	output, err := runRandCmd([]string{"-n", "10"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -188,7 +187,7 @@ func TestRandCmdShortFlagN(t *testing.T) {
 }
 
 func TestRandCmdBase64Explicit(t *testing.T) {
-	output, err := runRandCmd(t, []string{"-base64"})
+	output, err := runRandCmd([]string{"-base64"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -201,7 +200,7 @@ func TestRandCmdBase64Explicit(t *testing.T) {
 }
 
 func TestRandCmdBase64WithBytes(t *testing.T) {
-	output, err := runRandCmd(t, []string{"-n", "24", "-base64"})
+	output, err := runRandCmd([]string{"-n", "24", "-base64"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -222,7 +221,7 @@ func TestRandCmdBase64WithBytes(t *testing.T) {
 // ============== EDGE CASES TESTS ==============
 
 func TestRandCmdZeroBytes(t *testing.T) {
-	output, err := runRandCmd(t, []string{"-n", "0"})
+	output, err := runRandCmd([]string{"-n", "0"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -235,7 +234,7 @@ func TestRandCmdZeroBytes(t *testing.T) {
 }
 
 func TestRandCmdZeroBytesHex(t *testing.T) {
-	output, err := runRandCmd(t, []string{"-n", "0", "-hex"})
+	output, err := runRandCmd([]string{"-n", "0", "-hex"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -247,7 +246,7 @@ func TestRandCmdZeroBytesHex(t *testing.T) {
 }
 
 func TestRandCmdZeroBytesBase64(t *testing.T) {
-	output, err := runRandCmd(t, []string{"-n", "0", "-base64"})
+	output, err := runRandCmd([]string{"-n", "0", "-base64"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -259,7 +258,7 @@ func TestRandCmdZeroBytesBase64(t *testing.T) {
 }
 
 func TestRandCmdLargeBytes(t *testing.T) {
-	output, err := runRandCmd(t, []string{"-n", "1024"})
+	output, err := runRandCmd([]string{"-n", "1024"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -278,7 +277,7 @@ func TestRandCmdLargeBytes(t *testing.T) {
 }
 
 func TestRandCmdVeryLargeBytes(t *testing.T) {
-	output, err := runRandCmd(t, []string{"-n", "4096"})
+	output, err := runRandCmd([]string{"-n", "4096"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -297,7 +296,7 @@ func TestRandCmdVeryLargeBytes(t *testing.T) {
 }
 
 func TestRandCmdLargeBytesBase64(t *testing.T) {
-	output, err := runRandCmd(t, []string{"-n", "1024", "-base64"})
+	output, err := runRandCmd([]string{"-n", "1024", "-base64"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -319,7 +318,7 @@ func TestRandCmdLargeBytesBase64(t *testing.T) {
 // ============== OUTPUT VERIFICATION TESTS ==============
 
 func TestRandCmdHexOutputFormat(t *testing.T) {
-	output, err := runRandCmd(t, []string{"-n", "32"})
+	output, err := runRandCmd([]string{"-n", "32"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -340,7 +339,7 @@ func TestRandCmdHexOutputFormat(t *testing.T) {
 }
 
 func TestRandCmdBase64OutputFormat(t *testing.T) {
-	output, err := runRandCmd(t, []string{"-n", "32", "-base64"})
+	output, err := runRandCmd([]string{"-n", "32", "-base64"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -366,12 +365,12 @@ func TestRandCmdBase64OutputFormat(t *testing.T) {
 
 func TestRandCmdDifferentOutputs(t *testing.T) {
 	// Run multiple times and verify outputs are different (random)
-	output1, err := runRandCmd(t, []string{"-n", "32"})
+	output1, err := runRandCmd([]string{"-n", "32"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
 
-	output2, err := runRandCmd(t, []string{"-n", "32"})
+	output2, err := runRandCmd([]string{"-n", "32"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -384,12 +383,12 @@ func TestRandCmdDifferentOutputs(t *testing.T) {
 func TestRandCmdHexVsBase64Different(t *testing.T) {
 	// Same seed/number should produce same random bytes, but different encoding
 	// Note: Since we can't control the seed, we just verify both produce valid output
-	hexOutput, err := runRandCmd(t, []string{"-n", "32", "-hex"})
+	hexOutput, err := runRandCmd([]string{"-n", "32", "-hex"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
 
-	base64Output, err := runRandCmd(t, []string{"-n", "32", "-base64"})
+	base64Output, err := runRandCmd([]string{"-n", "32", "-base64"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -414,7 +413,7 @@ func TestRandCmdOutputFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	outputFile := filepath.Join(tmpDir, "rand_output.txt")
 
-	_, err := runRandCmd(t, []string{"-n", "32", "-out", outputFile})
+	_, err := runRandCmd([]string{"-n", "32", "-out", outputFile})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -441,7 +440,7 @@ func TestRandCmdOutputFileBase64(t *testing.T) {
 	tmpDir := t.TempDir()
 	outputFile := filepath.Join(tmpDir, "rand_output.txt")
 
-	_, err := runRandCmd(t, []string{"-n", "24", "-base64", "-out", outputFile})
+	_, err := runRandCmd([]string{"-n", "24", "-base64", "-out", outputFile})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -468,7 +467,7 @@ func TestRandCmdOutputFileLarge(t *testing.T) {
 	tmpDir := t.TempDir()
 	outputFile := filepath.Join(tmpDir, "rand_large.txt")
 
-	_, err := runRandCmd(t, []string{"-n", "1024", "-out", outputFile})
+	_, err := runRandCmd([]string{"-n", "1024", "-out", outputFile})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -497,7 +496,7 @@ func TestRandCmdOutputFileOverwrite(t *testing.T) {
 	}
 
 	// Run rand to overwrite
-	_, err = runRandCmd(t, []string{"-n", "16", "-out", outputFile})
+	_, err = runRandCmd([]string{"-n", "16", "-out", outputFile})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -523,7 +522,7 @@ func TestRandCmdOutputFileZeroBytes(t *testing.T) {
 	tmpDir := t.TempDir()
 	outputFile := filepath.Join(tmpDir, "rand_zero.txt")
 
-	_, err := runRandCmd(t, []string{"-n", "0", "-out", outputFile})
+	_, err := runRandCmd([]string{"-n", "0", "-out", outputFile})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -544,49 +543,49 @@ func TestRandCmdOutputFileZeroBytes(t *testing.T) {
 // ============== ERROR CASES TESTS ==============
 
 func TestRandCmdNegativeBytes(t *testing.T) {
-	_, err := runRandCmd(t, []string{"-n", "-5"})
+	_, err := runRandCmd([]string{"-n", "-5"})
 	if err == nil {
 		t.Errorf("Expected error for negative bytes")
 	}
 }
 
 func TestRandCmdInvalidBytes(t *testing.T) {
-	_, err := runRandCmd(t, []string{"-n", "abc"})
+	_, err := runRandCmd([]string{"-n", "abc"})
 	if err == nil {
 		t.Errorf("Expected error for invalid bytes argument")
 	}
 }
 
 func TestRandCmdNegativePositional(t *testing.T) {
-	_, err := runRandCmd(t, []string{"-10"})
+	_, err := runRandCmd([]string{"-10"})
 	if err == nil {
 		t.Errorf("Expected error for negative positional argument")
 	}
 }
 
 func TestRandCmdInvalidPositional(t *testing.T) {
-	_, err := runRandCmd(t, []string{"xyz"})
+	_, err := runRandCmd([]string{"xyz"})
 	if err == nil {
 		t.Errorf("Expected error for invalid positional argument")
 	}
 }
 
 func TestRandCmdOutRequiresArg(t *testing.T) {
-	_, err := runRandCmd(t, []string{"-out"})
+	_, err := runRandCmd([]string{"-out"})
 	if err == nil {
 		t.Errorf("Expected error when -out has no argument")
 	}
 }
 
 func TestRandCmdUnknownOption(t *testing.T) {
-	_, err := runRandCmd(t, []string{"-q"})
+	_, err := runRandCmd([]string{"-q"})
 	if err == nil {
 		t.Errorf("Expected error for unknown option")
 	}
 }
 
 func TestRandCmdHelp(t *testing.T) {
-	output, err := runRandCmd(t, []string{"--help"})
+	output, err := runRandCmd([]string{"--help"})
 	if err != nil {
 		t.Fatalf("rand --help failed: %v", err)
 	}
@@ -601,7 +600,7 @@ func TestRandCmdHelp(t *testing.T) {
 }
 
 func TestRandCmdHelpShort(t *testing.T) {
-	output, err := runRandCmd(t, []string{"-h"})
+	output, err := runRandCmd([]string{"-h"})
 	if err != nil {
 		t.Fatalf("rand -h failed: %v", err)
 	}
@@ -616,7 +615,7 @@ func TestRandCmdHelpShort(t *testing.T) {
 
 func TestRandCmdCombinedShortFlags(t *testing.T) {
 	// Test -n24 -b (24 bytes with base64)
-	output, err := runRandCmd(t, []string{"-n24", "-b"})
+	output, err := runRandCmd([]string{"-n24", "-b"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}
@@ -630,7 +629,7 @@ func TestRandCmdCombinedShortFlags(t *testing.T) {
 
 func TestRandCmdCombinedNHex(t *testing.T) {
 	// Test -n16 -hex (16 bytes with hex explicit)
-	output, err := runRandCmd(t, []string{"-n16", "-hex"})
+	output, err := runRandCmd([]string{"-n16", "-hex"})
 	if err != nil {
 		t.Fatalf("rand command failed: %v", err)
 	}

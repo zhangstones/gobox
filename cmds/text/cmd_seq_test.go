@@ -1,28 +1,57 @@
 package text
 
 import (
+	"bytes"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// Helper function to run gobox seq command
-func runSeqCmd(t *testing.T, args []string) (string, error) {
-	binary := getGoboxBinary(t)
-	cmd := exec.Command(binary, append([]string{"seq"}, args...)...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", err
-	}
-	return string(output), nil
+// runSeqCmd runs SeqCmd with args and captures stdout
+func runSeqCmd(args []string) (string, error) {
+	var buf bytes.Buffer
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := SeqCmd(args)
+
+	w.Close()
+	io.Copy(&buf, r)
+	os.Stdout = old
+	return buf.String(), err
+}
+
+// runSeqCmdWithStdin runs SeqCmd with stdin input and captures stdout
+func runSeqCmdWithStdin(args []string, stdinInput string) (string, error) {
+	var buf bytes.Buffer
+	oldStdout := os.Stdout
+	oldStdin := os.Stdin
+	rOut, wOut, _ := os.Pipe()
+	rIn, wIn, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stdin = rIn
+
+	go func() {
+		wIn.WriteString(stdinInput)
+		wIn.Close()
+	}()
+
+	err := SeqCmd(args)
+
+	wOut.Close()
+	io.Copy(&buf, rOut)
+	os.Stdout = oldStdout
+	os.Stdin = oldStdin
+	return buf.String(), err
 }
 
 // ============== NORMAL CASES TESTS ==============
 
 func TestSeqCmdSingleNumber(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"5"})
+	output, err := runSeqCmd([]string{"5"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -35,7 +64,7 @@ func TestSeqCmdSingleNumber(t *testing.T) {
 }
 
 func TestSeqCmdTwoNumbers(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"2", "5"})
+	output, err := runSeqCmd([]string{"2", "5"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -48,7 +77,7 @@ func TestSeqCmdTwoNumbers(t *testing.T) {
 }
 
 func TestSeqCmdThreeNumbers(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"0", "2", "10"})
+	output, err := runSeqCmd([]string{"0", "2", "10"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -61,7 +90,7 @@ func TestSeqCmdThreeNumbers(t *testing.T) {
 }
 
 func TestSeqCmdThreeNumbersNegativeIncrement(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"10", "-2", "0"})
+	output, err := runSeqCmd([]string{"10", "-2", "0"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -74,7 +103,7 @@ func TestSeqCmdThreeNumbersNegativeIncrement(t *testing.T) {
 }
 
 func TestSeqCmdDefaultStart(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"3"})
+	output, err := runSeqCmd([]string{"3"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -87,7 +116,7 @@ func TestSeqCmdDefaultStart(t *testing.T) {
 }
 
 func TestSeqCmdIncrementOne(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"1", "5"})
+	output, err := runSeqCmd([]string{"1", "5"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -103,7 +132,7 @@ func TestSeqCmdIncrementOne(t *testing.T) {
 
 func TestSeqCmdNegativeLast(t *testing.T) {
 	// Negative numbers as operands not supported - treated as options
-	_, err := runSeqCmd(t, []string{"-5"})
+	_, err := runSeqCmd([]string{"-5"})
 	if err == nil {
 		t.Errorf("Expected error for negative operand (treated as unknown option)")
 	}
@@ -111,7 +140,7 @@ func TestSeqCmdNegativeLast(t *testing.T) {
 
 func TestSeqCmdNegativeRange(t *testing.T) {
 	// Negative numbers as operands not supported - treated as options
-	_, err := runSeqCmd(t, []string{"-3", "-1"})
+	_, err := runSeqCmd([]string{"-3", "-1"})
 	if err == nil {
 		t.Errorf("Expected error for negative operands (treated as unknown options)")
 	}
@@ -119,7 +148,7 @@ func TestSeqCmdNegativeRange(t *testing.T) {
 
 func TestSeqCmdNegativeWithIncrement(t *testing.T) {
 	// Negative numbers as operands not supported - treated as options
-	_, err := runSeqCmd(t, []string{"-10", "2", "-2"})
+	_, err := runSeqCmd([]string{"-10", "2", "-2"})
 	if err == nil {
 		t.Errorf("Expected error for negative operands (treated as unknown options)")
 	}
@@ -128,7 +157,7 @@ func TestSeqCmdNegativeWithIncrement(t *testing.T) {
 func TestSeqCmdEqualWidth(t *testing.T) {
 	// -w flag doesn't zero-pad with %g format (limitation of %g)
 	// Test that -w at least runs without error
-	output, err := runSeqCmd(t, []string{"-w", "9"})
+	output, err := runSeqCmd([]string{"-w", "9"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -142,7 +171,7 @@ func TestSeqCmdEqualWidth(t *testing.T) {
 }
 
 func TestSeqCmdEqualWidthTwoDigits(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"-w", "15"})
+	output, err := runSeqCmd([]string{"-w", "15"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -156,7 +185,7 @@ func TestSeqCmdEqualWidthTwoDigits(t *testing.T) {
 
 func TestSeqCmdEqualWidthNegative(t *testing.T) {
 	// Negative numbers as operands not supported - treated as options
-	_, err := runSeqCmd(t, []string{"-w", "-9"})
+	_, err := runSeqCmd([]string{"-w", "-9"})
 	if err == nil {
 		t.Errorf("Expected error for negative operand (treated as unknown option)")
 	}
@@ -164,14 +193,14 @@ func TestSeqCmdEqualWidthNegative(t *testing.T) {
 
 func TestSeqCmdEqualWidthNegativeSingle(t *testing.T) {
 	// Negative numbers as operands not supported - treated as options
-	_, err := runSeqCmd(t, []string{"-w", "-5"})
+	_, err := runSeqCmd([]string{"-w", "-5"})
 	if err == nil {
 		t.Errorf("Expected error for negative operand (treated as unknown option)")
 	}
 }
 
 func TestSeqCmdZeroIncrement(t *testing.T) {
-	_, err := runSeqCmd(t, []string{"1", "0", "5"})
+	_, err := runSeqCmd([]string{"1", "0", "5"})
 	if err == nil {
 		t.Errorf("Expected error for zero increment")
 	}
@@ -180,7 +209,7 @@ func TestSeqCmdZeroIncrement(t *testing.T) {
 func TestSeqCmdZeroIncrementInArgs(t *testing.T) {
 	// seq 5 0 means FIRST=5, LAST=0 (not INC=0)
 	// Since 5 > 0 and increment is positive, no output is produced
-	output, err := runSeqCmd(t, []string{"5", "0"})
+	output, err := runSeqCmd([]string{"5", "0"})
 	if err != nil {
 		t.Fatalf("seq command failed unexpectedly: %v", err)
 	}
@@ -193,7 +222,7 @@ func TestSeqCmdZeroIncrementInArgs(t *testing.T) {
 // ============== OUTPUT FORMAT TESTS ==============
 
 func TestSeqCmdFormat(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"-f", "%02g", "5"})
+	output, err := runSeqCmd([]string{"-f", "%02g", "5"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -206,7 +235,7 @@ func TestSeqCmdFormat(t *testing.T) {
 }
 
 func TestSeqCmdFormatFloat(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"-f", "%.1f", "3"})
+	output, err := runSeqCmd([]string{"-f", "%.1f", "3"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -219,7 +248,7 @@ func TestSeqCmdFormatFloat(t *testing.T) {
 }
 
 func TestSeqCmdFormatDecimalIncrement(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"-f", "%.2f", "0", "0.5", "2"})
+	output, err := runSeqCmd([]string{"-f", "%.2f", "0", "0.5", "2"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -232,7 +261,7 @@ func TestSeqCmdFormatDecimalIncrement(t *testing.T) {
 }
 
 func TestSeqCmdSeparator(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"-s", ",", "3"})
+	output, err := runSeqCmd([]string{"-s", ",", "3"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -245,7 +274,7 @@ func TestSeqCmdSeparator(t *testing.T) {
 }
 
 func TestSeqCmdSeparatorSpace(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"-s", " ", "3"})
+	output, err := runSeqCmd([]string{"-s", " ", "3"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -258,7 +287,7 @@ func TestSeqCmdSeparatorSpace(t *testing.T) {
 }
 
 func TestSeqCmdSeparatorTab(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"-s", "\t", "3"})
+	output, err := runSeqCmd([]string{"-s", "\t", "3"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -271,7 +300,7 @@ func TestSeqCmdSeparatorTab(t *testing.T) {
 }
 
 func TestSeqCmdFormatAndSeparator(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"-f", "%03g", "-s", ":", "5"})
+	output, err := runSeqCmd([]string{"-f", "%03g", "-s", ":", "5"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -284,7 +313,7 @@ func TestSeqCmdFormatAndSeparator(t *testing.T) {
 }
 
 func TestSeqCmdSeparatorEquals(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"-s", "=", "3"})
+	output, err := runSeqCmd([]string{"-s", "=", "3"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -299,7 +328,7 @@ func TestSeqCmdSeparatorEquals(t *testing.T) {
 // ============== DECIMAL TESTS ==============
 
 func TestSeqCmdDecimalFirst(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"1.5", "3"})
+	output, err := runSeqCmd([]string{"1.5", "3"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -312,7 +341,7 @@ func TestSeqCmdDecimalFirst(t *testing.T) {
 }
 
 func TestSeqCmdDecimalIncrement(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"0", "0.3", "1"})
+	output, err := runSeqCmd([]string{"0", "0.3", "1"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -333,7 +362,7 @@ func TestSeqCmdDecimalIncrement(t *testing.T) {
 }
 
 func TestSeqCmdDecimalLast(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"1", "0.5", "2.5"})
+	output, err := runSeqCmd([]string{"1", "0.5", "2.5"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -348,7 +377,7 @@ func TestSeqCmdDecimalLast(t *testing.T) {
 // ============== LARGE NUMBERS TESTS ==============
 
 func TestSeqCmdLargeNumber(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"100"})
+	output, err := runSeqCmd([]string{"100"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -368,7 +397,7 @@ func TestSeqCmdLargeNumber(t *testing.T) {
 }
 
 func TestSeqCmdLargeIncrement(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"0", "100", "500"})
+	output, err := runSeqCmd([]string{"0", "100", "500"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -383,63 +412,63 @@ func TestSeqCmdLargeIncrement(t *testing.T) {
 // ============== ERROR CASES TESTS ==============
 
 func TestSeqCmdMissingOperand(t *testing.T) {
-	_, err := runSeqCmd(t, []string{})
+	_, err := runSeqCmd([]string{})
 	if err == nil {
 		t.Errorf("Expected error for missing operand")
 	}
 }
 
 func TestSeqCmdInvalidNumber(t *testing.T) {
-	_, err := runSeqCmd(t, []string{"abc"})
+	_, err := runSeqCmd([]string{"abc"})
 	if err == nil {
 		t.Errorf("Expected error for invalid number")
 	}
 }
 
 func TestSeqCmdInvalidFirstNumber(t *testing.T) {
-	_, err := runSeqCmd(t, []string{"abc", "5"})
+	_, err := runSeqCmd([]string{"abc", "5"})
 	if err == nil {
 		t.Errorf("Expected error for invalid first number")
 	}
 }
 
 func TestSeqCmdInvalidSecondNumber(t *testing.T) {
-	_, err := runSeqCmd(t, []string{"1", "xyz"})
+	_, err := runSeqCmd([]string{"1", "xyz"})
 	if err == nil {
 		t.Errorf("Expected error for invalid second number")
 	}
 }
 
 func TestSeqCmdInvalidIncrement(t *testing.T) {
-	_, err := runSeqCmd(t, []string{"1", "abc", "10"})
+	_, err := runSeqCmd([]string{"1", "abc", "10"})
 	if err == nil {
 		t.Errorf("Expected error for invalid increment")
 	}
 }
 
 func TestSeqCmdTooManyArguments(t *testing.T) {
-	_, err := runSeqCmd(t, []string{"1", "2", "3", "4"})
+	_, err := runSeqCmd([]string{"1", "2", "3", "4"})
 	if err == nil {
 		t.Errorf("Expected error for too many arguments")
 	}
 }
 
 func TestSeqCmdUnknownOption(t *testing.T) {
-	_, err := runSeqCmd(t, []string{"-q", "5"})
+	_, err := runSeqCmd([]string{"-q", "5"})
 	if err == nil {
 		t.Errorf("Expected error for unknown option")
 	}
 }
 
 func TestSeqCmdFormatRequiresArg(t *testing.T) {
-	_, err := runSeqCmd(t, []string{"-f", "5"})
+	_, err := runSeqCmd([]string{"-f", "5"})
 	if err == nil {
 		t.Errorf("Expected error when -f has no argument")
 	}
 }
 
 func TestSeqCmdSeparatorRequiresArg(t *testing.T) {
-	_, err := runSeqCmd(t, []string{"-s", "5"})
+	_, err := runSeqCmd([]string{"-s", "5"})
 	if err == nil {
 		t.Errorf("Expected error when -s has no argument")
 	}
@@ -448,7 +477,7 @@ func TestSeqCmdSeparatorRequiresArg(t *testing.T) {
 // ============== HELP TESTS ==============
 
 func TestSeqCmdHelp(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"--help"})
+	output, err := runSeqCmd([]string{"--help"})
 	if err != nil {
 		t.Fatalf("seq --help failed: %v", err)
 	}
@@ -463,7 +492,7 @@ func TestSeqCmdHelp(t *testing.T) {
 }
 
 func TestSeqCmdHelpShort(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"-h"})
+	output, err := runSeqCmd([]string{"-h"})
 	if err != nil {
 		t.Fatalf("seq -h failed: %v", err)
 	}
@@ -478,7 +507,7 @@ func TestSeqCmdHelpShort(t *testing.T) {
 
 func TestSeqCmdCombinedFlagFormat(t *testing.T) {
 	// Test -fFORMAT combined form
-	output, err := runSeqCmd(t, []string{"-f%02g", "5"})
+	output, err := runSeqCmd([]string{"-f%02g", "5"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -492,7 +521,7 @@ func TestSeqCmdCombinedFlagFormat(t *testing.T) {
 
 func TestSeqCmdCombinedFlagSeparator(t *testing.T) {
 	// Test -sSEP combined form - BUG: implementation does not support this form
-	output, err := runSeqCmd(t, []string{"-s,", "3"})
+	output, err := runSeqCmd([]string{"-s,", "3"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -506,7 +535,7 @@ func TestSeqCmdCombinedFlagSeparator(t *testing.T) {
 
 func TestSeqCmdEqualWidthLongForm(t *testing.T) {
 	// -w flag with --equal-width long form - same limitation as short form
-	output, err := runSeqCmd(t, []string{"--equal-width", "9"})
+	output, err := runSeqCmd([]string{"--equal-width", "9"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -520,7 +549,7 @@ func TestSeqCmdEqualWidthLongForm(t *testing.T) {
 }
 
 func TestSeqCmdFormatLongForm(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"--format=%02g", "5"})
+	output, err := runSeqCmd([]string{"--format=%02g", "5"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -533,7 +562,7 @@ func TestSeqCmdFormatLongForm(t *testing.T) {
 }
 
 func TestSeqCmdSeparatorLongForm(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"--separator=:", "3"})
+	output, err := runSeqCmd([]string{"--separator=:", "3"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -548,7 +577,7 @@ func TestSeqCmdSeparatorLongForm(t *testing.T) {
 // ============== BOUNDARY TESTS ==============
 
 func TestSeqCmdSingleValue(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"1"})
+	output, err := runSeqCmd([]string{"1"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -561,7 +590,7 @@ func TestSeqCmdSingleValue(t *testing.T) {
 }
 
 func TestSeqCmdStartGreaterThanEnd(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"10", "1"})
+	output, err := runSeqCmd([]string{"10", "1"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -576,7 +605,7 @@ func TestSeqCmdStartGreaterThanEnd(t *testing.T) {
 }
 
 func TestSeqCmdDecrementToZero(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"5", "-1", "0"})
+	output, err := runSeqCmd([]string{"5", "-1", "0"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -589,7 +618,7 @@ func TestSeqCmdDecrementToZero(t *testing.T) {
 }
 
 func TestSeqCmdDecrementPastZero(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"5", "-2", "-5"})
+	output, err := runSeqCmd([]string{"5", "-2", "-5"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -602,7 +631,7 @@ func TestSeqCmdDecrementPastZero(t *testing.T) {
 }
 
 func TestSeqCmdZeroToNegative(t *testing.T) {
-	output, err := runSeqCmd(t, []string{"0", "-1", "-3"})
+	output, err := runSeqCmd([]string{"0", "-1", "-3"})
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}
@@ -620,11 +649,19 @@ func TestSeqCmdOutputToFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	outputFile := filepath.Join(tmpDir, "seq_output.txt")
 
-	binary := getGoboxBinary(t)
-	cmd := exec.Command(binary, "seq", "5")
-	cmd.Stdout, _ = os.Create(outputFile)
-	cmd.Stderr, _ = os.Create(filepath.Join(tmpDir, "seq_stderr.txt"))
-	err := cmd.Run()
+	// Redirect stdout to file
+	old := os.Stdout
+	f, err := os.Create(outputFile)
+	if err != nil {
+		t.Fatalf("Cannot create output file: %v", err)
+	}
+	os.Stdout = f
+
+	err = SeqCmd([]string{"5"})
+
+	f.Close()
+	os.Stdout = old
+
 	if err != nil {
 		t.Fatalf("seq command failed: %v", err)
 	}

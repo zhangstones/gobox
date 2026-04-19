@@ -1,47 +1,40 @@
 package disk
 
 import (
+	"bytes"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
 
-// findGoboxBinary finds the gobox binary, trying multiple locations
-func findGoboxBinary() string {
-	// Try current directory first
-	if _, err := os.Stat("./gobox"); err == nil {
-		return "./gobox"
-	}
-	// Try project root (two levels up from cmds/disk)
-	if _, err := os.Stat("../../gobox"); err == nil {
-		return "../../gobox"
-	}
-	// Try absolute path from test file location
-	testDir, _ := os.Getwd()
-	// Navigate up to project root
-	for i := 0; i < 4; i++ {
-		if _, err := os.Stat(filepath.Join(testDir, "gobox")); err == nil {
-			return filepath.Join(testDir, "gobox")
-		}
-		testDir = filepath.Dir(testDir)
-	}
-	// Fallback to default
-	return "./gobox"
-}
-
-// runIoperfCmd runs the ioperf command via exec.Command and returns output
+// runIoperfCmd runs IoperfCmd and captures stdout and stderr
 func runIoperfCmd(args []string) (string, error) {
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, append([]string{"ioperf"}, args...)...)
-	output, err := cmd.CombinedOutput()
+	var buf bytes.Buffer
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stderr = wErr
+
+	err := IoperfCmd(args)
+
+	wOut.Close()
+	wErr.Close()
+	io.Copy(&buf, rOut)
+	io.Copy(&buf, rErr)
+
+	// If there was an error, also include it in the output for debugging
 	if err != nil {
-		// Return combined output even on error for debugging
-		return string(output), err
+		buf.WriteString(err.Error())
 	}
-	return string(output), nil
+
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
+	return buf.String(), err
 }
 
 // ============== NORMAL CASES ==============

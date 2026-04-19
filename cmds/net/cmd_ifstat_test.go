@@ -1,40 +1,33 @@
 package net
 
 import (
+	"bytes"
+	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
 
-// findGoboxBinary finds the gobox binary, trying multiple locations
-func findGoboxBinary() string {
-	if _, err := os.Stat("./gobox"); err == nil {
-		return "./gobox"
-	}
-	if _, err := os.Stat("../../gobox"); err == nil {
-		return "../../gobox"
-	}
-	testDir, _ := os.MkdirTemp("", "gobox-test")
-	if testDir != "" {
-		if _, err := os.Stat(filepath.Join(testDir, "gobox")); err == nil {
-			return filepath.Join(testDir, "gobox")
-		}
-	}
-	return "./gobox"
-}
-
-// runIfstatCmd runs the ifstat command with given args and returns output
+// runIfstatCmd runs IfstatCmd and captures stdout and stderr
 func runIfstatCmd(args []string) (string, error) {
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, append([]string{"ifstat"}, args...)...)
-	output, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return string(output), nil
+	var buf bytes.Buffer
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stderr = wErr
+
+	err := IfstatCmd(args)
+
+	wOut.Close()
+	wErr.Close()
+	io.Copy(&buf, rOut)
+	io.Copy(&buf, rErr)
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
+	return buf.String(), err
 }
 
 // skipIfNoInterfaces skips the test if no network interfaces are available
@@ -135,18 +128,16 @@ func TestIfstatCmdMultipleSamples(t *testing.T) {
 func TestIfstatCmdHelp(t *testing.T) {
 	skipIfNoInterfaces(t)
 
-	// --help outputs to stderr, so we need to run the command and check it succeeds
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, "ifstat", "--help")
-	cmd.Stderr = os.Stderr // Let stderr pass through for visibility
-	err := cmd.Run()
-	// --help should cause flag package to exit with code 2, but we treat it as success
-	// since the help was displayed. Actually flag.ErrHelp causes exit code 1.
-	// Let's just check the binary exists and responds to --help
+	// --help outputs to stderr
+	output, err := runIfstatCmd([]string{"--help"})
+	// --help should cause flag package to exit with code 1
 	if err != nil && !strings.Contains(err.Error(), "exit status 1") {
 		t.Fatalf("ifstat --help failed unexpectedly: %v", err)
 	}
-	// Help was displayed (exit 1 from flag package is expected for --help)
+	result := string(output)
+	if !strings.Contains(result, "Usage") && !strings.Contains(result, "ifstat") {
+		t.Errorf("expected help output to contain 'Usage' and 'ifstat', got: %s", result)
+	}
 }
 
 // ============== INTERFACE SELECTION TESTS ==============
@@ -155,9 +146,7 @@ func TestIfstatCmdSpecificInterface(t *testing.T) {
 	skipIfNoInterfaces(t)
 
 	// Get list of available interfaces first
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, "ifstat", "-n", "1")
-	outputBytes, err := cmd.Output()
+	outputBytes, err := runIfstatCmd([]string{"-n", "1"})
 	if err != nil {
 		t.Skip("no interfaces available for testing")
 	}
@@ -194,9 +183,7 @@ func TestIfstatCmdMultipleInterfaces(t *testing.T) {
 	skipIfNoInterfaces(t)
 
 	// Get list of available interfaces first
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, "ifstat", "-n", "1")
-	output, err := cmd.Output()
+	output, err := runIfstatCmd([]string{"-n", "1"})
 	if err != nil {
 		t.Skip("no interfaces available for testing")
 	}
@@ -558,9 +545,7 @@ func TestIfstatCmdEmptyInterfaceName(t *testing.T) {
 
 	// Empty interface name might cause issues
 	// This tests the edge case of empty string after -i
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, "ifstat", "-n", "1", "-i", "")
-	_, err := cmd.Output()
+	_, err := runIfstatCmd([]string{"-n", "1", "-i", ""})
 	if err != nil {
 		t.Logf("Note: empty interface name behavior: %v", err)
 	}
@@ -570,9 +555,7 @@ func TestIfstatCmdCommaOnlyInterface(t *testing.T) {
 	skipIfNoInterfaces(t)
 
 	// Test with just commas (invalid interface spec)
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, "ifstat", "-n", "1", "-i", ",")
-	_, err := cmd.Output()
+	_, err := runIfstatCmd([]string{"-n", "1", "-i", ","})
 	if err == nil {
 		t.Logf("Note: behavior with comma-only interface spec")
 	}
@@ -584,9 +567,7 @@ func TestIfstatCmdInvalidInterval(t *testing.T) {
 	skipIfNoInterfaces(t)
 
 	// Non-numeric interval should cause error
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, "ifstat", "-n", "1", "-p", "abc")
-	_, err := cmd.Output()
+	_, err := runIfstatCmd([]string{"-n", "1", "-p", "abc"})
 	if err == nil {
 		t.Errorf("Expected error for invalid interval 'abc'")
 	}
@@ -596,9 +577,7 @@ func TestIfstatCmdInvalidCount(t *testing.T) {
 	skipIfNoInterfaces(t)
 
 	// Non-numeric count should cause error
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, "ifstat", "-n", "xyz", "-p", "1")
-	_, err := cmd.Output()
+	_, err := runIfstatCmd([]string{"-n", "xyz", "-p", "1"})
 	if err == nil {
 		t.Errorf("Expected error for invalid count 'xyz'")
 	}
@@ -608,9 +587,7 @@ func TestIfstatCmdMissingIntervalArg(t *testing.T) {
 	skipIfNoInterfaces(t)
 
 	// -p without argument should error
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, "ifstat", "-n", "1", "-p")
-	_, err := cmd.Output()
+	_, err := runIfstatCmd([]string{"-n", "1", "-p"})
 	if err == nil {
 		t.Errorf("Expected error when -p is missing argument")
 	}
@@ -620,9 +597,7 @@ func TestIfstatCmdMissingCountArg(t *testing.T) {
 	skipIfNoInterfaces(t)
 
 	// -n without argument should error
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, "ifstat", "-n", "-p", "1")
-	_, err := cmd.Output()
+	_, err := runIfstatCmd([]string{"-n", "-p", "1"})
 	if err == nil {
 		t.Errorf("Expected error when -n is missing argument")
 	}
@@ -632,9 +607,7 @@ func TestIfstatCmdMissingInterfaceArg(t *testing.T) {
 	skipIfNoInterfaces(t)
 
 	// -i without argument should error
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, "ifstat", "-n", "1", "-i")
-	_, err := cmd.Output()
+	_, err := runIfstatCmd([]string{"-n", "1", "-i"})
 	if err == nil {
 		t.Errorf("Expected error when -i is missing argument")
 	}
@@ -646,9 +619,7 @@ func TestIfstatCmdUnsupportedOS(t *testing.T) {
 	}
 
 	// On non-Linux systems, should fail with "supported only on Linux"
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, "ifstat")
-	_, err := cmd.Output()
+	_, err := runIfstatCmd([]string{})
 	if err == nil {
 		t.Errorf("Expected error on non-Linux OS")
 	}
@@ -767,9 +738,7 @@ func TestIfstatCmdInterfaceFiltering(t *testing.T) {
 
 	// Test that -i flag actually filters interfaces
 	// Get all interfaces first
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, "ifstat", "-n", "1", "-A")
-	output, err := cmd.Output()
+	output, err := runIfstatCmd([]string{"-n", "1", "-A"})
 	if err != nil {
 		t.Skip("no interfaces available")
 	}
@@ -783,13 +752,12 @@ func TestIfstatCmdInterfaceFiltering(t *testing.T) {
 	}
 
 	// Now get only loopback
-	cmd = exec.Command(goboxPath, "ifstat", "-n", "1", "-i", "lo")
-	output, err = cmd.Output()
+	loOutput, err := runIfstatCmd([]string{"-n", "1", "-i", "lo"})
 	if err != nil {
 		t.Skip("lo interface may not exist")
 	}
 
-	loResult := string(output)
+	loResult := string(loOutput)
 	loLines := strings.Split(strings.TrimSpace(loResult), "\n")
 
 	// Should have fewer interfaces when filtering

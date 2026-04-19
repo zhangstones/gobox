@@ -1,52 +1,71 @@
 package net
 
 import (
+	"bytes"
+	"context"
+	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
 )
 
-// runHpingCmd runs the hping command with given args and returns output and error
+// runHpingCmd runs HpingCmd and captures stdout and stderr
 func runHpingCmd(args []string) (string, error) {
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, append([]string{"hping"}, args...)...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(output), err
-	}
-	return string(output), nil
+	var buf bytes.Buffer
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stderr = wErr
+
+	err := HpingCmd(args)
+
+	wOut.Close()
+	wErr.Close()
+	io.Copy(&buf, rOut)
+	io.Copy(&buf, rErr)
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
+	return buf.String(), err
 }
 
-// runHpingCmdWithTimeout runs hping with a timeout
+// runHpingCmdWithTimeout runs HpingCmd with a context timeout
 func runHpingCmdWithTimeout(args []string, timeout time.Duration) (string, error) {
-	goboxPath := findGoboxBinary()
-	cmd := exec.Command(goboxPath, append([]string{"hping"}, args...)...)
-	done := make(chan error, 1)
-	var output []byte
+	var buf bytes.Buffer
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stderr = wErr
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	errCh := make(chan error, 1)
 	go func() {
-		var err error
-		output, err = cmd.CombinedOutput()
-		done <- err
+		errCh <- HpingCmd(args)
 	}()
 
 	select {
-	case err := <-done:
-		return string(output), err
-	case <-time.After(timeout):
-		cmd.Process.Kill()
-		<-done
-		return string(output), nil
-	}
-}
-
-// ============== BINARY EXISTENCE TEST ==============
-
-func TestHpingCmdBinaryExists(t *testing.T) {
-	goboxPath := findGoboxBinary()
-	if _, err := os.Stat(goboxPath); os.IsNotExist(err) {
-		t.Fatalf("gobox binary not found at %s", goboxPath)
+	case err := <-errCh:
+		wOut.Close()
+		wErr.Close()
+		io.Copy(&buf, rOut)
+		io.Copy(&buf, rErr)
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+		return buf.String(), err
+	case <-ctx.Done():
+		wOut.Close()
+		wErr.Close()
+		io.Copy(&buf, rOut)
+		io.Copy(&buf, rErr)
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+		return buf.String(), ctx.Err()
 	}
 }
 

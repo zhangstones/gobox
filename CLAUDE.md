@@ -42,6 +42,34 @@ Every new command MUST have comprehensive test coverage in `cmd_<name>_test.go`:
 - Error cases: non-existent files, permission denied, invalid arguments
 - Bug fixes MUST include regression test cases to prevent the bug from recurring
 
+**Test execution**: Unit tests MUST use direct function calls instead of `exec.Command`. Use stdout/stderr redirection via `os.Pipe()` to capture output. This ensures tests are fast, reliable, and don't depend on the compiled binary being present.
+
+Example of correct approach:
+```go
+// Helper to run command and capture output
+func runCmd(args []string) (string, error) {
+    var buf bytes.Buffer
+    old := os.Stdout
+    r, w, _ := os.Pipe()
+    os.Stdout = w
+    err := MyCmd(args)
+    w.Close()
+    io.Copy(&buf, r)
+    os.Stdout = old
+    return buf.String(), err
+}
+
+// In test:
+output, err := runCmd([]string{"arg1", "arg2"})
+```
+
+Example of prohibited approach:
+```go
+// DO NOT use exec.Command in tests
+cmd := exec.Command("./gobox", "mycmd", "arg1")
+output, err := cmd.Output()
+```
+
 ### Documentation Requirements
 
 When adding new features, changing behavior, or fixing bugs that affect user-visible functionality:

@@ -1,56 +1,91 @@
 package disk
 
 import (
+	"bytes"
 	"crypto/md5"
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// runMd5sumCmd runs the md5sum command via exec.Command and returns output and error
+// runMd5sumCmd runs Md5sumCmd and captures stdout and stderr
 // If dir is provided, the command will be executed in that directory
 func runMd5sumCmd(args []string, dir string) (string, error) {
-	goboxPath := findGoboxBinary()
-	// Resolve to absolute path to work after os.Chdir
-	if !filepath.IsAbs(goboxPath) {
-		if absPath, err := filepath.Abs(goboxPath); err == nil {
-			goboxPath = absPath
-		}
-	}
-	cmd := exec.Command(goboxPath, append([]string{"md5sum"}, args...)...)
+	var buf bytes.Buffer
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stderr = wErr
+
+	var oldDir string
+	var err error
 	if dir != "" {
-		cmd.Dir = dir
+		oldDir, err = os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		os.Chdir(dir)
 	}
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(output), err
+
+	err = Md5sumCmd(args)
+
+	if dir != "" {
+		os.Chdir(oldDir)
 	}
-	return string(output), nil
+
+	wOut.Close()
+	wErr.Close()
+	io.Copy(&buf, rOut)
+	io.Copy(&buf, rErr)
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
+	return buf.String(), err
 }
 
-// runMd5sumCmdWithStdin runs md5sum with stdin input
+// runMd5sumCmdWithStdin runs Md5sumCmd with stdin input and captures output
 // If dir is provided, the command will be executed in that directory
 func runMd5sumCmdWithStdin(args []string, stdinInput string, dir string) (string, error) {
-	goboxPath := findGoboxBinary()
-	// Resolve to absolute path to work after os.Chdir
-	if !filepath.IsAbs(goboxPath) {
-		if absPath, err := filepath.Abs(goboxPath); err == nil {
-			goboxPath = absPath
-		}
-	}
-	cmd := exec.Command(goboxPath, append([]string{"md5sum"}, args...)...)
+	var buf bytes.Buffer
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	oldStdin := os.Stdin
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	rIn, wIn, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stderr = wErr
+	os.Stdin = rIn
+
+	var oldDir string
 	if dir != "" {
-		cmd.Dir = dir
+		oldDir, _ = os.Getwd()
+		os.Chdir(dir)
 	}
-	cmd.Stdin = strings.NewReader(stdinInput)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(output), err
+
+	go func() {
+		wIn.WriteString(stdinInput)
+		wIn.Close()
+	}()
+
+	err := Md5sumCmd(args)
+
+	if dir != "" {
+		os.Chdir(oldDir)
 	}
-	return string(output), nil
+
+	wOut.Close()
+	wErr.Close()
+	io.Copy(&buf, rOut)
+	io.Copy(&buf, rErr)
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
+	os.Stdin = oldStdin
+	return buf.String(), err
 }
 
 // ============== NORMAL CASES TESTS ==============
@@ -691,15 +726,6 @@ func TestMd5sumCmdHelp(t *testing.T) {
 	}
 	if !strings.Contains(result, "md5sum") {
 		t.Errorf("expected 'md5sum' in help output, got: %s", result)
-	}
-}
-
-// ============== BINARY EXISTENCE TEST ==============
-
-func TestMd5sumCmdBinaryExists(t *testing.T) {
-	goboxPath := findGoboxBinary()
-	if _, err := os.Stat(goboxPath); os.IsNotExist(err) {
-		t.Fatalf("gobox binary not found at %s", goboxPath)
 	}
 }
 

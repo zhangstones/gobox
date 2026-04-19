@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -16,29 +15,38 @@ import (
 	"time"
 )
 
-// runCurlCmd runs CurlCmd with args and captures stdout
+// runCurlCmd runs CurlCmd with args and captures stdout and stderr
 func runCurlCmd(args []string) (string, error) {
 	var buf bytes.Buffer
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stderr = wErr
 
 	err := CurlCmd(args)
 
-	w.Close()
-	io.Copy(&buf, r)
-	os.Stdout = old
+	wOut.Close()
+	wErr.Close()
+	io.Copy(&buf, rOut)
+	io.Copy(&buf, rErr)
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
 	return buf.String(), err
 }
 
-// runCurlCmdWithStdin runs CurlCmd with stdin input and captures stdout
+// runCurlCmdWithStdin runs CurlCmd with stdin input and captures stdout and stderr
 func runCurlCmdWithStdin(args []string, stdinInput string) (string, error) {
 	var buf bytes.Buffer
 	oldStdout := os.Stdout
+	oldStderr := os.Stderr
 	oldStdin := os.Stdin
 	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
 	rIn, wIn, _ := os.Pipe()
 	os.Stdout = wOut
+	os.Stderr = wErr
 	os.Stdin = rIn
 
 	go func() {
@@ -49,8 +57,11 @@ func runCurlCmdWithStdin(args []string, stdinInput string) (string, error) {
 	err := CurlCmd(args)
 
 	wOut.Close()
+	wErr.Close()
 	io.Copy(&buf, rOut)
+	io.Copy(&buf, rErr)
 	os.Stdout = oldStdout
+	os.Stderr = oldStderr
 	os.Stdin = oldStdin
 	return buf.String(), err
 }
@@ -319,8 +330,7 @@ func TestCurlHeadRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "-I", server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"-I", server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -804,8 +814,7 @@ func TestCurlBenchConcurrency(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "--bench", "-c", "5", "-n", "20", server.URL)
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"--bench", "-c", "5", "-n", "20", server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -821,8 +830,7 @@ func TestCurlBenchThroughput(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "--bench", "-c", "4", "-n", "20", server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"--bench", "-c", "4", "-n", "20", server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -842,8 +850,7 @@ func TestCurlEmptyResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -861,8 +868,7 @@ func TestCurlSpecialCharactersInHeader(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "-i", server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"-i", server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -882,8 +888,7 @@ func TestCurlBinaryData(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -906,8 +911,7 @@ func TestCurlLongResponse(t *testing.T) {
 	outputFile := "test_curl_large.txt"
 	defer os.Remove(outputFile)
 
-	cmd := exec.Command("./gobox", "curl", "-o", outputFile, server.URL)
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"-o", outputFile, server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -925,8 +929,7 @@ func TestCurlLongResponse(t *testing.T) {
 // ============== ERROR CASES ==============
 
 func TestCurlInvalidURL(t *testing.T) {
-	cmd := exec.Command("./gobox", "curl", "://invalid-url")
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"://invalid-url"})
 	if err == nil {
 		t.Errorf("Expected error for invalid URL")
 	}
@@ -934,56 +937,49 @@ func TestCurlInvalidURL(t *testing.T) {
 
 func TestCurlConnectionRefused(t *testing.T) {
 	// Try to connect to a port that nothing is listening on
-	cmd := exec.Command("./gobox", "curl", "http://127.0.0.1:59999")
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"http://127.0.0.1:59999"})
 	if err == nil {
 		t.Errorf("Expected error for connection refused")
 	}
 }
 
 func TestCurlNonExistentHost(t *testing.T) {
-	cmd := exec.Command("./gobox", "curl", "http://this-host-does-not-exist-xyz.example.com")
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"http://this-host-does-not-exist-xyz.example.com"})
 	if err == nil {
 		t.Errorf("Expected error for non-existent host")
 	}
 }
 
 func TestCurlMissingURL(t *testing.T) {
-	cmd := exec.Command("./gobox", "curl")
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{})
 	if err == nil {
 		t.Errorf("Expected error when no URL provided")
 	}
 }
 
 func TestCurlInvalidOption(t *testing.T) {
-	cmd := exec.Command("./gobox", "curl", "-z")
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"-z"})
 	if err == nil {
 		t.Errorf("Expected error for invalid option")
 	}
 }
 
 func TestCurlOutputOptionMissingArgument(t *testing.T) {
-	cmd := exec.Command("./gobox", "curl", "-o")
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"-o"})
 	if err == nil {
 		t.Errorf("Expected error when -o is missing argument")
 	}
 }
 
 func TestCurlMaxTimeInvalid(t *testing.T) {
-	cmd := exec.Command("./gobox", "curl", "-m", "invalid", "http://example.com")
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"-m", "invalid", "http://example.com"})
 	if err == nil {
 		t.Errorf("Expected error for invalid max-time value")
 	}
 }
 
 func TestCurlConnectTimeoutInvalid(t *testing.T) {
-	cmd := exec.Command("./gobox", "curl", "--connect-timeout", "abc", "http://example.com")
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"--connect-timeout", "abc", "http://example.com"})
 	if err == nil {
 		t.Errorf("Expected error for invalid connect-timeout value")
 	}
@@ -1004,13 +1000,12 @@ func TestCurlCombinedOptions(t *testing.T) {
 	outputFile := "test_combined.txt"
 	defer os.Remove(outputFile)
 
-	cmd := exec.Command("./gobox", "curl",
+	output, err := runCurlCmd([]string{
 		"-s",
 		"-o", outputFile,
 		"-w", "%{http_code}",
 		"-H", "Authorization: Bearer secret",
-		server.URL)
-	output, err := cmd.Output()
+		server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1047,13 +1042,12 @@ func TestCurlPostWithHeadersAndFollowRedirect(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl",
+	output, err := runCurlCmd([]string{
 		"-L",
 		"-X", "POST",
 		"-d", "key=value",
 		"-H", "Content-Type: application/json",
-		server.URL+"/redirect")
-	output, err := cmd.Output()
+		server.URL + "/redirect"})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1078,8 +1072,7 @@ func TestCurlBenchWithFailOnError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "--bench", "-c", "1", "-n", "5", "-f", server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"--bench", "-c", "1", "-n", "5", "-f", server.URL})
 	// Should complete even with failures when using -f
 	if err != nil {
 		t.Logf("Note: bench mode with -f may behave differently")
@@ -1094,8 +1087,7 @@ func TestCurlBenchWithFailOnError(t *testing.T) {
 // ============== HELP FLAG TEST ==============
 
 func TestCurlHelp(t *testing.T) {
-	cmd := exec.Command("./gobox", "curl", "--help")
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"--help"})
 	if err != nil {
 		t.Fatalf("curl --help failed: %v", err)
 	}
@@ -1118,8 +1110,7 @@ func TestCurlHttp201Created(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "-w", "%{http_code}", "-o", os.DevNull, server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"-w", "%{http_code}", "-o", os.DevNull, server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1136,8 +1127,7 @@ func TestCurlHttp204NoContent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "-w", "%{http_code}", "-o", os.DevNull, server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"-w", "%{http_code}", "-o", os.DevNull, server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1154,8 +1144,7 @@ func TestCurlHttp304NotModified(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "-f", server.URL)
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"-f", server.URL})
 	if err == nil {
 		// 304 is technically not an error condition
 		t.Logf("Note: 304 with -f returned no error")
@@ -1172,8 +1161,7 @@ func TestCurlBenchRequestTimeout(t *testing.T) {
 	defer server.Close()
 
 	// Set request timeout to 50ms - some requests should fail
-	cmd := exec.Command("./gobox", "curl", "--bench", "-c", "2", "-n", "10", "-t", "0.05", server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"--bench", "-c", "2", "-n", "10", "-t", "0.05", server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1193,8 +1181,7 @@ func TestCurlBenchDefaults(t *testing.T) {
 	defer server.Close()
 
 	// Test with no -c or -n specified (should use defaults)
-	cmd := exec.Command("./gobox", "curl", "--bench", server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"--bench", server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1218,8 +1205,7 @@ func TestCurlWriteOutUnknownFormat(t *testing.T) {
 	defer server.Close()
 
 	// Unknown format specifiers should be left as-is
-	cmd := exec.Command("./gobox", "curl", "-w", "unknown %{unknown}", "-o", os.DevNull, server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"-w", "unknown %{unknown}", "-o", os.DevNull, server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1235,9 +1221,7 @@ func TestCurlWriteOutUnknownFormat(t *testing.T) {
 func TestCurlStdinNotSupported(t *testing.T) {
 	// curl doesn't support reading URL from stdin like some commands
 	// This should just fail with "URL required"
-	cmd := exec.Command("./gobox", "curl")
-	cmd.Stdin = strings.NewReader("http://example.com")
-	_, err := cmd.Output()
+	_, err := runCurlCmdWithStdin([]string{}, "http://example.com")
 	if err == nil {
 		t.Errorf("Expected error when no URL provided")
 	}
@@ -1252,8 +1236,7 @@ func TestCurlUrlWithTrailingSlash(t *testing.T) {
 	defer server.Close()
 
 	url := strings.TrimSuffix(server.URL, "/") + "/"
-	cmd := exec.Command("./gobox", "curl", url)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{url})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1277,11 +1260,10 @@ func TestCurlMultipleSameHeaders(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl",
+	output, err := runCurlCmd([]string{
 		"-H", "X-Multi: value1",
 		"-H", "X-Multi: value2",
-		server.URL)
-	output, err := cmd.Output()
+		server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1303,8 +1285,7 @@ func TestCurlEmptyHeaderValue(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "-H", "X-Empty:", server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"-H", "X-Empty:", server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1319,8 +1300,7 @@ func TestCurlEmptyHeaderValue(t *testing.T) {
 
 func TestCurlHttpsGoogle(t *testing.T) {
 	// Test against a real HTTPS server
-	cmd := exec.Command("./gobox", "curl", "-s", "-o", os.DevNull, "-w", "%{http_code}", "https://example.com")
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"-s", "-o", os.DevNull, "-w", "%{http_code}", "https://example.com"})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1343,8 +1323,7 @@ func TestCurlBenchWithWarmupRequests(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "--bench", "-c", "1", "-n", "3", "--warmup", "2", server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"--bench", "-c", "1", "-n", "3", "--warmup", "2", server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1368,8 +1347,7 @@ func TestCurlOutputFileOverwrite(t *testing.T) {
 	writeTestFile(t, outputFile, "old content")
 	defer os.Remove(outputFile)
 
-	cmd := exec.Command("./gobox", "curl", "-o", outputFile, server.URL)
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"-o", outputFile, server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1392,8 +1370,7 @@ func TestCurlHeadWithFail(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "-I", "-f", server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"-I", "-f", server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1417,8 +1394,7 @@ func TestCurlDataImpliesPost(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "-d", "test=data", server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"-d", "test=data", server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1432,24 +1408,21 @@ func TestCurlDataImpliesPost(t *testing.T) {
 // ============== MISSING ARGUMENTS ==============
 
 func TestCurlMissingHeaderArgument(t *testing.T) {
-	cmd := exec.Command("./gobox", "curl", "-H", "http://example.com")
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"-H", "http://example.com"})
 	if err == nil {
 		t.Errorf("Expected error when -H is missing argument")
 	}
 }
 
 func TestCurlMissingDataArgument(t *testing.T) {
-	cmd := exec.Command("./gobox", "curl", "-d", "http://example.com")
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"-d", "http://example.com"})
 	// -d requires a URL after it, but curl will try to use "http://example.com" as the URL
 	// The error should be about something else or it might actually work
 	t.Logf("Note: -d with single argument behavior: err=%v", err)
 }
 
 func TestCurlMissingResolveArgument(t *testing.T) {
-	cmd := exec.Command("./gobox", "curl", "--resolve", "http://example.com")
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"--resolve", "http://example.com"})
 	if err == nil {
 		t.Errorf("Expected error when --resolve is missing arguments")
 	}
@@ -1463,8 +1436,7 @@ func TestCurlBenchAllSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "--bench", "-c", "4", "-n", "40", server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"--bench", "-c", "4", "-n", "40", server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1484,8 +1456,7 @@ func TestCurlWriteOutSizeDownload(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "-w", "%{size_download}", "-o", os.DevNull, server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"-w", "%{size_download}", "-o", os.DevNull, server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1509,8 +1480,7 @@ func TestCurlBenchActualRequestCount(t *testing.T) {
 	defer server.Close()
 
 	// Use higher request count to verify actual number of requests
-	cmd := exec.Command("./gobox", "curl", "--bench", "-c", "2", "-n", "50", server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"--bench", "-c", "2", "-n", "50", server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1532,8 +1502,7 @@ func TestCurlBenchWithoutSilent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "--bench", "-c", "1", "-n", "5", server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"--bench", "-c", "1", "-n", "5", server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1558,8 +1527,7 @@ func TestCurlBenchConcurrentLimit(t *testing.T) {
 		n, _ := strconv.Atoi(c)
 		totalRequests := n * 5
 
-		cmd := exec.Command("./gobox", "curl", "--bench", "-c", c, "-n", strconv.Itoa(totalRequests), server.URL)
-		output, err := cmd.Output()
+		output, err := runCurlCmd([]string{"--bench", "-c", c, "-n", strconv.Itoa(totalRequests), server.URL})
 		if err != nil {
 			t.Fatalf("curl command failed for concurrency %s: %v", c, err)
 		}
@@ -1584,8 +1552,7 @@ func TestCurlPostLargeData(t *testing.T) {
 	defer server.Close()
 
 	largeData := strings.Repeat("A", 1024*50)
-	cmd := exec.Command("./gobox", "curl", "-d", largeData, server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"-d", largeData, server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1604,8 +1571,7 @@ func TestCurlHttp401Unauthorized(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "-f", server.URL)
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"-f", server.URL})
 	if err == nil {
 		t.Errorf("Expected error on 401 with -f flag")
 	}
@@ -1619,8 +1585,7 @@ func TestCurlHttp403Forbidden(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "-f", server.URL)
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"-f", server.URL})
 	if err == nil {
 		t.Errorf("Expected error on 403 with -f flag")
 	}
@@ -1639,8 +1604,7 @@ func TestCurlHeadNoBody(t *testing.T) {
 	writeTestFile(t, outputFile, "should not be overwritten")
 	defer os.Remove(outputFile)
 
-	cmd := exec.Command("./gobox", "curl", "-I", "-o", outputFile, server.URL)
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"-I", "-o", outputFile, server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1675,8 +1639,7 @@ func TestCurlRedirectChain(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "-L", server.URL+"/1")
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"-L", server.URL+"/1"})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1699,8 +1662,7 @@ func TestCurlWriteOutWithRedirect(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "-L", "-w", "Status: %{http_code}", "-o", os.DevNull, server.URL+"/redirect")
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"-L", "-w", "Status: %{http_code}", "-o", os.DevNull, server.URL+"/redirect"})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1724,8 +1686,7 @@ func TestCurlPostEmptyData(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cmd := exec.Command("./gobox", "curl", "-d", "", server.URL)
-	output, err := cmd.Output()
+	output, err := runCurlCmd([]string{"-d", "", server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1747,8 +1708,7 @@ func TestCurlOutputAbsolutePath(t *testing.T) {
 	absPath := filepath.Join(os.TempDir(), "test_curl_absolute.txt")
 	defer os.Remove(absPath)
 
-	cmd := exec.Command("./gobox", "curl", "-o", absPath, server.URL)
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"-o", absPath, server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1775,8 +1735,7 @@ func TestCurlOutputFileCleanupOnError(t *testing.T) {
 	writeTestFile(t, outputFile, "original content")
 	defer os.Remove(outputFile)
 
-	cmd := exec.Command("./gobox", "curl", "-o", outputFile, server.URL)
-	_, err := cmd.Output()
+	_, err := runCurlCmd([]string{"-o", outputFile, server.URL})
 	if err == nil {
 		t.Logf("Note: command may not error on connection close")
 	}
