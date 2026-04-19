@@ -9,6 +9,7 @@ go build .              # Build main binary (outputs: gobox)
 go build -o <name> .    # Build with custom name
 go test ./...           # Run all tests
 go test -v <file>       # Run single test file
+go test ./tests/smoke   # Run smoke tests only
 ```
 
 ## Architecture
@@ -68,6 +69,18 @@ Example of prohibited approach:
 // DO NOT use exec.Command in tests
 cmd := exec.Command("./gobox", "mycmd", "arg1")
 output, err := cmd.Output()
+```
+
+### Smoke Tests
+
+Smoke tests (`tests/smoke/`) provide a quick sanity check that every command can run without crashing. They cover the 1-3 most core features of each command:
+- Cross-platform: `find`, `du`, `xargs`, `grep`, `sed`, `head`, `tail`, `sort`, `uniq`, `wc`
+- Network: `dig`, `curl`, `nc`, `tw`, `ifstat`, `np`, `hping`
+- System: `ps`, `top`, `iostat`, `netstat`, `md5sum`, `ioperf`, `rand`, `seq`
+
+Run smoke tests before submitting PRs:
+```bash
+go test ./tests/smoke -v
 ```
 
 ### Documentation Requirements
