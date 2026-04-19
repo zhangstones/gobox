@@ -98,18 +98,19 @@ func PsCmd(args []string) error {
 		}
 
 		// print
-		// check if stdout is a terminal; only truncate when output is a terminal
-		isatty := utils.IsTerminal(os.Stdout)
 		if *full {
-			fmt.Printf("%6s %6s %6s %8s %8s %s\n", "PID", "PPID", "%CPU", "RSS", "VMS", "CMD")
+			fmt.Printf("%6s %6s %6s %8s %8s %s\n", "PID", "PPID", "%CPU", "RSS", "VMS", "EXE")
 			for _, pi := range infos {
 				rss := utils.HumanSize(pi.rss)
 				vms := utils.HumanSize(pi.vsize)
-				cmd := pi.cmdline
-				if *maxCmd > 0 && isatty {
-					cmd = truncateString(cmd, *maxCmd)
+				exe := pi.exe
+				if exe == "" {
+					exe = pi.cmdline
 				}
-				fmt.Printf("%6d %6d %6.1f %8s %8s %s\n", pi.pid, pi.ppid, pi.cpu, rss, vms, cmd)
+				if *maxCmd > 0 {
+					exe = truncateString(exe, *maxCmd)
+				}
+				fmt.Printf("%6d %6d %6.1f %8s %8s %s\n", pi.pid, pi.ppid, pi.cpu, rss, vms, exe)
 			}
 			return nil
 		}
@@ -119,7 +120,7 @@ func PsCmd(args []string) error {
 			rss := utils.HumanSize(pi.rss)
 			vms := utils.HumanSize(pi.vsize)
 			cmd := pi.cmdline
-			if *maxCmd > 0 && isatty {
+			if *maxCmd > 0 {
 				cmd = truncateString(cmd, *maxCmd)
 			}
 			fmt.Printf("%6d %6.1f %8s %8s %s\n", pi.pid, pi.cpu, rss, vms, cmd)

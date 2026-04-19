@@ -200,11 +200,11 @@ func IfstatCmd(args []string) error {
 	iter := 0
 	for continuous || iter < *count {
 		iter++
-		if iter > 1 || !continuous {
-			// Sleep between samples
-			if *interval <= 0 {
-				*interval = 1
-			}
+		if *interval <= 0 {
+			*interval = 1
+		}
+		if iter > 1 {
+			// Sleep between samples; emit the first sample immediately so finite runs don't stall.
 			time.Sleep(time.Duration(*interval) * time.Second)
 		}
 

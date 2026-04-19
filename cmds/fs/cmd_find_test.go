@@ -9,13 +9,13 @@ import (
 
 func TestPathDepth(t *testing.T) {
 	cases := map[string]int{
-		"":      0,
-		".":     0,
+		"":                         0,
+		".":                        0,
 		string(filepath.Separator): 0,
-		"a":     1,
-		"a/b":   2,
-		"a/b/":  2,
-		"a/b/c": 3,
+		"a":                        1,
+		"a/b":                      2,
+		"a/b/":                     2,
+		"a/b/c":                    3,
 	}
 	for input, want := range cases {
 		if got := pathDepth(input); got != want {
@@ -78,8 +78,8 @@ func TestMatchTimeMTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat file: %v", err)
 	}
-	if !matchTime(info, "1d", "mtime") {
-		t.Fatalf("expected mtime to match within 1 day")
+	if matchTime(info, "1d", "mtime") {
+		t.Fatalf("expected fresh mtime to not match exactly 1 day old")
 	}
 	if matchTime(info, "bogus", "mtime") {
 		t.Fatalf("expected bogus time spec to return false")
@@ -103,7 +103,7 @@ func TestMatchTimeATimeOlder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat file: %v", err)
 	}
-	if !matchTime(info, "-1h", "atime") {
+	if !matchTime(info, "+1h", "atime") {
 		t.Fatalf("expected atime older than 1h to match")
 	}
 }

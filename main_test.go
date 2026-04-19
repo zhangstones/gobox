@@ -73,3 +73,31 @@ func TestRunUnknownCommand(t *testing.T) {
 		t.Fatalf("expected usage on stdout, got %q", out.String())
 	}
 }
+
+func TestRunCurlSilentSuppressesTopLevelErrorOutput(t *testing.T) {
+	var out bytes.Buffer
+	var err bytes.Buffer
+
+	code := run([]string{"curl", "-s", "://bad-url"}, &out, &err)
+
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
+	}
+	if err.Len() != 0 {
+		t.Fatalf("expected no stderr for silent curl failure, got %q", err.String())
+	}
+}
+
+func TestRunCurlSilentShowErrorKeepsTopLevelErrorOutput(t *testing.T) {
+	var out bytes.Buffer
+	var err bytes.Buffer
+
+	code := run([]string{"curl", "-s", "-S", "://bad-url"}, &out, &err)
+
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
+	}
+	if !strings.Contains(err.String(), "curl: invalid URL:") {
+		t.Fatalf("expected stderr for silent+show-error failure, got %q", err.String())
+	}
+}

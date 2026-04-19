@@ -90,7 +90,14 @@ func NetstatCmd(args []string) error {
 	case "remote":
 		sort.Slice(conns, func(i, j int) bool { return conns[i].RemotePort < conns[j].RemotePort })
 	case "pid":
-		sort.Slice(conns, func(i, j int) bool { return conns[i].Inode < conns[j].Inode })
+		sort.Slice(conns, func(i, j int) bool {
+			pi := inodeToPid[conns[i].Inode]
+			pj := inodeToPid[conns[j].Inode]
+			if pi == pj {
+				return conns[i].Inode < conns[j].Inode
+			}
+			return pi < pj
+		})
 	}
 
 	// Print header: Recv-Q Send-Q Proto LocalAddress RemoteAddress State PID/Program

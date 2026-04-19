@@ -1,6 +1,7 @@
 package net
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -19,6 +20,23 @@ type resolveHost struct {
 	host string
 	port string
 	addr string
+}
+
+type curlCommandError struct {
+	err            error
+	suppressStderr bool
+}
+
+func (e curlCommandError) Error() string {
+	return e.err.Error()
+}
+
+func (e curlCommandError) Unwrap() error {
+	return e.err
+}
+
+func (e curlCommandError) SuppressCLIError() bool {
+	return e.suppressStderr
 }
 
 // curlCmd implements curl functionality
@@ -45,7 +63,7 @@ func CurlCmd(args []string) error {
 		// Benchmark mode
 		benchMode      bool
 		concurrent     int
-		totalRequests int
+		totalRequests  int
 		warmupRequests int
 		requestTimeout time.Duration
 	)
@@ -229,6 +247,19 @@ doneFlags:
 			InsecureSkipVerify: insecure,
 		},
 	}
+	if len(resolveHosts) > 0 {
+		resolveMap := make(map[string]string, len(resolveHosts))
+		for _, host := range resolveHosts {
+			resolveMap[net.JoinHostPort(host.host, host.port)] = net.JoinHostPort(host.addr, host.port)
+		}
+		dialer := &net.Dialer{Timeout: connectTimeout}
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if mapped, ok := resolveMap[addr]; ok {
+				return dialer.DialContext(ctx, network, mapped)
+			}
+			return dialer.DialContext(ctx, network, addr)
+		}
+	}
 
 	client := &http.Client{
 		Transport: transport,
@@ -250,6 +281,16 @@ doneFlags:
 	// Normal mode
 	return runSingle(client, targetURL, request, headers, postData, head,
 		outputFile, writeOut, showHeaders, failOnError, silent, showError)
+}
+
+func wrapCurlError(err error, silent, showError bool) error {
+	if err == nil {
+		return nil
+	}
+	return curlCommandError{
+		err:            err,
+		suppressStderr: silent && !showError,
+	}
 }
 
 func printCurlUsage(w io.Writer) {
@@ -300,7 +341,7 @@ func runSingle(client *http.Client, targetURL, method string, headers []string, 
 
 	req, err := http.NewRequest("GET", targetURL, nil)
 	if err != nil {
-		return fmt.Errorf("invalid URL: %w", err)
+		return wrapCurlError(fmt.Errorf("invalid URL: %w", err), silent, showError)
 	}
 
 	start := time.Now()
@@ -331,18 +372,21 @@ func runSingle(client *http.Client, targetURL, method string, headers []string, 
 	// Execute request
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		if !silent || showError {
+			fmt.Fprintf(os.Stderr, "curl: %v\n", err)
+		}
+		return wrapCurlError(fmt.Errorf("request failed: %w", err), silent, showError)
 	}
 	defer resp.Body.Close()
 
- elapsed := time.Since(start)
+	elapsed := time.Since(start)
 
 	// Handle fail on error
 	if failOnError && resp.StatusCode >= 400 {
-		if !silent {
+		if !silent || showError {
 			fmt.Fprintf(os.Stderr, "curl: HTTP error %d\n", resp.StatusCode)
 		}
-		return fmt.Errorf("HTTP error %d", resp.StatusCode)
+		return wrapCurlError(fmt.Errorf("HTTP error %d", resp.StatusCode), silent, showError)
 	}
 
 	// Build output

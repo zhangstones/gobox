@@ -185,8 +185,8 @@ const (
 type sedCommand struct {
 	typ             cmdType
 	address         string
-	addressNum      int    // For numeric addresses like "3i", -1 for $ (last line)
-	addressNumEnd   int    // For range addresses like "2,4d" (0 = no range)
+	addressNum      int // For numeric addresses like "3i", -1 for $ (last line)
+	addressNumEnd   int // For range addresses like "2,4d" (0 = no range)
 	pattern         *regexp.Regexp
 	replacement     string
 	text            string // For i/a/c commands
@@ -249,7 +249,7 @@ func parseCommand(script string) (sedCommand, error) {
 		if commaIdx > 0 && commaIdx < len(script)-1 {
 			num1Str := script[:commaIdx]
 			rest := script[commaIdx+1:]
-			
+
 			// Find where num2 ends
 			num2End := 0
 			for num2End < len(rest) && rest[num2End] >= '0' && rest[num2End] <= '9' {
@@ -259,8 +259,8 @@ func parseCommand(script string) (sedCommand, error) {
 				num1, err1 := strconv.Atoi(num1Str)
 				num2, err2 := strconv.Atoi(rest[:num2End])
 				if err1 == nil && err2 == nil && num2End < len(rest) {
-					cmd.addressNum = num1      // Start of range
-					cmd.addressNumEnd = num2   // End of range
+					cmd.addressNum = num1    // Start of range
+					cmd.addressNumEnd = num2 // End of range
 					cmdCmd := rest[num2End:]
 					switch cmdCmd[0] {
 					case 'd':
@@ -331,11 +331,11 @@ func parseCommand(script string) (sedCommand, error) {
 			return cmd, fmt.Errorf("invalid regex: %w", err)
 		}
 		rest := script[idx+2:]
-		
+
 		if len(rest) == 0 {
 			return cmd, fmt.Errorf("missing command after address")
 		}
-		
+
 		switch rest[0] {
 		case 'd':
 			cmd.typ = cmdDelete
@@ -367,6 +367,21 @@ func parseCommand(script string) (sedCommand, error) {
 	case "=":
 		cmd.typ = cmdPrintLineNum
 	default:
+		if strings.HasPrefix(script, "i\\") {
+			cmd.typ = cmdInsert
+			cmd.text = parseInsertText(script[1:])
+			return cmd, nil
+		}
+		if strings.HasPrefix(script, "a\\") {
+			cmd.typ = cmdAppend
+			cmd.text = parseInsertText(script[1:])
+			return cmd, nil
+		}
+		if strings.HasPrefix(script, "c\\") {
+			cmd.typ = cmdChange
+			cmd.text = parseInsertText(script[1:])
+			return cmd, nil
+		}
 		return cmd, fmt.Errorf("unsupported command: %s", script)
 	}
 
@@ -378,7 +393,7 @@ func parseInsertText(rest string) string {
 	if len(rest) == 0 {
 		return ""
 	}
-	
+
 	// Skip backslash or space
 	start := 0
 	if rest[0] == '\\' {
@@ -386,7 +401,7 @@ func parseInsertText(rest string) string {
 	} else if rest[0] == ' ' {
 		start = 1
 	}
-	
+
 	return rest[start:]
 }
 

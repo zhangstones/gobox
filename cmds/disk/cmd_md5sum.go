@@ -13,11 +13,20 @@ import (
 
 func Md5sumCmd(args []string) error {
 	fsFlags := flag.NewFlagSet("md5sum", flag.ContinueOnError)
-	checkMode := fsFlags.Bool("c", false, "check MD5 sums against provided file")
-	tag := fsFlags.Bool("tag", false, "produce BSD style output (MD5 (file) = xxx)")
-	quiet := fsFlags.Bool("q", false, "quiet mode")
-	status := fsFlags.Bool("s", false, "only return status code")
-	warn := fsFlags.Bool("w", false, "warn about malformed lines")
+	var checkMode bool
+	var tag bool
+	var quiet bool
+	var status bool
+	var warn bool
+	fsFlags.BoolVar(&checkMode, "c", false, "check MD5 sums against provided file")
+	fsFlags.BoolVar(&checkMode, "check", false, "check MD5 sums against provided file")
+	fsFlags.BoolVar(&tag, "tag", false, "produce BSD style output (MD5 (file) = xxx)")
+	fsFlags.BoolVar(&quiet, "q", false, "quiet mode")
+	fsFlags.BoolVar(&quiet, "quiet", false, "quiet mode")
+	fsFlags.BoolVar(&status, "s", false, "only return status code")
+	fsFlags.BoolVar(&status, "status", false, "only return status code")
+	fsFlags.BoolVar(&warn, "w", false, "warn about malformed lines")
+	fsFlags.BoolVar(&warn, "warn", false, "warn about malformed lines")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox md5sum [OPTION]... [FILE]...")
 		fmt.Fprintln(os.Stderr, "Compute or check MD5 checksums.")
@@ -44,7 +53,7 @@ func Md5sumCmd(args []string) error {
 		stat, _ := os.Stdin.Stat()
 		if (stat.Mode() & os.ModeCharDevice) == 0 {
 			// Data is available on stdin
-			if err := md5sumStdin(*tag, *quiet); err != nil {
+			if err := md5sumStdin(tag, quiet); err != nil {
 				return err
 			}
 			return nil
@@ -53,12 +62,12 @@ func Md5sumCmd(args []string) error {
 		return errors.New("no files specified")
 	}
 
-	if *checkMode {
-		return md5sumCheck(files, *warn, *status, *quiet)
+	if checkMode {
+		return md5sumCheck(files, warn, status, quiet)
 	}
 
 	// Default: compute mode
-	return md5sumFiles(files, *tag, *quiet)
+	return md5sumFiles(files, tag, quiet)
 }
 
 func md5sumStdin(tag, quiet bool) error {
@@ -70,10 +79,11 @@ func md5sumStdin(tag, quiet bool) error {
 	hashStr := fmt.Sprintf("%x", hash)
 	if tag {
 		fmt.Printf("MD5 (stdin) = %s\n", hashStr)
+	} else if quiet {
+		fmt.Println(hashStr)
 	} else {
 		fmt.Printf("%s  -\n", hashStr)
 	}
-	_ = quiet
 	return nil
 }
 
@@ -97,6 +107,8 @@ func md5sumFiles(files []string, tag, quiet bool) error {
 		hashStr := fmt.Sprintf("%x", hash)
 		if tag {
 			fmt.Printf("MD5 (%s) = %s\n", file, hashStr)
+		} else if quiet {
+			fmt.Println(hashStr)
 		} else {
 			fmt.Printf("%s  %s\n", hashStr, file)
 		}

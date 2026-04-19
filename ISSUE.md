@@ -1,59 +1,90 @@
-# Code Review Issues - New Commands (2026-04-18)
+# CMD-DESIGN Alignment Status
 
-## Summary
+目标：修改实现代码，使 `docs/CMD-DESIGN.md` 中列出的命令参数与实际行为一致。
 
-Reviewed 7 new commands: ioperf, ifstat, np, md5sum, rand, seq, hping
+当前结论：
+- 已完成本轮对齐修复与文档收口。
+- 已执行 `go test ./...` 全量回归，结果通过。
+- 当前仅剩文档中明确标注为 `⚠️ 部分一致` 的已知差异项，无新增未记录偏差。
 
----
+## 已修复
 
-## Issues Found and Fixed
+1. `find`
+   - 已修正 `-atime` / `-mtime` 的 `+N`、`-N`、`N` 语义。
+   - 已限制 `-type` 只能是 `f` 或 `d`。
 
-### 1. File Handle Leak in md5sumCheck (FIXED)
-- **File**: cmds/disk/cmd_md5sum.go
-- **Lines**: 115-228 (md5sumCheck function)
-- **Severity**: Medium
-- **Description**: The file `f` opened at line 119 was only closed at line 221, after the scanner loop. If any `continue` statement was hit inside the scanner loop (lines 149, 157, 170), the file handle was leaked.
-- **Fix Applied**: Added `defer f.Close()` immediately after successfully opening the file at line 127, and removed the explicit close at the end of the loop.
+2. `tail`
+   - 已让 `--retry` 在普通模式下也会重试打开文件。
 
-### 2. Goroutine Leak in npProgressReporter (FIXED)
-- **File**: cmds/net/cmd_np.go
-- **Lines**: 534-549 (npProgressReporter function)
-- **Severity**: Medium
-- **Description**: The progress reporter goroutine runs in an infinite loop with `ticker := time.NewTicker(time.Second)` and had no way to stop. When `npTCP` returns, this goroutine would continue running indefinitely.
-- **Fix Applied**: 
-  - Added `stopChan` parameter to `npProgressReporter` function
-  - Added case to select statement to receive from stopChan and exit
+3. `grep`
+   - 已修正 `-q` 的 grep 风格退出码。
+   - 已修正 `-o` + `-i` 在正则模式下丢失忽略大小写的问题。
 
----
+4. `sed`
+   - 已支持裸命令 `i\text` / `a\text` / `c\text`。
 
-## Issues Not Bugs (False Positives)
+5. `wc`
+   - 已修正 `-m` 为字符计数而不是字节计数。
 
-The following were initially thought to be bugs but are actually correct:
+6. `curl`
+   - 已修正 `-S` 的错误输出行为。
+   - 已让 `--resolve` 真正参与连接拨号。
 
-1. **Race condition in npTCPWorker** - The mutex IS properly used to protect the latencies slice access at lines 249-251.
+7. `nc`
+   - 已拆分 `-n` 的 numeric-only / requests 语义冲突。
+   - 已让 numeric-only 拒绝主机名解析。
+   - 相关测试已改为直接调用函数接口，不再构建临时 `gobox` 二进制。
 
-2. **Race condition in npUDP** - The mutex IS properly used to protect the latencies slice access at lines 303-305.
+8. `tw`
+   - 已真正启用 `SO_REUSEADDR`。
 
-3. **Inverted logic in hpingFIN** - The logic is actually correct. The `received` variable tracks "RST received (port closed)" and `lost` tracks "no response (port open|filtered)". The naming is just confusing but the behavior is correct.
+9. `nslookup` / `dig`
+   - 已让 `@DNS_SERVER` 与 `+tcp` 进入实际 DNS 查询路径。
 
-4. **seq.go combined flag -sSEP** - The combined flag handling works correctly as verified by tests.
+10. `np`
+   - 已让 `-I`、`-s` 进入拨号器配置。
+   - 已让 `-l` 真正等待连接关闭/超时，而不是只 sleep。
+   - 已修复进度 goroutine 的收尾问题。
 
----
+11. `netstat`
+   - 已修正 `-sort pid` 为按 PID 排序。
 
-## Pre-existing Test Bugs (Not Related to New Commands)
+12. `iostat`
+   - 已修正 `-H` 的默认值。
 
-1. **cmd_sed_test.go** - Uses undefined variable `filename` instead of `filepath` (lines 537, 539, 545, 556, 572, 577, 587)
-2. **cmd_np_test.go TestParsePortRangeMixedCommaAndDash** - Test says "expected 7 ports" but expected array has 8 elements
+13. `ioperf`
+   - 已让 `-iodepth` 影响执行循环。
+   - 已让 `-group_reporting` 影响输出聚合方式。
 
----
+14. `md5sum`
+   - 已补齐 `--check` / `--quiet` / `--status` / `--warn` 长选项。
 
-## Test Results
+15. `ps` / `top`
+   - 已让 `ps -f` 的全格式输出显示 `PPID` 和可执行文件列，和文档描述对齐。
+   - 已让 `ps -l` 在非 TTY 输出下也生效，不再只在终端里截断命令长度。
+   - 已让 `top` 在非 TTY 输出时不再插入清屏转义序列，便于脚本/测试消费。
 
-All tests for new commands pass:
-- md5sum tests: PASS
-- ioperf tests: PASS  
-- rand tests: PASS
-- seq tests: PASS
-- np tests: PASS
-- hping tests: PASS
-- ifstat tests: PASS
+## 已知保留差异
+
+1. `netstat`
+   - `-port` / `-state` 当前按文档标注保留为“部分一致”：仅支持精确端口匹配、状态名列表过滤。
+   - 已补充回归测试，确认不会误做范围匹配，且 `-sort pid`、状态列表过滤行为正常。
+
+2. `np`
+   - `-i` 仍按微秒解释，和标准 `ping -i` 的秒级语义不同；文档继续保留为“部分一致”。
+
+3. `ps`
+   - `-name` 当前是对子串进行模糊匹配，不等价于完整 `pgrep -f` 语义；文档继续保留为“部分一致”。
+   - 已补充回归测试，确认子串过滤行为符合现有文档描述。
+
+4. `hping`
+   - `-a` / `--spoof` 已在文档中下调为“部分一致”，不再声称 raw socket 级别源地址欺骗。
+
+## 验证结果
+
+- 已完成定向回归：
+  - `go test ./cmds/net/...`
+  - `go test ./cmds/proc/...`
+  - `go test .`
+- 已完成全量回归：
+  - `go test ./...`

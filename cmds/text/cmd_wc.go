@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 )
 
 // wcFlags holds the command-line flags for wc
@@ -164,7 +165,20 @@ func wcReader(r io.Reader, filename string) (wcResult, error) {
 		}
 
 		result.bytes++
-		result.chars++
+		if b < utf8.RuneSelf {
+			result.chars++
+		} else {
+			buf := []byte{b}
+			for !utf8.FullRune(buf) {
+				next, nextErr := scanner.ReadByte()
+				if nextErr != nil {
+					break
+				}
+				buf = append(buf, next)
+				result.bytes++
+			}
+			result.chars++
+		}
 
 		if b == '\n' {
 			result.lines++

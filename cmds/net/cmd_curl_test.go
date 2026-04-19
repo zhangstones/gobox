@@ -151,6 +151,16 @@ func TestCurlSilentModeSuppressesProgress(t *testing.T) {
 	}
 }
 
+func TestCurlSilentModeSuppressesErrorOutput(t *testing.T) {
+	output, err := runCurlCmd([]string{"-s", "://bad-url"})
+	if err == nil {
+		t.Fatalf("expected curl to fail for invalid URL")
+	}
+	if output != "" {
+		t.Fatalf("expected no stdout/stderr output in silent mode, got: %q", output)
+	}
+}
+
 // ============== SHOW ERROR TESTS (-S) ==============
 
 func TestCurlShowErrorWithSilent(t *testing.T) {
@@ -261,6 +271,12 @@ func TestCurlRemoteNameDefault(t *testing.T) {
 	defer server.Close()
 
 	// For URL with trailing slash and no name, should use index.html
+	// Change to temp dir to avoid polluting the source tree
+	tmpDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origDir)
+
 	_, err := runCurlCmd([]string{"-O", server.URL + "/"})
 	if err != nil {
 		// This may error since index.html doesn't exist on the server
@@ -1640,7 +1656,7 @@ func TestCurlRedirectChain(t *testing.T) {
 	}))
 	defer server.Close()
 
-	output, err := runCurlCmd([]string{"-L", server.URL+"/1"})
+	output, err := runCurlCmd([]string{"-L", server.URL + "/1"})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
@@ -1663,7 +1679,7 @@ func TestCurlWriteOutWithRedirect(t *testing.T) {
 	}))
 	defer server.Close()
 
-	output, err := runCurlCmd([]string{"-L", "-w", "Status: %{http_code}", "-o", os.DevNull, server.URL+"/redirect"})
+	output, err := runCurlCmd([]string{"-L", "-w", "Status: %{http_code}", "-o", os.DevNull, server.URL + "/redirect"})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}

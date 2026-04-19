@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"gobox/cmds/utils"
 )
 
 func TopCmd(args []string) error {
@@ -37,8 +39,9 @@ func TopCmd(args []string) error {
 
 	i := 0
 	for {
-		// clear screen (best-effort)
-		fmt.Print("\033[H\033[2J")
+		if utils.IsTerminal(os.Stdout) {
+			fmt.Print("\033[H\033[2J")
+		}
 		// forward selected sorting flags to psCmd so behavior matches cmd_ps.go
 		psArgs := []string{"-f", "-sort", *sortBy}
 		if *rev {

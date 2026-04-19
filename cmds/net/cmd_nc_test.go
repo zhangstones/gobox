@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
@@ -81,13 +80,6 @@ func waitForPort(port int, timeout time.Duration) bool {
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-	}
-}
-
-func killProcess(cmd *exec.Cmd) {
-	if cmd.Process != nil {
-		cmd.Process.Kill()
-		cmd.Wait()
 	}
 }
 
@@ -231,15 +223,7 @@ func TestNCListenAndConnect(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Connect with nc client and send data
-	cmd := exec.Command("./gobox", "nc", "127.0.0.1", strconv.Itoa(port))
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		t.Fatalf("Failed to create stdin pipe: %v", err)
-	}
-	stdin.Write([]byte("hello\n"))
-	stdin.Close()
-
-	output, err := cmd.Output()
+	output, err := runNcCmdWithStdin([]string{"127.0.0.1", strconv.Itoa(port)}, "hello\n")
 	if err != nil {
 		t.Fatalf("nc client failed: %v", err)
 	}
@@ -267,8 +251,7 @@ func TestNCListenUDP(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Connect with nc client using UDP
-	cmd := exec.Command("./gobox", "nc", "-u", "-zj", "127.0.0.1", strconv.Itoa(port))
-	output, err := cmd.Output()
+	output, err := runNcCmd([]string{"-u", "-zj", "127.0.0.1", strconv.Itoa(port)})
 	if err != nil {
 		t.Logf("UDP scan output: %s, err: %v", string(output), err)
 	}
@@ -302,8 +285,7 @@ func TestNCPortScanOpen(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Scan the port with -z (zero I/O)
-	cmd := exec.Command("./gobox", "nc", "-z", "127.0.0.1", strconv.Itoa(port))
-	output, err := cmd.Output()
+	output, err := runNcCmd([]string{"-z", "127.0.0.1", strconv.Itoa(port)})
 	result := string(output)
 	t.Logf("Port scan output: %s, err: %v", result, err)
 
@@ -315,8 +297,7 @@ func TestNCPortScanOpen(t *testing.T) {
 
 func TestNCPortScanClosed(t *testing.T) {
 	// Try to scan a port that is definitely closed
-	cmd := exec.Command("./gobox", "nc", "-zj", "127.0.0.1", "59999")
-	output, err := cmd.Output()
+	output, err := runNcCmd([]string{"-zj", "127.0.0.1", "59999"})
 	result := string(output)
 	t.Logf("Closed port scan output: %s, err: %v", result, err)
 
@@ -340,8 +321,7 @@ func TestNCPortScanUDP(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Scan UDP port
-	cmd := exec.Command("./gobox", "nc", "-zu", "127.0.0.1", strconv.Itoa(port))
-	output, err := cmd.Output()
+	output, err := runNcCmd([]string{"-zu", "127.0.0.1", strconv.Itoa(port)})
 	t.Logf("UDP port scan output: %s, err: %v", string(output), err)
 }
 
@@ -368,8 +348,7 @@ func TestNCVerboseMode(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Connect with verbose mode but zero I/O
-	cmd := exec.Command("./gobox", "nc", "-v", "-z", "127.0.0.1", strconv.Itoa(port))
-	output, err := cmd.Output()
+	output, err := runNcCmd([]string{"-v", "-z", "127.0.0.1", strconv.Itoa(port)})
 	result := string(output)
 	t.Logf("Verbose output: %s", result)
 
@@ -405,8 +384,7 @@ func TestNCVerboseNumeric(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Connect with verbose and numeric mode
-	cmd := exec.Command("./gobox", "nc", "-v", "-n", "-z", "127.0.0.1", strconv.Itoa(port))
-	output, err := cmd.Output()
+	output, err := runNcCmd([]string{"-v", "-n", "-z", "127.0.0.1", strconv.Itoa(port)})
 	result := string(output)
 	t.Logf("Verbose numeric output: %s", result)
 
@@ -423,8 +401,7 @@ func TestNCVerboseNumeric(t *testing.T) {
 func TestNCConnectionTimeout(t *testing.T) {
 	// Try to connect to a host that will not respond
 	// Using a non-routable IP address
-	cmd := exec.Command("./gobox", "nc", "-wj", "1", "-z", "10.255.255.1", "80")
-	output, err := cmd.Output()
+	output, err := runNcCmd([]string{"-wj", "1", "-z", "10.255.255.1", "80"})
 	result := string(output)
 	t.Logf("Timeout test output: %s, err: %v", result, err)
 
@@ -456,8 +433,7 @@ func TestNCWaitFlag(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Connect with short timeout
-	cmd := exec.Command("./gobox", "nc", "-wj", "1", "127.0.0.1", strconv.Itoa(port))
-	_, err = cmd.Output()
+	_, err = runNcCmd([]string{"-wj", "1", "127.0.0.1", strconv.Itoa(port)})
 	t.Logf("Wait flag test err: %v", err)
 
 	// Should timeout
@@ -536,8 +512,7 @@ func TestNCUDPMode(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Connect with UDP using -z (zero I/O) to avoid blocking
-	cmd := exec.Command("./gobox", "nc", "-uj", "-z", "-w", "1", "127.0.0.1", strconv.Itoa(port))
-	output, err := cmd.Output()
+	output, err := runNcCmd([]string{"-uj", "-z", "-w", "1", "127.0.0.1", strconv.Itoa(port)})
 	result := string(output)
 	t.Logf("UDP mode output: %s, err: %v", result, err)
 
@@ -566,8 +541,7 @@ func TestNCUDPScan(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// UDP port scan with -zu
-	cmd := exec.Command("./gobox", "nc", "-zu", "127.0.0.1", strconv.Itoa(port))
-	output, err := cmd.Output()
+	output, err := runNcCmd([]string{"-zu", "127.0.0.1", strconv.Itoa(port)})
 	result := string(output)
 	t.Logf("UDP port scan output: %s, err: %v", result, err)
 
@@ -578,39 +552,52 @@ func TestNCUDPScan(t *testing.T) {
 // ============== BENCHMARK MODE TESTS ==============
 
 func TestNCBenchmarkServer(t *testing.T) {
-	// Start a benchmark server in background
-	cmd := exec.Command("./gobox", "nc", "-l", "--bench")
-	err := cmd.Start()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("Failed to start benchmark server: %v", err)
+		t.Fatalf("Failed to start benchmark listener: %v", err)
 	}
-	defer killProcess(cmd)
+	defer ln.Close()
 
-	// Give server time to start
-	time.Sleep(200 * time.Millisecond)
+	done := make(chan error, 1)
+	go func() {
+		done <- ncBenchServer(ln, false, 64*1024, false)
+	}()
 
-	// Server should be running - kill it
+	port := ln.Addr().(*net.TCPAddr).Port
+	if !waitForPort(port, time.Second) {
+		t.Fatalf("Benchmark server did not start listening on port %d", port)
+	}
+
 	t.Logf("Benchmark server started successfully")
+	_ = ln.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+	}
 }
 
 func TestNCBenchmarkClient(t *testing.T) {
-	// Start benchmark server
-	serverCmd := exec.Command("./gobox", "nc", "-l", "--bench")
-	serverCmd.Stdout = os.Stdout
-	serverCmd.Stderr = os.Stderr
-	err := serverCmd.Start()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("Failed to start benchmark server: %v", err)
+		t.Fatalf("Failed to start benchmark listener: %v", err)
 	}
-	defer killProcess(serverCmd)
+	defer ln.Close()
 
-	// Give server time to start
-	time.Sleep(300 * time.Millisecond)
+	go func() {
+		_ = ncBenchServer(ln, false, 64*1024, false)
+	}()
 
-	t.Logf("Benchmark server started")
+	port := ln.Addr().(*net.TCPAddr).Port
+	if !waitForPort(port, time.Second) {
+		t.Fatalf("Benchmark server did not start listening on port %d", port)
+	}
 
-	// Kill the server
-	killProcess(serverCmd)
+	err = ncBenchmarkClient("127.0.0.1", strconv.Itoa(port), false, false, false, false, false, 1, 1, 0, 1, 1, 1)
+	if err != nil {
+		t.Fatalf("Benchmark client failed: %v", err)
+	}
+
+	t.Logf("Benchmark client completed")
 }
 
 func TestNCBenchmarkModeWithRequests(t *testing.T) {
@@ -633,8 +620,7 @@ func TestNCBenchmarkModeWithRequests(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Run benchmark client with few requests
-	cmd := exec.Command("./gobox", "nc", "--bench", "-n1", "-s1B", "127.0.0.1", strconv.Itoa(port))
-	output, err := cmd.Output()
+	output, err := runNcCmd([]string{"--bench", "-n1", "-s1B", "127.0.0.1", strconv.Itoa(port)})
 	result := string(output)
 	t.Logf("Benchmark output:\n%s", result)
 
@@ -668,8 +654,7 @@ func TestNCNumericOnly(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Connect with numeric-only mode
-	cmd := exec.Command("./gobox", "nc", "-nj", "-z", "127.0.0.1", strconv.Itoa(port))
-	_, err = cmd.Output()
+	_, err = runNcCmd([]string{"-nj", "-z", "127.0.0.1", strconv.Itoa(port)})
 	t.Logf("Numeric only test: err=%v", err)
 
 	ln.Close()
@@ -699,8 +684,7 @@ func TestNCForceIPv4(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Connect with IPv4 only
-	cmd := exec.Command("./gobox", "nc", "-4", "-z", "127.0.0.1", strconv.Itoa(port))
-	_, err = cmd.Output()
+	_, err = runNcCmd([]string{"-4", "-z", "127.0.0.1", strconv.Itoa(port)})
 	t.Logf("Force IPv4 test: err=%v", err)
 
 	ln.Close()
@@ -729,8 +713,7 @@ func TestNCForceIPv6(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Connect with IPv6 only
-	cmd := exec.Command("./gobox", "nc", "-6", "-z", "::1", strconv.Itoa(port))
-	_, err = cmd.Output()
+	_, err = runNcCmd([]string{"-6", "-z", "::1", strconv.Itoa(port)})
 	t.Logf("Force IPv6 test: err=%v", err)
 
 	ln.Close()
@@ -765,8 +748,7 @@ func TestNCEmptyInput(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Connect with -z to avoid blocking on I/O
-	cmd := exec.Command("./gobox", "nc", "-z", "127.0.0.1", strconv.Itoa(port))
-	_, err = cmd.Output()
+	_, err = runNcCmd([]string{"-z", "127.0.0.1", strconv.Itoa(port)})
 	t.Logf("Empty input test: err=%v", err)
 
 	ln.Close()
@@ -800,8 +782,7 @@ func TestNCMultipleConnections(t *testing.T) {
 
 	// Make multiple connections
 	for i := 0; i < 3; i++ {
-		cmd := exec.Command("./gobox", "nc", "-z", "127.0.0.1", strconv.Itoa(port))
-		cmd.Output()
+		runNcCmd([]string{"-z", "127.0.0.1", strconv.Itoa(port)})
 		time.Sleep(50 * time.Millisecond)
 	}
 

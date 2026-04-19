@@ -138,7 +138,7 @@ doneFlags:
 		if multipleFiles && !quiet {
 			fmt.Printf("==> %s <==\n", file)
 		}
-		if err := tailFile(file, os.Stdout, lines); err != nil {
+		if err := tailFileWithRetry(file, os.Stdout, lines, retry); err != nil {
 			return err
 		}
 		if multipleFiles && !quiet && file != files[len(files)-1] {
@@ -195,13 +195,22 @@ func tailReader(r io.Reader, w io.Writer, n int) error {
 }
 
 func tailFile(filename string, w io.Writer, n int) error {
-	file, err := os.Open(filename)
-	if err != nil {
-		return fmt.Errorf("cannot open %s: %w", filename, err)
-	}
-	defer file.Close()
+	return tailFileWithRetry(filename, w, n, false)
+}
 
-	return tailReader(file, w, n)
+func tailFileWithRetry(filename string, w io.Writer, n int, retry bool) error {
+	for {
+		file, err := os.Open(filename)
+		if err != nil {
+			if retry && os.IsNotExist(err) {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			return fmt.Errorf("cannot open %s: %w", filename, err)
+		}
+		defer file.Close()
+		return tailReader(file, w, n)
+	}
 }
 
 // tailFileInfo tracks file info for follow mode

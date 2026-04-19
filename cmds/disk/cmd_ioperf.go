@@ -130,13 +130,13 @@ func IoperfCmd(args []string) error {
 
 	// Create job results channel
 	type jobResult struct {
-		jobID           int
-		readOps         int64
-		writeOps        int64
-		readBytes       int64
-		writeBytes      int64
-		readLatencies   []int64 // nanoseconds
-		writeLatencies  []int64
+		jobID          int
+		readOps        int64
+		writeOps       int64
+		readBytes      int64
+		writeBytes     int64
+		readLatencies  []int64 // nanoseconds
+		writeLatencies []int64
 	}
 
 	resultChan := make(chan jobResult, *numJobs)
@@ -209,6 +209,11 @@ func IoperfCmd(args []string) error {
 			// Random for randread/randwrite
 			rng := NewRand(int64(jid)*1234567 + time.Now().UnixNano())
 
+			depth := *ioDepth
+			if depth < 1 {
+				depth = 1
+			}
+
 			// Main I/O loop
 			for {
 				// Check exit conditions
@@ -230,70 +235,75 @@ func IoperfCmd(args []string) error {
 					}
 				}
 
-				// Determine operation type for readwrite mode
-				var isRead bool
-				switch *rwMode {
-				case "read", "randread":
-					isRead = true
-				case "write", "randwrite":
-					isRead = false
-				case "readwrite":
-					isRead = (rng.Int63n(100) < int64(*rwMixRead))
-				}
-
-				// Calculate offset
-				var offset int64
-				if *rwMode == "randread" || *rwMode == "randwrite" {
-					offset = (rng.Int63n(maxPos+1) / bsBytes) * bsBytes
-				} else {
-					offset = pos
-					pos += bsBytes
-					if pos >= sizeBytes {
-						pos = 0
+				for qd := 0; qd < depth; qd++ {
+					if *timeBased {
+						if time.Now().After(deadline) {
+							break
+						}
+					} else if atomic.LoadInt64(&opsCompleted) >= totalOps {
+						break
 					}
-				}
 
-				// Perform I/O
-				ioStart := time.Now()
-				var n int
-				var ioErr error
-
-				if isRead {
-					n, ioErr = file.ReadAt(buf, offset)
-					if ioErr == io.EOF {
-						ioErr = nil
+					// Determine operation type for readwrite mode
+					var isRead bool
+					switch *rwMode {
+					case "read", "randread":
+						isRead = true
+					case "write", "randwrite":
+						isRead = false
+					case "readwrite":
+						isRead = (rng.Int63n(100) < int64(*rwMixRead))
 					}
-				} else {
-					n, ioErr = file.WriteAt(buf, offset)
-					if *fsync == 1 && ioErr == nil {
-						file.Sync()
-					}
-				}
-				ioEnd := time.Now()
-				ioDuration := ioEnd.Sub(ioStart).Nanoseconds()
 
-				atomic.AddInt64(&opsCompleted, 1)
-
-				if ioErr != nil {
-					if isRead {
-						// Read errors at EOF are ok
-						if ioErr != io.EOF {
-							continue
+					// Calculate offset
+					var offset int64
+					if *rwMode == "randread" || *rwMode == "randwrite" {
+						offset = (rng.Int63n(maxPos+1) / bsBytes) * bsBytes
+					} else {
+						offset = pos
+						pos += bsBytes
+						if pos >= sizeBytes {
+							pos = 0
 						}
 					}
-					// For writes, continue anyway (disk full, etc.)
-					continue
-				}
 
-				// Record stats
-				if isRead {
-					atomic.AddInt64(&result.readOps, 1)
-					atomic.AddInt64(&result.readBytes, int64(n))
-					result.readLatencies = append(result.readLatencies, ioDuration)
-				} else {
-					atomic.AddInt64(&result.writeOps, 1)
-					atomic.AddInt64(&result.writeBytes, int64(n))
-					result.writeLatencies = append(result.writeLatencies, ioDuration)
+					// Perform I/O
+					ioStart := time.Now()
+					var n int
+					var ioErr error
+
+					if isRead {
+						n, ioErr = file.ReadAt(buf, offset)
+						if ioErr == io.EOF {
+							ioErr = nil
+						}
+					} else {
+						n, ioErr = file.WriteAt(buf, offset)
+						if *fsync == 1 && ioErr == nil {
+							file.Sync()
+						}
+					}
+					ioDuration := time.Since(ioStart).Nanoseconds()
+
+					atomic.AddInt64(&opsCompleted, 1)
+
+					if ioErr != nil {
+						if isRead && ioErr != io.EOF {
+							continue
+						}
+						continue
+					}
+
+					// Record stats
+					if isRead {
+						atomic.AddInt64(&result.readOps, 1)
+						atomic.AddInt64(&result.readBytes, int64(n))
+						result.readLatencies = append(result.readLatencies, ioDuration)
+					} else {
+						atomic.AddInt64(&result.writeOps, 1)
+						atomic.AddInt64(&result.writeBytes, int64(n))
+						result.writeLatencies = append(result.writeLatencies, ioDuration)
+					}
 				}
 			}
 
@@ -306,11 +316,13 @@ func IoperfCmd(args []string) error {
 	close(resultChan)
 
 	// Aggregate results
+	var results []jobResult
 	var totalReadOps, totalWriteOps int64
 	var totalReadBytes, totalWriteBytes int64
 	var allReadLatencies, allWriteLatencies []int64
 
 	for result := range resultChan {
+		results = append(results, result)
 		totalReadOps += result.readOps
 		totalWriteOps += result.writeOps
 		totalReadBytes += result.readBytes
@@ -363,14 +375,6 @@ func IoperfCmd(args []string) error {
 		return fmt.Sprintf("avg=%.2fus", avg/1000)
 	}
 
-	// Calculate bandwidth
-	readBW := float64(totalReadBytes) / (1024 * 1024) / duration
-	writeBW := float64(totalWriteBytes) / (1024 * 1024) / duration
-
-	// Calculate IOPS
-	readIOPS := float64(totalReadOps) / duration
-	writeIOPS := float64(totalWriteOps) / duration
-
 	// Print header
 	fmt.Printf("ioperf: bs=%s, jobs=%d, iodepth=%d\n", *blockSize, *numJobs, *ioDepth)
 
@@ -380,16 +384,29 @@ func IoperfCmd(args []string) error {
 		pIdx = 99
 	}
 
-	// Print READ results
-	if totalReadOps > 0 || *rwMode == "read" || *rwMode == "randread" || *rwMode == "readwrite" {
-		avgLat, pLat := calcLatencyStats(allReadLatencies, pIdx)
-		fmt.Printf("READ:  IOPS=%.0f, BW=%.2fMB/s, lat=%s\n", readIOPS, readBW, formatLat(avgLat, pLat, pIdx))
+	printResult := func(prefix string, readOps, writeOps, readBytes, writeBytes int64, readLatencies, writeLatencies []int64) {
+		localReadBW := float64(readBytes) / (1024 * 1024) / duration
+		localWriteBW := float64(writeBytes) / (1024 * 1024) / duration
+		localReadIOPS := float64(readOps) / duration
+		localWriteIOPS := float64(writeOps) / duration
+
+		if readOps > 0 || *rwMode == "read" || *rwMode == "randread" || *rwMode == "readwrite" {
+			avgLat, pLat := calcLatencyStats(readLatencies, pIdx)
+			fmt.Printf("%sREAD:  IOPS=%.0f, BW=%.2fMB/s, lat=%s\n", prefix, localReadIOPS, localReadBW, formatLat(avgLat, pLat, pIdx))
+		}
+		if writeOps > 0 || *rwMode == "write" || *rwMode == "randwrite" || *rwMode == "readwrite" {
+			avgLat, pLat := calcLatencyStats(writeLatencies, pIdx)
+			fmt.Printf("%sWRITE: IOPS=%.0f, BW=%.2fMB/s, lat=%s\n", prefix, localWriteIOPS, localWriteBW, formatLat(avgLat, pLat, pIdx))
+		}
 	}
 
-	// Print WRITE results
-	if totalWriteOps > 0 || *rwMode == "write" || *rwMode == "randwrite" || *rwMode == "readwrite" {
-		avgLat, pLat := calcLatencyStats(allWriteLatencies, pIdx)
-		fmt.Printf("WRITE: IOPS=%.0f, BW=%.2fMB/s, lat=%s\n", writeIOPS, writeBW, formatLat(avgLat, pLat, pIdx))
+	if *groupReporting {
+		printResult("", totalReadOps, totalWriteOps, totalReadBytes, totalWriteBytes, allReadLatencies, allWriteLatencies)
+	} else {
+		for _, result := range results {
+			fmt.Printf("job %d:\n", result.jobID)
+			printResult("  ", result.readOps, result.writeOps, result.readBytes, result.writeBytes, result.readLatencies, result.writeLatencies)
+		}
 	}
 
 	// Print latency histogram if requested

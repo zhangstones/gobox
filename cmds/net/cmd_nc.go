@@ -47,7 +47,16 @@ func NcCmd(args []string) error {
 			udpMode = true
 		case arg == "-v" || arg == "--verbose":
 			verbose = true
-		case arg == "-n" || arg == "--numeric-only":
+		case arg == "--numeric-only":
+			numericOnly = true
+		case arg == "-n":
+			if i+1 < len(args) {
+				if next, err := strconv.Atoi(args[i+1]); err == nil {
+					i++
+					totalRequests = next
+					break
+				}
+			}
 			numericOnly = true
 		case arg == "-4":
 			forceIPv4 = true
@@ -253,6 +262,9 @@ func ncClient(host, port string, udp, zeroIO, verbose, numericOnly, forceIPv4, f
 	}
 
 	addr := net.JoinHostPort(host, port)
+	if numericOnly && net.ParseIP(host) == nil {
+		return fmt.Errorf("numeric-only mode requires a literal IP address")
+	}
 	conn, err := net.DialTimeout(network, addr, time.Duration(waitSec)*time.Second)
 	if err != nil {
 		return fmt.Errorf("connection failed: %w", err)
@@ -436,6 +448,9 @@ func ncBenchmarkClient(host, port string, udp, verbose, numericOnly, forceIPv4, 
 	}
 
 	addr := net.JoinHostPort(host, port)
+	if numericOnly && net.ParseIP(host) == nil {
+		return fmt.Errorf("numeric-only mode requires a literal IP address")
+	}
 
 	if verbose {
 		fmt.Printf("Connecting to %s:%s\n", host, port)

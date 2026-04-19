@@ -17,7 +17,7 @@ func IostatCmd(args []string) error {
 	fsFlags := flag.NewFlagSet("iostat", flag.ContinueOnError)
 	interval := fsFlags.Int("i", 1, "sample interval in seconds")
 	count := fsFlags.Int("n", 1, "number of samples to take")
-	human := fsFlags.Bool("H", true, "humanize IOPS and throughput (e.g. 1.2K, 3.4M)")
+	human := fsFlags.Bool("H", false, "humanize IOPS and throughput (e.g. 1.2K, 3.4M)")
 	showNonZero := fsFlags.Bool("z", false, "show only devices with non-zero I/O rates")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox iostat [-i sec] [-n count] [-H] [-z]")

@@ -11,14 +11,15 @@ import (
 	"strings"
 )
 
-// exitCodeError wraps an exit code for grep's quiet mode
-type exitCodeError int
+// ExitCodeError wraps a shell-style exit code for commands such as grep -q.
+type ExitCodeError int
+type exitCodeError = ExitCodeError
 
-func (e exitCodeError) Error() string {
+func (e ExitCodeError) Error() string {
 	return fmt.Sprintf("exit code %d", int(e))
 }
 
-var errExitQuiet = exitCodeError(1)
+var errExitQuiet = ExitCodeError(1)
 
 // GrepCmd implements a basic subset of grep functionality
 func GrepCmd(args []string) error {
@@ -176,7 +177,7 @@ func grepReader(r io.Reader, pattern string, regex *regexp.Regexp, ignoreCase, i
 							searchPattern = strings.ToLower(pattern)
 							searchLine = strings.ToLower(line)
 						}
-						
+
 						start := 0
 						for {
 							idx := strings.Index(searchLine[start:], searchPattern)
@@ -196,19 +197,7 @@ func grepReader(r io.Reader, pattern string, regex *regexp.Regexp, ignoreCase, i
 						}
 					} else {
 						// Regex matching with -o
-						var re *regexp.Regexp
-						if ignoreCase {
-							// Re-compile with case sensitivity for FindAllString
-							var err error
-							re, err = regexp.Compile(pattern)
-							if err != nil {
-								re = regex
-							}
-						} else {
-							re = regex
-						}
-						
-						foundMatches := re.FindAllString(line, -1)
+						foundMatches := regex.FindAllString(line, -1)
 						for _, m := range foundMatches {
 							if filename != "" {
 								fmt.Fprintf(out, "%s:", filename)

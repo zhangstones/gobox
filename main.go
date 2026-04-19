@@ -12,6 +12,10 @@ import (
 	"gobox/cmds/text"
 )
 
+type cliErrorSilencer interface {
+	SuppressCLIError() bool
+}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -90,7 +94,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if err != nil {
-		fmt.Fprintln(stderr, cmd+":", err)
+		if grepErr, ok := err.(text.ExitCodeError); ok && cmd == "grep" {
+			return int(grepErr)
+		}
+		if silencer, ok := err.(cliErrorSilencer); !ok || !silencer.SuppressCLIError() {
+			fmt.Fprintln(stderr, cmd+":", err)
+		}
 		return 2
 	}
 	return 0

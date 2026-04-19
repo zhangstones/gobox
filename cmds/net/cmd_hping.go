@@ -136,6 +136,12 @@ func hpingSYN(opts *hpingOptions) error {
 	}
 
 	addr := net.JoinHostPort(opts.host, strconv.Itoa(opts.port))
+	dialer := &net.Dialer{Timeout: opts.wait}
+	if opts.spoofIP != "" {
+		if ip := net.ParseIP(opts.spoofIP); ip != nil {
+			dialer.LocalAddr = &net.TCPAddr{IP: ip}
+		}
+	}
 
 	var sent, received, lost int64
 	var minLatency, maxLatency, totalLatency int64
@@ -147,7 +153,7 @@ func hpingSYN(opts *hpingOptions) error {
 
 		// In a true SYN scan with raw sockets, we'd send SYN and wait for SYN-ACK or RST
 		// Without raw sockets, we use TCP connect which performs full handshake
-		conn, err := net.DialTimeout("tcp", addr, opts.wait)
+		conn, err := dialer.Dial("tcp", addr)
 		latency := time.Since(start).Microseconds()
 
 		atomic.AddInt64(&sent, 1)
@@ -212,6 +218,12 @@ func hpingFIN(opts *hpingOptions) error {
 	}
 
 	addr := net.JoinHostPort(opts.host, strconv.Itoa(opts.port))
+	dialer := &net.Dialer{Timeout: opts.wait}
+	if opts.spoofIP != "" {
+		if ip := net.ParseIP(opts.spoofIP); ip != nil {
+			dialer.LocalAddr = &net.TCPAddr{IP: ip}
+		}
+	}
 
 	var sent, received, lost int64
 
@@ -221,7 +233,7 @@ func hpingFIN(opts *hpingOptions) error {
 		// - no response (port open|filtered)
 		// Without raw sockets, we simulate with a quick connect and immediate close
 
-		conn, err := net.DialTimeout("tcp", addr, opts.wait)
+		conn, err := dialer.Dial("tcp", addr)
 		atomic.AddInt64(&sent, 1)
 
 		if err != nil {

@@ -40,6 +40,10 @@ func FindCmd(args []string) error {
 		return err
 	}
 
+	if *typ != "" && *typ != "f" && *typ != "d" {
+		return fmt.Errorf("invalid type %q: must be 'f' or 'd'", *typ)
+	}
+
 	if fsFlags.NArg() > 0 {
 		for _, arg := range fsFlags.Args() {
 			if strings.HasPrefix(arg, "-") {
@@ -251,16 +255,16 @@ func matchSize(fileSize int64, sizeSpec string) bool {
 
 // parseTime parses time specification with optional prefix and unit
 // Format: [+|-]N[s|m|h|d]
-// +N: newer than N (less than N time units ago)
-// -N: older than N (more than N time units ago)
-// N: exactly N (within N time units)
+// +N: older than N (more than N time units ago)
+// -N: newer than N (less than N time units ago)
+// N: exactly N time units ago (within [N, N+1) units)
 // Units: s (seconds), m (minutes), h (hours), d (days, default)
 func parseTime(timeSpec string) (time.Duration, int, error) {
 	if timeSpec == "" {
 		return 0, 0, fmt.Errorf("time specification is empty")
 	}
 
-	operator := 0 // 0 = exact, 1 = newer (less than), -1 = older (more than)
+	operator := 0 // 0 = exact, 1 = older (more than), -1 = newer (less than)
 	spec := timeSpec
 
 	if strings.HasPrefix(spec, "+") {
@@ -333,13 +337,22 @@ func matchTime(info fs.FileInfo, timeSpec string, timeType string) bool {
 	timeSinceFileTime := now.Sub(fileTime)
 
 	switch operator {
-	case 1: // newer than (less than N units ago)
-		return timeSinceFileTime < targetDuration
-	case -1: // older than (more than N units ago)
+	case 1: // older than (more than N units ago)
 		return timeSinceFileTime > targetDuration
+	case -1: // newer than (less than N units ago)
+		return timeSinceFileTime < targetDuration
 	case 0: // exactly N
-		// Within a tolerance of the time unit
-		return timeSinceFileTime >= 0 && timeSinceFileTime <= targetDuration
+		tolerance := 24 * time.Hour
+		spec := strings.TrimLeft(timeSpec, "+-")
+		switch {
+		case strings.HasSuffix(spec, "s"):
+			tolerance = time.Second
+		case strings.HasSuffix(spec, "m"):
+			tolerance = time.Minute
+		case strings.HasSuffix(spec, "h"):
+			tolerance = time.Hour
+		}
+		return timeSinceFileTime >= targetDuration && timeSinceFileTime < targetDuration+tolerance
 	default:
 		return false
 	}

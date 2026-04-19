@@ -1,6 +1,7 @@
 package net
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // twCmd implements a tiny web server
@@ -118,7 +120,18 @@ func printTwUsage(w io.Writer) {
 
 // reuseListener creates a listener with SO_REUSEADDR
 func reuseListener(addr string) (net.Listener, error) {
-	return net.Listen("tcp", addr)
+	lc := net.ListenConfig{
+		Control: func(network, address string, c syscall.RawConn) error {
+			var controlErr error
+			if err := c.Control(func(fd uintptr) {
+				controlErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+			}); err != nil {
+				return err
+			}
+			return controlErr
+		},
+	}
+	return lc.Listen(context.Background(), "tcp", addr)
 }
 
 func handlePing(w http.ResponseWriter, r *http.Request) {

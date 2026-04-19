@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
@@ -188,6 +189,7 @@ func npTCP(opts *npOptions) error {
 	}
 
 	wg.Wait()
+	close(stopChan)
 
 	// Calculate statistics
 	if len(latencies) > 0 {
@@ -213,6 +215,8 @@ func npTCP(opts *npOptions) error {
 
 func npTCPWorker(workerId int, opts *npOptions, sent, received, errors *int64, mu *sync.Mutex, latencies *[]int64, stopChan chan struct{}) {
 	addr := net.JoinHostPort(opts.host, strconv.Itoa(opts.port))
+	dialer := net.Dialer{Timeout: opts.wait}
+	configureNpDialer(&dialer, "tcp", opts)
 
 	for i := 0; ; i++ {
 		select {
@@ -228,7 +232,7 @@ func npTCPWorker(workerId int, opts *npOptions, sent, received, errors *int64, m
 
 		start := time.Now()
 
-		conn, err := net.DialTimeout("tcp", addr, opts.wait)
+		conn, err := dialer.Dial("tcp", addr)
 		latency := time.Since(start).Microseconds()
 
 		atomic.AddInt64(sent, 1)
@@ -255,13 +259,12 @@ func npTCPWorker(workerId int, opts *npOptions, sent, received, errors *int64, m
 				64, opts.host, i, float64(latency)/1000.0)
 		}
 
-		conn.Close()
-
 		// Long connection mode: wait for server to close, then continue
 		if opts.longMode > 0 {
-			// In long mode, we just connected and closed immediately
-			// For true long connection, we'd keep the connection open
+			_ = conn.SetReadDeadline(time.Now().Add(time.Duration(opts.longMode) * time.Second))
+			_, _ = io.Copy(io.Discard, conn)
 		}
+		conn.Close()
 
 		if opts.interval > 0 && !opts.flood {
 			time.Sleep(opts.interval)
@@ -272,6 +275,8 @@ func npTCPWorker(workerId int, opts *npOptions, sent, received, errors *int64, m
 // UDP ping
 func npUDP(opts *npOptions) error {
 	addr := net.JoinHostPort(opts.host, strconv.Itoa(opts.port))
+	dialer := net.Dialer{Timeout: opts.wait}
+	configureNpDialer(&dialer, "udp", opts)
 
 	var sent, received, errors int64
 	var minLatency, maxLatency, totalLatency int64
@@ -288,7 +293,7 @@ func npUDP(opts *npOptions) error {
 
 		start := time.Now()
 
-		conn, err := net.DialTimeout("udp", addr, opts.wait)
+		conn, err := dialer.Dial("udp", addr)
 		latency := time.Since(start).Microseconds()
 
 		atomic.AddInt64(&sent, 1)
@@ -529,6 +534,39 @@ func npScanPort(addr string, timeout time.Duration) error {
 	}
 	conn.Close()
 	return nil
+}
+
+func configureNpDialer(dialer *net.Dialer, network string, opts *npOptions) {
+	ip := net.IP(nil)
+	if opts.iface != "" {
+		ifi, err := net.InterfaceByName(opts.iface)
+		if err == nil {
+			if addrs, addrErr := ifi.Addrs(); addrErr == nil {
+				for _, addr := range addrs {
+					switch v := addr.(type) {
+					case *net.IPNet:
+						if v.IP.IsGlobalUnicast() || v.IP.IsPrivate() {
+							ip = v.IP
+							break
+						}
+					case *net.IPAddr:
+						if v.IP.IsGlobalUnicast() || v.IP.IsPrivate() {
+							ip = v.IP
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+	if opts.sourcePort > 0 || ip != nil {
+		switch network {
+		case "udp":
+			dialer.LocalAddr = &net.UDPAddr{IP: ip, Port: opts.sourcePort}
+		default:
+			dialer.LocalAddr = &net.TCPAddr{IP: ip, Port: opts.sourcePort}
+		}
+	}
 }
 
 func npProgressReporter(sent, received, errors *int64, opts *npOptions, stopChan chan struct{}) {
