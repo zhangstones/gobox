@@ -37,6 +37,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = proc.TopCmd(args)
 	case "iostat":
 		err = disk.IostatCmd(args)
+	case "ioperf":
+		err = disk.IoperfCmd(args)
+	case "md5sum":
+		err = disk.Md5sumCmd(args)
 	case "netstat":
 		err = net.NetstatCmd(args)
 	case "xargs":
@@ -49,6 +53,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = net.DigCmd(args)
 	case "sort":
 		err = text.SortCmd(args)
+	case "rand":
+		err = text.RandCmd(args)
 	case "head":
 		err = text.HeadCmd(args)
 	case "tail":
@@ -63,6 +69,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = net.NcCmd(args)
 	case "tw":
 		err = net.TwCmd(args)
+	case "ifstat":
+		err = net.IfstatCmd(args)
+	case "np":
+		err = net.NpCmd(args)
+	case "hping":
+		err = net.HpingCmd(args)
+	case "seq":
+		err = text.SeqCmd(args)
 	case "--help", "-h", "help":
 		usage(stdout)
 		return 0
@@ -93,6 +107,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  ps       List processes")
 	fmt.Fprintln(w, "  top      Live process viewer")
 	fmt.Fprintln(w, "  iostat   Show block device I/O stats (Linux cgroup/blkio)")
+	fmt.Fprintln(w, "  ioperf   I/O performance benchmark tool (simplified fio-like)")
 	fmt.Fprintln(w, "  netstat  Show network connection status")
 	fmt.Fprintln(w, "  xargs    Build and execute command lines from stdin")
 	fmt.Fprintln(w, "  grep     Search for patterns in files (regex support)")
@@ -105,6 +120,10 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  wc       Print line, word, and byte counts")
 	fmt.Fprintln(w, "  nc       Netcat - arbitrary TCP/UDP connections and listening")
 	fmt.Fprintln(w, "  tw       Tiny web server for static files or benchmark")
+	fmt.Fprintln(w, "  ifstat   Network interface statistics monitoring")
+	fmt.Fprintln(w, "  np       Network ping/connectivity tool (TCP/UDP/ICMP/ARP/scan)")
+	fmt.Fprintln(w, "  hping    TCP/IP packet generator and port scanner")
+	fmt.Fprintln(w, "  seq      Generate sequences of numbers")
 	fmt.Fprintln(w, "  version  Print program version (-v, --version)")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Flags differ from BusyBox; this is a best-effort minimal implementation.")

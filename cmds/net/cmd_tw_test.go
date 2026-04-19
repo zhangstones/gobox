@@ -374,6 +374,7 @@ func TestTwStaticServingIndexHtml(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create index.html: %v", err)
 	}
+	defer os.Remove(indexFile)
 
 	server := httptest.NewServer(MakeStaticHandler(tmpDir))
 	defer server.Close()
@@ -447,6 +448,7 @@ func TestTwStaticServingDirectoryWithIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create index.html: %v", err)
 	}
+	defer os.Remove(indexFile)
 
 	server := httptest.NewServer(MakeStaticHandler(tmpDir))
 	defer server.Close()
