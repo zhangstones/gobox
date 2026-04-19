@@ -3,6 +3,7 @@ package text
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,11 +13,13 @@ import (
 
 func TestTailDefault(t *testing.T) {
 	// Default should show 10 lines
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_default.txt")
 	content := "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\n"
-	writeTestFile(t, "test_tail_default.txt", content)
-	defer os.Remove("test_tail_default.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runTailCmd([]string{"test_tail_default.txt"})
+	output, err := runTailCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("tail command failed: %v", err)
 	}
@@ -38,11 +41,13 @@ func TestTailDefault(t *testing.T) {
 
 func TestTailNoNewlineAtEnd(t *testing.T) {
 	// File without trailing newline
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_nonl.txt")
 	content := "line1\nline2\nline3\nno newline at end"
-	writeTestFile(t, "test_tail_nonl.txt", content)
-	defer os.Remove("test_tail_nonl.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runTailCmd([]string{"test_tail_nonl.txt"})
+	output, err := runTailCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("tail command failed: %v", err)
 	}
@@ -57,11 +62,13 @@ func TestTailNoNewlineAtEnd(t *testing.T) {
 // ============== -n FLAG TESTS ==============
 
 func TestTailNLinesFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_n.txt")
 	content := "line1\nline2\nline3\nline4\nline5\n"
-	writeTestFile(t, "test_tail_n.txt", content)
-	defer os.Remove("test_tail_n.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runTailCmd([]string{"-n", "3", "test_tail_n.txt"})
+	output, err := runTailCmd([]string{"-n", "3", filename})
 	if err != nil {
 		t.Fatalf("tail -n command failed: %v", err)
 	}
@@ -77,11 +84,13 @@ func TestTailNLinesFlag(t *testing.T) {
 }
 
 func TestTailNLinesEqualsFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_n_equals.txt")
 	content := "line1\nline2\nline3\nline4\nline5\n"
-	writeTestFile(t, "test_tail_n_equals.txt", content)
-	defer os.Remove("test_tail_n_equals.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runTailCmd([]string{"-n=3", "test_tail_n_equals.txt"})
+	output, err := runTailCmd([]string{"-n=3", filename})
 	if err != nil {
 		t.Fatalf("tail -n= command failed: %v", err)
 	}
@@ -94,11 +103,13 @@ func TestTailNLinesEqualsFlag(t *testing.T) {
 }
 
 func TestTailNLinesZero(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_n_zero.txt")
 	content := "line1\nline2\nline3\n"
-	writeTestFile(t, "test_tail_n_zero.txt", content)
-	defer os.Remove("test_tail_n_zero.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runTailCmd([]string{"-n", "0", "test_tail_n_zero.txt"})
+	output, err := runTailCmd([]string{"-n", "0", filename})
 	if err != nil {
 		t.Fatalf("tail -n 0 command failed: %v", err)
 	}
@@ -111,11 +122,13 @@ func TestTailNLinesZero(t *testing.T) {
 
 func TestTailNLinesMoreThanFile(t *testing.T) {
 	// Request more lines than file has
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_n_more.txt")
 	content := "line1\nline2\n"
-	writeTestFile(t, "test_tail_n_more.txt", content)
-	defer os.Remove("test_tail_n_more.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runTailCmd([]string{"-n", "100", "test_tail_n_more.txt"})
+	output, err := runTailCmd([]string{"-n", "100", filename})
 	if err != nil {
 		t.Fatalf("tail -n 100 command failed: %v", err)
 	}
@@ -130,13 +143,15 @@ func TestTailNLinesMoreThanFile(t *testing.T) {
 // ============== -f FLAG TESTS (FOLLOW MODE) ==============
 
 func TestTailFollowFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_f.txt")
 	content := "line1\nline2\nline3\n"
-	writeTestFile(t, "test_tail_f.txt", content)
-	defer os.Remove("test_tail_f.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// Test that -f doesn't immediately exit (it enters follow mode)
 	// We use a timeout to verify it starts following
-	_, err := runTailCmdWithTimeout([]string{"-f", "test_tail_f.txt"}, 200*time.Millisecond)
+	_, err := runTailCmdWithTimeout([]string{"-f", filename}, 200*time.Millisecond)
 	// Timeout is expected - we just want to verify follow mode starts without error
 	// If it returns immediately with an error other than timeout, that's a failure
 	if err != nil && err != context.DeadlineExceeded {
@@ -159,12 +174,14 @@ func TestTailFollowStdinError(t *testing.T) {
 // ============== --follow=name FLAG TESTS ==============
 
 func TestTailFollowByName(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_follow_name.txt")
 	content := "line1\nline2\nline3\n"
-	writeTestFile(t, "test_tail_follow_name.txt", content)
-	defer os.Remove("test_tail_follow_name.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// Test that --follow=name starts successfully
-	_, err := runTailCmdWithTimeout([]string{"--follow=name", "test_tail_follow_name.txt"}, 200*time.Millisecond)
+	_, err := runTailCmdWithTimeout([]string{"--follow=name", filename}, 200*time.Millisecond)
 	if err != nil && err != context.DeadlineExceeded {
 		t.Fatalf("tail --follow=name command failed: %v", err)
 	}
@@ -174,12 +191,14 @@ func TestTailFollowByName(t *testing.T) {
 
 func TestTailRetryFlag(t *testing.T) {
 	// Create a file and keep it - this tests --retry with an existing file
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_retry.txt")
 	content := "line1\nline2\nline3\nline4\nline5\n"
-	writeTestFile(t, "test_tail_retry.txt", content)
-	defer os.Remove("test_tail_retry.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// With --retry, tail should work normally with existing file
-	_, err := runTailCmdWithTimeout([]string{"--retry", "-n", "5", "test_tail_retry.txt"}, 200*time.Millisecond)
+	_, err := runTailCmdWithTimeout([]string{"--retry", "-n", "5", filename}, 200*time.Millisecond)
 	// Should timeout because follow mode doesn't exit (but file is being followed)
 	if err != nil && err != context.DeadlineExceeded {
 		t.Fatalf("tail --retry command failed: %v", err)
@@ -189,13 +208,16 @@ func TestTailRetryFlag(t *testing.T) {
 // ============== -q FLAG TESTS (QUIET MODE) ==============
 
 func TestTailQuietMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename1 := filepath.Join(tmpDir, "test_tail_q1.txt")
+	filename2 := filepath.Join(tmpDir, "test_tail_q2.txt")
 	content := "line1\nline2\n"
-	writeTestFile(t, "test_tail_q1.txt", content)
-	defer os.Remove("test_tail_q1.txt")
-	writeTestFile(t, "test_tail_q2.txt", content)
-	defer os.Remove("test_tail_q2.txt")
+	os.WriteFile(filename1, []byte(content), 0644)
+	os.WriteFile(filename2, []byte(content), 0644)
+	defer os.Remove(filename1)
+	defer os.Remove(filename2)
 
-	output, err := runTailCmd([]string{"-q", "test_tail_q1.txt", "test_tail_q2.txt"})
+	output, err := runTailCmd([]string{"-q", filename1, filename2})
 	if err != nil {
 		t.Fatalf("tail -q command failed: %v", err)
 	}
@@ -211,11 +233,13 @@ func TestTailQuietMode(t *testing.T) {
 }
 
 func TestTailQuietModeSingleFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_q_single.txt")
 	content := "line1\nline2\n"
-	writeTestFile(t, "test_tail_q_single.txt", content)
-	defer os.Remove("test_tail_q_single.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runTailCmd([]string{"-q", "test_tail_q_single.txt"})
+	output, err := runTailCmd([]string{"-q", filename})
 	if err != nil {
 		t.Fatalf("tail -q command failed: %v", err)
 	}
@@ -227,11 +251,13 @@ func TestTailQuietModeSingleFile(t *testing.T) {
 }
 
 func TestTailSilentFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_silent.txt")
 	content := "line1\nline2\n"
-	writeTestFile(t, "test_tail_silent.txt", content)
-	defer os.Remove("test_tail_silent.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runTailCmd([]string{"--silent", "test_tail_silent.txt"})
+	output, err := runTailCmd([]string{"--silent", filename})
 	if err != nil {
 		t.Fatalf("tail --silent command failed: %v", err)
 	}
@@ -245,23 +271,27 @@ func TestTailSilentFlag(t *testing.T) {
 // ============== -s FLAG TESTS (SLEEP INTERVAL) ==============
 
 func TestTailSleepIntervalFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_s.txt")
 	content := "line1\nline2\nline3\n"
-	writeTestFile(t, "test_tail_s.txt", content)
-	defer os.Remove("test_tail_s.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// Use a very short sleep interval with follow mode
-	_, err := runTailCmdWithTimeout([]string{"-f", "-s", "0.1", "test_tail_s.txt"}, 200*time.Millisecond)
+	_, err := runTailCmdWithTimeout([]string{"-f", "-s", "0.1", filename}, 200*time.Millisecond)
 	if err != nil && err != context.DeadlineExceeded {
 		t.Fatalf("tail -s command failed: %v", err)
 	}
 }
 
 func TestTailSleepIntervalEqualsFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_s_equals.txt")
 	content := "line1\nline2\n"
-	writeTestFile(t, "test_tail_s_equals.txt", content)
-	defer os.Remove("test_tail_s_equals.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runTailCmd([]string{"-s=0.1", "test_tail_s_equals.txt"})
+	output, err := runTailCmd([]string{"-s=0.1", filename})
 	if err != nil {
 		t.Fatalf("tail -s= command failed: %v", err)
 	}
@@ -275,11 +305,13 @@ func TestTailSleepIntervalEqualsFlag(t *testing.T) {
 func TestTailSleepIntervalLongFlag(t *testing.T) {
 	// Note: --sleep-interval=VALUE syntax is not supported (bug in implementation)
 	// Only -s VALUE or --sleep-interval VALUE works
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_s_long.txt")
 	content := "line1\nline2\n"
-	writeTestFile(t, "test_tail_s_long.txt", content)
-	defer os.Remove("test_tail_s_long.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runTailCmd([]string{"--sleep-interval", "0.1", "test_tail_s_long.txt"})
+	output, err := runTailCmd([]string{"--sleep-interval", "0.1", filename})
 	if err != nil {
 		t.Fatalf("tail --sleep-interval command failed: %v", err)
 	}
@@ -291,22 +323,26 @@ func TestTailSleepIntervalLongFlag(t *testing.T) {
 }
 
 func TestTailInvalidSleepInterval(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_s_invalid.txt")
 	content := "line1\nline2\n"
-	writeTestFile(t, "test_tail_s_invalid.txt", content)
-	defer os.Remove("test_tail_s_invalid.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runTailCmd([]string{"-s", "abc", "test_tail_s_invalid.txt"})
+	_, err := runTailCmd([]string{"-s", "abc", filename})
 	if err == nil {
 		t.Fatalf("tail -s with invalid interval should fail")
 	}
 }
 
 func TestTailNegativeSleepInterval(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_s_neg.txt")
 	content := "line1\nline2\n"
-	writeTestFile(t, "test_tail_s_neg.txt", content)
-	defer os.Remove("test_tail_s_neg.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runTailCmd([]string{"-s", "-1", "test_tail_s_neg.txt"})
+	_, err := runTailCmd([]string{"-s", "-1", filename})
 	if err == nil {
 		t.Fatalf("tail -s with negative interval should fail")
 	}
@@ -315,34 +351,40 @@ func TestTailNegativeSleepInterval(t *testing.T) {
 // ============== --pid FLAG TESTS ==============
 
 func TestTailPidFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_pid.txt")
 	content := "line1\nline2\nline3\n"
-	writeTestFile(t, "test_tail_pid.txt", content)
-	defer os.Remove("test_tail_pid.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// Use current process PID with follow mode
-	_, err := runTailCmdWithTimeout([]string{"-f", "--pid=1", "test_tail_pid.txt"}, 200*time.Millisecond)
+	_, err := runTailCmdWithTimeout([]string{"-f", "--pid=1", filename}, 200*time.Millisecond)
 	if err != nil && err != context.DeadlineExceeded {
 		t.Fatalf("tail --pid command failed: %v", err)
 	}
 }
 
 func TestTailPidInvalid(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_pid_invalid.txt")
 	content := "line1\nline2\n"
-	writeTestFile(t, "test_tail_pid_invalid.txt", content)
-	defer os.Remove("test_tail_pid_invalid.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runTailCmd([]string{"--pid=abc", "test_tail_pid_invalid.txt"})
+	_, err := runTailCmd([]string{"--pid=abc", filename})
 	if err == nil {
 		t.Fatalf("tail --pid with invalid PID should fail")
 	}
 }
 
 func TestTailPidZero(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_pid_zero.txt")
 	content := "line1\nline2\n"
-	writeTestFile(t, "test_tail_pid_zero.txt", content)
-	defer os.Remove("test_tail_pid_zero.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runTailCmd([]string{"--pid=0", "test_tail_pid_zero.txt"})
+	_, err := runTailCmd([]string{"--pid=0", filename})
 	if err == nil {
 		t.Fatalf("tail --pid=0 should fail")
 	}
@@ -351,23 +393,26 @@ func TestTailPidZero(t *testing.T) {
 // ============== MULTIPLE FILES TESTS ==============
 
 func TestTailMultipleFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename1 := filepath.Join(tmpDir, "test_tail_multi1.txt")
+	filename2 := filepath.Join(tmpDir, "test_tail_multi2.txt")
 	content1 := "file1_line1\nfile1_line2\nfile1_line3\n"
 	content2 := "file2_line1\nfile2_line2\nfile2_line3\n"
-	writeTestFile(t, "test_tail_multi1.txt", content1)
-	defer os.Remove("test_tail_multi1.txt")
-	writeTestFile(t, "test_tail_multi2.txt", content2)
-	defer os.Remove("test_tail_multi2.txt")
+	os.WriteFile(filename1, []byte(content1), 0644)
+	os.WriteFile(filename2, []byte(content2), 0644)
+	defer os.Remove(filename1)
+	defer os.Remove(filename2)
 
-	output, err := runTailCmd([]string{"test_tail_multi1.txt", "test_tail_multi2.txt"})
+	output, err := runTailCmd([]string{filename1, filename2})
 	if err != nil {
 		t.Fatalf("tail multiple files command failed: %v", err)
 	}
 
 	result := string(output)
-	if !strings.Contains(result, "==> test_tail_multi1.txt <==") {
+	if !strings.Contains(result, filename1) {
 		t.Errorf("Missing header for first file, got: %s", result)
 	}
-	if !strings.Contains(result, "==> test_tail_multi2.txt <==") {
+	if !strings.Contains(result, filename2) {
 		t.Errorf("Missing header for second file, got: %s", result)
 	}
 	if !strings.Contains(result, "file1_line1") {
@@ -413,11 +458,13 @@ func TestTailStdinDefault(t *testing.T) {
 // ============== EDGE CASES ==============
 
 func TestTailEmptyFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_empty.txt")
 	content := ""
-	writeTestFile(t, "test_tail_empty.txt", content)
-	defer os.Remove("test_tail_empty.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runTailCmd([]string{"test_tail_empty.txt"})
+	output, err := runTailCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("tail empty file command failed: %v", err)
 	}
@@ -429,11 +476,13 @@ func TestTailEmptyFile(t *testing.T) {
 }
 
 func TestTailSingleLine(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_single.txt")
 	content := "single line\n"
-	writeTestFile(t, "test_tail_single.txt", content)
-	defer os.Remove("test_tail_single.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runTailCmd([]string{"test_tail_single.txt"})
+	output, err := runTailCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("tail single line command failed: %v", err)
 	}
@@ -446,12 +495,14 @@ func TestTailSingleLine(t *testing.T) {
 
 func TestTailVeryLongLine(t *testing.T) {
 	// Long line (8KB to stay under bufio scanner 64KB limit)
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_long.txt")
 	longContent := strings.Repeat("x", 8192)
 	content := "short line\n" + longContent + "\nanother short\n"
-	writeTestFile(t, "test_tail_long.txt", content)
-	defer os.Remove("test_tail_long.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runTailCmd([]string{"-n", "2", "test_tail_long.txt"})
+	output, err := runTailCmd([]string{"-n", "2", filename})
 	if err != nil {
 		t.Fatalf("tail long line command failed: %v", err)
 	}
@@ -468,11 +519,13 @@ func TestTailVeryLongLine(t *testing.T) {
 }
 
 func TestTailSpecialCharacters(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_special.txt")
 	content := "special: !@#$%^&*()\nunicode: \u00E9\u00E8\u00EA\ntabs\there\n"
-	writeTestFile(t, "test_tail_special.txt", content)
-	defer os.Remove("test_tail_special.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runTailCmd([]string{"-n", "3", "test_tail_special.txt"})
+	output, err := runTailCmd([]string{"-n", "3", filename})
 	if err != nil {
 		t.Fatalf("tail special chars command failed: %v", err)
 	}
@@ -493,11 +546,13 @@ func TestTailSpecialCharacters(t *testing.T) {
 func TestTailNewlinesOnly(t *testing.T) {
 	// bufio.Scanner splits on newlines, so consecutive \n\n\n is one delimiter
 	// content has 4 lines but scanner sees: line1, line5 (empty lines don't produce tokens)
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_newlines.txt")
 	content := "line1\n\n\nline5\n"
-	writeTestFile(t, "test_tail_newlines.txt", content)
-	defer os.Remove("test_tail_newlines.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runTailCmd([]string{"-n", "3", "test_tail_newlines.txt"})
+	output, err := runTailCmd([]string{"-n", "3", filename})
 	if err != nil {
 		t.Fatalf("tail newlines command failed: %v", err)
 	}
@@ -523,44 +578,52 @@ func TestTailNonExistentFile(t *testing.T) {
 }
 
 func TestTailInvalidNLines(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_invalid_n.txt")
 	content := "line1\nline2\n"
-	writeTestFile(t, "test_tail_invalid_n.txt", content)
-	defer os.Remove("test_tail_invalid_n.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runTailCmd([]string{"-n", "abc", "test_tail_invalid_n.txt"})
+	_, err := runTailCmd([]string{"-n", "abc", filename})
 	if err == nil {
 		t.Fatalf("tail -n with invalid argument should fail")
 	}
 }
 
 func TestTailNegativeNLines(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_neg_n.txt")
 	content := "line1\nline2\n"
-	writeTestFile(t, "test_tail_neg_n.txt", content)
-	defer os.Remove("test_tail_neg_n.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runTailCmd([]string{"-n", "-5", "test_tail_neg_n.txt"})
+	_, err := runTailCmd([]string{"-n", "-5", filename})
 	if err == nil {
 		t.Fatalf("tail -n with negative should fail")
 	}
 }
 
 func TestTailUnknownOption(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_unknown.txt")
 	content := "line1\nline2\n"
-	writeTestFile(t, "test_tail_unknown.txt", content)
-	defer os.Remove("test_tail_unknown.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runTailCmd([]string{"-z", "test_tail_unknown.txt"})
+	_, err := runTailCmd([]string{"-z", filename})
 	if err == nil {
 		t.Fatalf("tail with unknown option should fail")
 	}
 }
 
 func TestTailNNRequiresArgument(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_n_arg.txt")
 	content := "line1\nline2\n"
-	writeTestFile(t, "test_tail_n_arg.txt", content)
-	defer os.Remove("test_tail_n_arg.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runTailCmd([]string{"-n", "test_tail_n_arg.txt"})
+	_, err := runTailCmd([]string{"-n", filename})
 	if err == nil {
 		t.Fatalf("tail -n without argument should fail")
 	}
@@ -620,14 +683,17 @@ func TestTailPipeline(t *testing.T) {
 // ============== COMBINED OPTIONS TESTS ==============
 
 func TestTailQuietWithNLines(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename1 := filepath.Join(tmpDir, "test_tail_q_n1.txt")
+	filename2 := filepath.Join(tmpDir, "test_tail_q_n2.txt")
 	content1 := "file1_line1\nfile1_line2\nfile1_line3\n"
 	content2 := "file2_line1\nfile2_line2\nfile2_line3\n"
-	writeTestFile(t, "test_tail_q_n1.txt", content1)
-	defer os.Remove("test_tail_q_n1.txt")
-	writeTestFile(t, "test_tail_q_n2.txt", content2)
-	defer os.Remove("test_tail_q_n2.txt")
+	os.WriteFile(filename1, []byte(content1), 0644)
+	os.WriteFile(filename2, []byte(content2), 0644)
+	defer os.Remove(filename1)
+	defer os.Remove(filename2)
 
-	output, err := runTailCmd([]string{"-q", "-n", "2", "test_tail_q_n1.txt", "test_tail_q_n2.txt"})
+	output, err := runTailCmd([]string{"-q", "-n", "2", filename1, filename2})
 	if err != nil {
 		t.Fatalf("tail -q -n command failed: %v", err)
 	}
@@ -642,13 +708,15 @@ func TestTailQuietWithNLines(t *testing.T) {
 }
 
 func TestTailMultipleFlagsOrder(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_order.txt")
 	content := "line1\nline2\nline3\nline4\nline5\n"
-	writeTestFile(t, "test_tail_order.txt", content)
-	defer os.Remove("test_tail_order.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// Test that flag order doesn't matter
-	output1, err1 := runTailCmd([]string{"-n", "2", "-q", "test_tail_order.txt"})
-	output2, err2 := runTailCmd([]string{"-q", "-n", "2", "test_tail_order.txt"})
+	output1, err1 := runTailCmd([]string{"-n", "2", "-q", filename})
+	output2, err2 := runTailCmd([]string{"-q", "-n", "2", filename})
 
 	if err1 != nil {
 		t.Fatalf("first command failed: %v", err1)
@@ -663,12 +731,14 @@ func TestTailMultipleFlagsOrder(t *testing.T) {
 }
 
 func TestTailFollowWithQuiet(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_f_q.txt")
 	content := "line1\nline2\nline3\n"
-	writeTestFile(t, "test_tail_f_q.txt", content)
-	defer os.Remove("test_tail_f_q.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// -f with -q should work
-	_, err := runTailCmdWithTimeout([]string{"-f", "-q", "test_tail_f_q.txt"}, 200*time.Millisecond)
+	_, err := runTailCmdWithTimeout([]string{"-f", "-q", filename}, 200*time.Millisecond)
 	if err != nil && err != context.DeadlineExceeded {
 		t.Fatalf("tail -f -q command failed: %v", err)
 	}

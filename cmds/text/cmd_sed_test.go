@@ -2,6 +2,7 @@ package text
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -10,10 +11,12 @@ import (
 
 func TestSedBasicSubstitute(t *testing.T) {
 	content := "hello world\nfoo bar\nhello again\n"
-	writeTestFile(t, "test_sed_basic.txt", content)
-	defer os.Remove("test_sed_basic.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_basic.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"s/hello/hi/", "test_sed_basic.txt"})
+	output, err := runSedCmd([]string{"s/hello/hi/", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -29,10 +32,12 @@ func TestSedBasicSubstitute(t *testing.T) {
 
 func TestSedGlobalReplace(t *testing.T) {
 	content := "foo foo foo\nbar baz\nfoo\n"
-	writeTestFile(t, "test_sed_global.txt", content)
-	defer os.Remove("test_sed_global.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_global.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"s/foo/X/g", "test_sed_global.txt"})
+	output, err := runSedCmd([]string{"s/foo/X/g", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -48,10 +53,12 @@ func TestSedGlobalReplace(t *testing.T) {
 
 func TestSedIgnoreCase(t *testing.T) {
 	content := "HELLO world\nHello Again\nhello\n"
-	writeTestFile(t, "test_sed_case.txt", content)
-	defer os.Remove("test_sed_case.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_case.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"s/hello/hi/i", "test_sed_case.txt"})
+	output, err := runSedCmd([]string{"s/hello/hi/i", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -67,10 +74,12 @@ func TestSedIgnoreCase(t *testing.T) {
 
 func TestSedQuietMode(t *testing.T) {
 	content := "hello world\nfoo bar\nhello again\n"
-	writeTestFile(t, "test_sed_quiet.txt", content)
-	defer os.Remove("test_sed_quiet.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_quiet.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"-n", "s/hello/hi/p", "test_sed_quiet.txt"})
+	output, err := runSedCmd([]string{"-n", "s/hello/hi/p", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -87,10 +96,12 @@ func TestSedQuietMode(t *testing.T) {
 
 func TestSedNthReplacement(t *testing.T) {
 	content := "foo foo foo\nbar foo baz\n"
-	writeTestFile(t, "test_sed_nth.txt", content)
-	defer os.Remove("test_sed_nth.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_nth.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"s/foo/X/2", "test_sed_nth.txt"})
+	output, err := runSedCmd([]string{"s/foo/X/2", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -112,10 +123,12 @@ func TestSedNthReplacement(t *testing.T) {
 
 func TestSedBackreference(t *testing.T) {
 	content := "John Doe\nJane Smith\n"
-	writeTestFile(t, "test_sed_backref.txt", content)
-	defer os.Remove("test_sed_backref.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_backref.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"s/([A-Za-z]+) ([A-Za-z]+)/${2}, ${1}/", "test_sed_backref.txt"})
+	output, err := runSedCmd([]string{"s/([A-Za-z]+) ([A-Za-z]+)/${2}, ${1}/", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -131,11 +144,13 @@ func TestSedBackreference(t *testing.T) {
 
 func TestSedBackreferenceBackslash(t *testing.T) {
 	content := "John Doe\nJane Smith\n"
-	writeTestFile(t, "test_sed_backref2.txt", content)
-	defer os.Remove("test_sed_backref2.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_backref2.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// Test \1 \2 syntax (converted to ${1} ${2} internally)
-	output, err := runSedCmd([]string{`s/\([A-Za-z]+\) \([A-Za-z]+\)/\2, \1/`, "test_sed_backref2.txt"})
+	output, err := runSedCmd([]string{`s/\([A-Za-z]+\) \([A-Za-z]+\)/\2, \1/`, filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -148,10 +163,12 @@ func TestSedBackreferenceBackslash(t *testing.T) {
 
 func TestSedMultipleSubstitutions(t *testing.T) {
 	content := "foo bar baz\n"
-	writeTestFile(t, "test_sed_multisub.txt", content)
-	defer os.Remove("test_sed_multisub.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_multisub.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"-e", "s/foo/FOO/", "-e", "s/bar/BAR/", "-e", "s/baz/BAZ/", "test_sed_multisub.txt"})
+	output, err := runSedCmd([]string{"-e", "s/foo/FOO/", "-e", "s/bar/BAR/", "-e", "s/baz/BAZ/", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -164,11 +181,13 @@ func TestSedMultipleSubstitutions(t *testing.T) {
 
 func TestSedRegexPatterns(t *testing.T) {
 	content := "test123\nabc456\ntest789\n"
-	writeTestFile(t, "test_sed_regex.txt", content)
-	defer os.Remove("test_sed_regex.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_regex.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// Replace digits with X
-	output, err := runSedCmd([]string{"s/[0-9]/X/g", "test_sed_regex.txt"})
+	output, err := runSedCmd([]string{"s/[0-9]/X/g", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -184,11 +203,13 @@ func TestSedRegexPatterns(t *testing.T) {
 
 func TestSedAnchorPatterns(t *testing.T) {
 	content := "hello world\nworld hello\nhello\n"
-	writeTestFile(t, "test_sed_anchor.txt", content)
-	defer os.Remove("test_sed_anchor.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_anchor.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// Replace hello only at start of line
-	output, err := runSedCmd([]string{"s/^hello/HELLO/", "test_sed_anchor.txt"})
+	output, err := runSedCmd([]string{"s/^hello/HELLO/", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -210,10 +231,12 @@ func TestSedAnchorPatterns(t *testing.T) {
 
 func TestSedDelete(t *testing.T) {
 	content := "line1\nDELETE_ME\nline3\nDELETE_ME\nline5\n"
-	writeTestFile(t, "test_sed_delete.txt", content)
-	defer os.Remove("test_sed_delete.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_delete.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"/DELETE_ME/d", "test_sed_delete.txt"})
+	output, err := runSedCmd([]string{"/DELETE_ME/d", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -226,10 +249,12 @@ func TestSedDelete(t *testing.T) {
 
 func TestSedDeleteFirstLine(t *testing.T) {
 	content := "first\nsecond\nthird\n"
-	writeTestFile(t, "test_sed_del_first.txt", content)
-	defer os.Remove("test_sed_del_first.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_del_first.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"1d", "test_sed_del_first.txt"})
+	output, err := runSedCmd([]string{"1d", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -245,10 +270,12 @@ func TestSedDeleteFirstLine(t *testing.T) {
 
 func TestSedDeleteLastLine(t *testing.T) {
 	content := "first\nsecond\nlast\n"
-	writeTestFile(t, "test_sed_del_last.txt", content)
-	defer os.Remove("test_sed_del_last.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_del_last.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"$d", "test_sed_del_last.txt"})
+	output, err := runSedCmd([]string{"$d", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -261,10 +288,12 @@ func TestSedDeleteLastLine(t *testing.T) {
 
 func TestSedDeleteRange(t *testing.T) {
 	content := "line1\nline2\nline3\nline4\nline5\n"
-	writeTestFile(t, "test_sed_del_range.txt", content)
-	defer os.Remove("test_sed_del_range.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_del_range.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"2,4d", "test_sed_del_range.txt"})
+	output, err := runSedCmd([]string{"2,4d", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -282,10 +311,12 @@ func TestSedDeleteRange(t *testing.T) {
 
 func TestSedPrint(t *testing.T) {
 	content := "line1\nMATCH\nline3\nMATCH\nline5\n"
-	writeTestFile(t, "test_sed_print.txt", content)
-	defer os.Remove("test_sed_print.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_print.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"-n", "/MATCH/p", "test_sed_print.txt"})
+	output, err := runSedCmd([]string{"-n", "/MATCH/p", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -301,10 +332,12 @@ func TestSedPrint(t *testing.T) {
 
 func TestSedPrintAll(t *testing.T) {
 	content := "line1\nline2\nline3\n"
-	writeTestFile(t, "test_sed_print_all.txt", content)
-	defer os.Remove("test_sed_print_all.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_print_all.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"-n", "p", "test_sed_print_all.txt"})
+	output, err := runSedCmd([]string{"-n", "p", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -319,10 +352,12 @@ func TestSedPrintAll(t *testing.T) {
 
 func TestSedPrintLineNumber(t *testing.T) {
 	content := "line1\nline2\nline3\n"
-	writeTestFile(t, "test_sed_linenum.txt", content)
-	defer os.Remove("test_sed_linenum.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_linenum.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"=", "test_sed_linenum.txt"})
+	output, err := runSedCmd([]string{"=", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -341,11 +376,13 @@ func TestSedPrintLineNumber(t *testing.T) {
 
 func TestSedLineNumberWithPattern(t *testing.T) {
 	content := "foo\nbar\nbaz\n"
-	writeTestFile(t, "test_sed_linenum_pat.txt", content)
-	defer os.Remove("test_sed_linenum_pat.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_linenum_pat.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// Print line number for matching lines
-	output, err := runSedCmd([]string{"-n", "/bar/=", "test_sed_linenum_pat.txt"})
+	output, err := runSedCmd([]string{"-n", "/bar/=", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -360,10 +397,12 @@ func TestSedLineNumberWithPattern(t *testing.T) {
 
 func TestSedInsert(t *testing.T) {
 	content := "line1\nline2\nline3\n"
-	writeTestFile(t, "test_sed_insert.txt", content)
-	defer os.Remove("test_sed_insert.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_insert.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"/line2/i\\INSERTED", "test_sed_insert.txt"})
+	output, err := runSedCmd([]string{"/line2/i\\INSERTED", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -382,10 +421,12 @@ func TestSedInsert(t *testing.T) {
 
 func TestSedInsertNumeric(t *testing.T) {
 	content := "line1\nline2\nline3\n"
-	writeTestFile(t, "test_sed_insert_num.txt", content)
-	defer os.Remove("test_sed_insert_num.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_insert_num.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"2i\\BEFORE_LINE_2", "test_sed_insert_num.txt"})
+	output, err := runSedCmd([]string{"2i\\BEFORE_LINE_2", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -398,10 +439,12 @@ func TestSedInsertNumeric(t *testing.T) {
 
 func TestSedInsertFirstLine(t *testing.T) {
 	content := "line1\nline2\n"
-	writeTestFile(t, "test_sed_insert_first.txt", content)
-	defer os.Remove("test_sed_insert_first.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_insert_first.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"1i\\FIRST", "test_sed_insert_first.txt"})
+	output, err := runSedCmd([]string{"1i\\FIRST", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -417,10 +460,12 @@ func TestSedInsertFirstLine(t *testing.T) {
 
 func TestSedAppend(t *testing.T) {
 	content := "line1\nline2\nline3\n"
-	writeTestFile(t, "test_sed_append.txt", content)
-	defer os.Remove("test_sed_append.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_append.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"/line2/a\\APPENDED", "test_sed_append.txt"})
+	output, err := runSedCmd([]string{"/line2/a\\APPENDED", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -439,10 +484,12 @@ func TestSedAppend(t *testing.T) {
 
 func TestSedAppendNumeric(t *testing.T) {
 	content := "line1\nline2\nline3\n"
-	writeTestFile(t, "test_sed_append_num.txt", content)
-	defer os.Remove("test_sed_append_num.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_append_num.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"2a\\AFTER_LINE_2", "test_sed_append_num.txt"})
+	output, err := runSedCmd([]string{"2a\\AFTER_LINE_2", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -455,10 +502,12 @@ func TestSedAppendNumeric(t *testing.T) {
 
 func TestSedAppendLastLine(t *testing.T) {
 	content := "line1\nline2\n"
-	writeTestFile(t, "test_sed_append_last.txt", content)
-	defer os.Remove("test_sed_append_last.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_append_last.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"2a\\LAST", "test_sed_append_last.txt"})
+	output, err := runSedCmd([]string{"2a\\LAST", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -474,10 +523,12 @@ func TestSedAppendLastLine(t *testing.T) {
 
 func TestSedChange(t *testing.T) {
 	content := "line1\nline2\nline3\n"
-	writeTestFile(t, "test_sed_change.txt", content)
-	defer os.Remove("test_sed_change.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_change.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"/line2/c\\CHANGED", "test_sed_change.txt"})
+	output, err := runSedCmd([]string{"/line2/c\\CHANGED", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -493,10 +544,12 @@ func TestSedChange(t *testing.T) {
 
 func TestSedChangeNumeric(t *testing.T) {
 	content := "line1\nline2\nline3\n"
-	writeTestFile(t, "test_sed_change_num.txt", content)
-	defer os.Remove("test_sed_change_num.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_change_num.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"2c\\REPLACED_LINE_2", "test_sed_change_num.txt"})
+	output, err := runSedCmd([]string{"2c\\REPLACED_LINE_2", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -512,10 +565,12 @@ func TestSedChangeNumeric(t *testing.T) {
 
 func TestSedChangeFirstLine(t *testing.T) {
 	content := "ORIGINAL\nline2\n"
-	writeTestFile(t, "test_sed_change_first.txt", content)
-	defer os.Remove("test_sed_change_first.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_change_first.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"1c\\NEW_FIRST", "test_sed_change_first.txt"})
+	output, err := runSedCmd([]string{"1c\\NEW_FIRST", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -531,8 +586,9 @@ func TestSedChangeFirstLine(t *testing.T) {
 
 func TestSedInPlace(t *testing.T) {
 	content := "old value\nkeep this\nold again\n"
-	filename := "test_sed_inplace.txt"
-	writeTestFile(t, filename, content)
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_inplace.txt")
+	os.WriteFile(filename, []byte(content), 0644)
 	defer os.Remove(filename)
 	defer os.Remove(filename + ".bak")
 
@@ -565,8 +621,9 @@ func TestSedInPlace(t *testing.T) {
 
 func TestSedInPlaceNoBackup(t *testing.T) {
 	content := "old value\nkeep this\n"
-	filename := "test_sed_inplace_nobak.txt"
-	writeTestFile(t, filename, content)
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_inplace_nobak.txt")
+	os.WriteFile(filename, []byte(content), 0644)
 	defer os.Remove(filename)
 
 	err := SedCmd([]string{"-i", "s/old/new/", filename})
@@ -618,15 +675,19 @@ func TestSedStdinMultiple(t *testing.T) {
 // ============== SCRIPT FILE TESTS ==============
 
 func TestSedScriptFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	inputFilename := filepath.Join(tmpDir, "test_sed_script_input.txt")
+	scriptFilename := filepath.Join(tmpDir, "test_sed_script.sed")
+
 	content := "foo bar\nbaz qux\n"
-	writeTestFile(t, "test_sed_script_input.txt", content)
-	defer os.Remove("test_sed_script_input.txt")
+	os.WriteFile(inputFilename, []byte(content), 0644)
+	defer os.Remove(inputFilename)
 
 	scriptContent := "s/foo/FOO/\ns/bar/BAR/"
-	writeTestFile(t, "test_sed_script.sed", scriptContent)
-	defer os.Remove("test_sed_script.sed")
+	os.WriteFile(scriptFilename, []byte(scriptContent), 0644)
+	defer os.Remove(scriptFilename)
 
-	output, err := runSedCmd([]string{"-f", "test_sed_script.sed", "test_sed_script_input.txt"})
+	output, err := runSedCmd([]string{"-f", scriptFilename, inputFilename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -641,10 +702,12 @@ func TestSedScriptFile(t *testing.T) {
 
 func TestSedInsertAndAppend(t *testing.T) {
 	content := "line1\nline2\nline3\n"
-	writeTestFile(t, "test_sed_ins_app.txt", content)
-	defer os.Remove("test_sed_ins_app.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_ins_app.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"-e", "/line2/i\\BEFORE", "-e", "/line2/a\\AFTER", "test_sed_ins_app.txt"})
+	output, err := runSedCmd([]string{"-e", "/line2/i\\BEFORE", "-e", "/line2/a\\AFTER", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -660,10 +723,12 @@ func TestSedInsertAndAppend(t *testing.T) {
 
 func TestSedDeleteAndSubstitute(t *testing.T) {
 	content := "DELETE\nkeep this\nDELETE\nmodify me\n"
-	writeTestFile(t, "test_sed_del_sub.txt", content)
-	defer os.Remove("test_sed_del_sub.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_del_sub.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"-e", "/DELETE/d", "-e", "s/modify/CHANGED/", "test_sed_del_sub.txt"})
+	output, err := runSedCmd([]string{"-e", "/DELETE/d", "-e", "s/modify/CHANGED/", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -681,11 +746,13 @@ func TestSedDeleteAndSubstitute(t *testing.T) {
 
 func TestSedEmptyPattern(t *testing.T) {
 	content := "foo\nbar\nfoo\n"
-	writeTestFile(t, "test_sed_empty.txt", content)
-	defer os.Remove("test_sed_empty.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_empty.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// Empty pattern should match every line
-	_, err := runSedCmd([]string{"s//X/", "test_sed_empty.txt"})
+	_, err := runSedCmd([]string{"s//X/", filename})
 	// This should error or handle gracefully
 	if err != nil {
 		// Expected - empty pattern not supported
@@ -695,10 +762,12 @@ func TestSedEmptyPattern(t *testing.T) {
 
 func TestSedNoMatch(t *testing.T) {
 	content := "foo bar\nbaz qux\n"
-	writeTestFile(t, "test_sed_nomatch.txt", content)
-	defer os.Remove("test_sed_nomatch.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_nomatch.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSedCmd([]string{"s/xyz/ABC/", "test_sed_nomatch.txt"})
+	output, err := runSedCmd([]string{"s/xyz/ABC/", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -712,11 +781,13 @@ func TestSedNoMatch(t *testing.T) {
 
 func TestSedSpecialChars(t *testing.T) {
 	content := "price: 100 USD\ndiscount: 50%\n"
-	writeTestFile(t, "test_sed_special.txt", content)
-	defer os.Remove("test_sed_special.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_special.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// Test with special chars in pattern
-	output, err := runSedCmd([]string{"s/50%/75%/", "test_sed_special.txt"})
+	output, err := runSedCmd([]string{"s/50%/75%/", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}
@@ -729,11 +800,13 @@ func TestSedSpecialChars(t *testing.T) {
 
 func TestSedDotPattern(t *testing.T) {
 	content := "test.txt\ntestXtxt\n"
-	writeTestFile(t, "test_sed_dot.txt", content)
-	defer os.Remove("test_sed_dot.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sed_dot.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// . matches any char in regex
-	output, err := runSedCmd([]string{"s/test\\.txt/match/", "test_sed_dot.txt"})
+	output, err := runSedCmd([]string{"s/test\\.txt/match/", filename})
 	if err != nil {
 		t.Fatalf("sed command failed: %v", err)
 	}

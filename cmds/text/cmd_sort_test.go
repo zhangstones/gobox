@@ -2,6 +2,7 @@ package text
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -10,10 +11,12 @@ import (
 
 func TestSortBasic(t *testing.T) {
 	content := "banana\napple\ncherry\n"
-	sortWriteTestFile(t, "test_sort_basic.txt", content)
-	defer os.Remove("test_sort_basic.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_basic.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"test_sort_basic.txt"})
+	output, err := runSortCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -27,10 +30,12 @@ func TestSortBasic(t *testing.T) {
 
 func TestSortNumeric(t *testing.T) {
 	content := "10\n2\n1\n20\n3\n"
-	sortWriteTestFile(t, "test_sort_numeric.txt", content)
-	defer os.Remove("test_sort_numeric.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_numeric.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-n", "test_sort_numeric.txt"})
+	output, err := runSortCmd([]string{"-n", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -44,10 +49,12 @@ func TestSortNumeric(t *testing.T) {
 
 func TestSortReverse(t *testing.T) {
 	content := "apple\nbanana\ncherry\n"
-	sortWriteTestFile(t, "test_sort_reverse.txt", content)
-	defer os.Remove("test_sort_reverse.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_reverse.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-r", "test_sort_reverse.txt"})
+	output, err := runSortCmd([]string{"-r", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -61,10 +68,12 @@ func TestSortReverse(t *testing.T) {
 
 func TestSortNumericReverse(t *testing.T) {
 	content := "1\n10\n2\n20\n3\n"
-	sortWriteTestFile(t, "test_sort_num_reverse.txt", content)
-	defer os.Remove("test_sort_num_reverse.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_num_reverse.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-n", "-r", "test_sort_num_reverse.txt"})
+	output, err := runSortCmd([]string{"-n", "-r", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -78,11 +87,13 @@ func TestSortNumericReverse(t *testing.T) {
 
 func TestSortCombinedFlags(t *testing.T) {
 	content := "10\n2\n1\n20\n3\n"
-	sortWriteTestFile(t, "test_sort_combined.txt", content)
-	defer os.Remove("test_sort_combined.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_combined.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// Test combined flags -rn
-	output, err := runSortCmd([]string{"-rn", "test_sort_combined.txt"})
+	output, err := runSortCmd([]string{"-rn", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -98,10 +109,12 @@ func TestSortCombinedFlags(t *testing.T) {
 
 func TestSortEmptyFile(t *testing.T) {
 	content := ""
-	sortWriteTestFile(t, "test_sort_empty.txt", content)
-	defer os.Remove("test_sort_empty.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_empty.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"test_sort_empty.txt"})
+	output, err := runSortCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -114,10 +127,12 @@ func TestSortEmptyFile(t *testing.T) {
 
 func TestSortSingleLine(t *testing.T) {
 	content := "hello\n"
-	sortWriteTestFile(t, "test_sort_single.txt", content)
-	defer os.Remove("test_sort_single.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_single.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"test_sort_single.txt"})
+	output, err := runSortCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -131,10 +146,12 @@ func TestSortSingleLine(t *testing.T) {
 
 func TestSortAlreadySorted(t *testing.T) {
 	content := "1\n2\n3\n4\n5\n"
-	sortWriteTestFile(t, "test_sort_sorted.txt", content)
-	defer os.Remove("test_sort_sorted.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_sorted.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"test_sort_sorted.txt"})
+	output, err := runSortCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -148,10 +165,12 @@ func TestSortAlreadySorted(t *testing.T) {
 
 func TestSortReverseSorted(t *testing.T) {
 	content := "5\n4\n3\n2\n1\n"
-	sortWriteTestFile(t, "test_sort_rev_sorted.txt", content)
-	defer os.Remove("test_sort_rev_sorted.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_rev_sorted.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-n", "test_sort_rev_sorted.txt"})
+	output, err := runSortCmd([]string{"-n", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -165,10 +184,12 @@ func TestSortReverseSorted(t *testing.T) {
 
 func TestSortIdenticalLines(t *testing.T) {
 	content := "foo\nfoo\nfoo\nbar\nbar\n"
-	sortWriteTestFile(t, "test_sort_identical.txt", content)
-	defer os.Remove("test_sort_identical.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_identical.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"test_sort_identical.txt"})
+	output, err := runSortCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -182,10 +203,12 @@ func TestSortIdenticalLines(t *testing.T) {
 
 func TestSortSpecialCharacters(t *testing.T) {
 	content := "~user\n100\n-50\n+20\n.Aaa\n"
-	sortWriteTestFile(t, "test_sort_special.txt", content)
-	defer os.Remove("test_sort_special.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_special.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"test_sort_special.txt"})
+	output, err := runSortCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -203,10 +226,12 @@ func TestSortSpecialCharacters(t *testing.T) {
 
 func TestSortByKey(t *testing.T) {
 	content := "banana 3\napple 1\ncherry 2\n"
-	sortWriteTestFile(t, "test_sort_key.txt", content)
-	defer os.Remove("test_sort_key.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_key.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-k2", "test_sort_key.txt"})
+	output, err := runSortCmd([]string{"-k2", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -220,10 +245,12 @@ func TestSortByKey(t *testing.T) {
 
 func TestSortByKeyNumeric(t *testing.T) {
 	content := "banana 30\napple 10\ncherry 20\n"
-	sortWriteTestFile(t, "test_sort_key_num.txt", content)
-	defer os.Remove("test_sort_key_num.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_key_num.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-n", "-k2", "test_sort_key_num.txt"})
+	output, err := runSortCmd([]string{"-n", "-k2", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -237,10 +264,12 @@ func TestSortByKeyNumeric(t *testing.T) {
 
 func TestSortByKeyInvalid(t *testing.T) {
 	content := "apple\nbanana\n"
-	sortWriteTestFile(t, "test_sort_key_invalid.txt", content)
-	defer os.Remove("test_sort_key_invalid.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_key_invalid.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runSortCmd([]string{"-k0", "test_sort_key_invalid.txt"})
+	_, err := runSortCmd([]string{"-k0", filename})
 	if err == nil {
 		t.Errorf("Expected error for invalid key 0")
 	}
@@ -248,11 +277,13 @@ func TestSortByKeyInvalid(t *testing.T) {
 
 func TestSortByKeyOutOfRange(t *testing.T) {
 	content := "apple 1\nbanana 2\n"
-	sortWriteTestFile(t, "test_sort_key_oob.txt", content)
-	defer os.Remove("test_sort_key_oob.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_key_oob.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// Key 99 is out of range, should sort by first field
-	output, err := runSortCmd([]string{"-k99", "test_sort_key_oob.txt"})
+	output, err := runSortCmd([]string{"-k99", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -268,11 +299,13 @@ func TestSortByKeyOutOfRange(t *testing.T) {
 
 func TestSortCustomSeparator(t *testing.T) {
 	content := "banana:3\napple:1\ncherry:2\n"
-	sortWriteTestFile(t, "test_sort_sep.txt", content)
-	defer os.Remove("test_sort_sep.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_sep.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// Use space-separated -t and separator value
-	output, err := runSortCmd([]string{"-t", ":", "-k2", "-n", "test_sort_sep.txt"})
+	output, err := runSortCmd([]string{"-t", ":", "-k2", "-n", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -286,11 +319,13 @@ func TestSortCustomSeparator(t *testing.T) {
 
 func TestSortTabSeparator(t *testing.T) {
 	content := "banana\t3\napple\t1\ncherry\t2\n"
-	sortWriteTestFile(t, "test_sort_tab.txt", content)
-	defer os.Remove("test_sort_tab.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_tab.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// Without explicit separator, tabs are treated as whitespace
-	output, err := runSortCmd([]string{"-n", "-k2", "test_sort_tab.txt"})
+	output, err := runSortCmd([]string{"-n", "-k2", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -313,10 +348,12 @@ func TestSortSeparatorRequiresArgument(t *testing.T) {
 
 func TestSortUnique(t *testing.T) {
 	content := "apple\nbanana\napple\ncherry\nbanana\n"
-	sortWriteTestFile(t, "test_sort_unique.txt", content)
-	defer os.Remove("test_sort_unique.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_unique.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-u", "test_sort_unique.txt"})
+	output, err := runSortCmd([]string{"-u", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -330,10 +367,12 @@ func TestSortUnique(t *testing.T) {
 
 func TestSortUniqueNumeric(t *testing.T) {
 	content := "10\n2\n1\n10\n3\n2\n"
-	sortWriteTestFile(t, "test_sort_unique_num.txt", content)
-	defer os.Remove("test_sort_unique_num.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_unique_num.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-nu", "test_sort_unique_num.txt"})
+	output, err := runSortCmd([]string{"-nu", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -347,10 +386,12 @@ func TestSortUniqueNumeric(t *testing.T) {
 
 func TestSortUniqueAlreadySorted(t *testing.T) {
 	content := "apple\napple\nbanana\nbanana\ncherry\n"
-	sortWriteTestFile(t, "test_sort_unique_sorted.txt", content)
-	defer os.Remove("test_sort_unique_sorted.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_unique_sorted.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-u", "test_sort_unique_sorted.txt"})
+	output, err := runSortCmd([]string{"-u", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -366,10 +407,12 @@ func TestSortUniqueAlreadySorted(t *testing.T) {
 
 func TestSortMonth(t *testing.T) {
 	content := "Mar\nJan\nFeb\nDec\nNov\n"
-	sortWriteTestFile(t, "test_sort_month.txt", content)
-	defer os.Remove("test_sort_month.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_month.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-M", "test_sort_month.txt"})
+	output, err := runSortCmd([]string{"-M", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -383,10 +426,12 @@ func TestSortMonth(t *testing.T) {
 
 func TestSortMonthReverse(t *testing.T) {
 	content := "Mar\nJan\nFeb\nDec\nNov\n"
-	sortWriteTestFile(t, "test_sort_month_rev.txt", content)
-	defer os.Remove("test_sort_month_rev.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_month_rev.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-M", "-r", "test_sort_month_rev.txt"})
+	output, err := runSortCmd([]string{"-M", "-r", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -401,10 +446,12 @@ func TestSortMonthReverse(t *testing.T) {
 func TestSortMonthLowercase(t *testing.T) {
 	// Month names must be 3-letter abbreviations matching the monthNames map
 	content := "mar\njan\nfeb\n"
-	sortWriteTestFile(t, "test_sort_month_lower.txt", content)
-	defer os.Remove("test_sort_month_lower.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_month_lower.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-M", "test_sort_month_lower.txt"})
+	output, err := runSortCmd([]string{"-M", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -418,10 +465,12 @@ func TestSortMonthLowercase(t *testing.T) {
 
 func TestSortMonthInvalidMonth(t *testing.T) {
 	content := "Mar\nNotAMonth\nJan\n"
-	sortWriteTestFile(t, "test_sort_month_invalid.txt", content)
-	defer os.Remove("test_sort_month_invalid.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_month_invalid.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-M", "test_sort_month_invalid.txt"})
+	output, err := runSortCmd([]string{"-M", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -439,10 +488,12 @@ func TestSortMonthInvalidMonth(t *testing.T) {
 
 func TestSortHumanNumeric(t *testing.T) {
 	content := "1K\n2M\n100\n3G\n"
-	sortWriteTestFile(t, "test_sort_human.txt", content)
-	defer os.Remove("test_sort_human.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_human.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-h", "test_sort_human.txt"})
+	output, err := runSortCmd([]string{"-h", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -457,10 +508,12 @@ func TestSortHumanNumeric(t *testing.T) {
 
 func TestSortHumanNumericReverse(t *testing.T) {
 	content := "1K\n2M\n100\n3G\n"
-	sortWriteTestFile(t, "test_sort_human_rev.txt", content)
-	defer os.Remove("test_sort_human_rev.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_human_rev.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-h", "-r", "test_sort_human_rev.txt"})
+	output, err := runSortCmd([]string{"-h", "-r", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -476,10 +529,12 @@ func TestSortHumanNumericKiB(t *testing.T) {
 	// Note: The sort command's human numeric parsing doesn't properly support
 	// binary suffixes (Ki, Mi, Gi, Ti). This test verifies what IS supported.
 	content := "1K\n500\n2M\n"
-	sortWriteTestFile(t, "test_sort_human_ki.txt", content)
-	defer os.Remove("test_sort_human_ki.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_human_ki.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-h", "test_sort_human_ki.txt"})
+	output, err := runSortCmd([]string{"-h", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -496,10 +551,12 @@ func TestSortHumanNumericKiB(t *testing.T) {
 
 func TestSortRandom(t *testing.T) {
 	content := "line1\nline2\nline3\nline4\nline5\n"
-	sortWriteTestFile(t, "test_sort_random.txt", content)
-	defer os.Remove("test_sort_random.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_random.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-R", "test_sort_random.txt"})
+	output, err := runSortCmd([]string{"-R", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -529,14 +586,16 @@ func TestSortRandom(t *testing.T) {
 
 func TestSortRandomDifferentOrder(t *testing.T) {
 	content := "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n"
-	sortWriteTestFile(t, "test_sort_random2.txt", content)
-	defer os.Remove("test_sort_random2.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_random2.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
 	// Run multiple times and verify the seed produces different orderings
 	// (this is probabilistic but very unlikely to fail if truly random)
 	results := make([]string, 3)
 	for i := 0; i < 3; i++ {
-		output, err := runSortCmd([]string{"-R", "test_sort_random2.txt"})
+		output, err := runSortCmd([]string{"-R", filename})
 		if err != nil {
 			t.Fatalf("sort command failed: %v", err)
 		}
@@ -560,10 +619,12 @@ func TestSortRandomDifferentOrder(t *testing.T) {
 
 func TestSortCheckSorted(t *testing.T) {
 	content := "apple\nbanana\ncherry\n"
-	sortWriteTestFile(t, "test_sort_check.txt", content)
-	defer os.Remove("test_sort_check.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_check.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-c", "test_sort_check.txt"})
+	output, err := runSortCmd([]string{"-c", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -576,10 +637,12 @@ func TestSortCheckSorted(t *testing.T) {
 
 func TestSortCheckNotSorted(t *testing.T) {
 	content := "banana\napple\ncherry\n"
-	sortWriteTestFile(t, "test_sort_check_not.txt", content)
-	defer os.Remove("test_sort_check_not.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_check_not.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runSortCmd([]string{"-c", "test_sort_check_not.txt"})
+	_, err := runSortCmd([]string{"-c", filename})
 	if err == nil {
 		t.Errorf("Expected error for unsorted file")
 	}
@@ -587,10 +650,12 @@ func TestSortCheckNotSorted(t *testing.T) {
 
 func TestSortCheckNumeric(t *testing.T) {
 	content := "1\n2\n10\n20\n"
-	sortWriteTestFile(t, "test_sort_check_num.txt", content)
-	defer os.Remove("test_sort_check_num.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_check_num.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-n", "-c", "test_sort_check_num.txt"})
+	output, err := runSortCmd([]string{"-n", "-c", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -603,10 +668,12 @@ func TestSortCheckNumeric(t *testing.T) {
 
 func TestSortCheckNumericNotSorted(t *testing.T) {
 	content := "1\n10\n2\n"
-	sortWriteTestFile(t, "test_sort_check_num_not.txt", content)
-	defer os.Remove("test_sort_check_num_not.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_check_num_not.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runSortCmd([]string{"-n", "-c", "test_sort_check_num_not.txt"})
+	_, err := runSortCmd([]string{"-n", "-c", filename})
 	if err == nil {
 		t.Errorf("Expected error for numerically unsorted file")
 	}
@@ -614,10 +681,12 @@ func TestSortCheckNumericNotSorted(t *testing.T) {
 
 func TestSortCheckEmptyFile(t *testing.T) {
 	content := ""
-	sortWriteTestFile(t, "test_sort_check_empty.txt", content)
-	defer os.Remove("test_sort_check_empty.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_check_empty.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-c", "test_sort_check_empty.txt"})
+	output, err := runSortCmd([]string{"-c", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -630,10 +699,12 @@ func TestSortCheckEmptyFile(t *testing.T) {
 
 func TestSortCheckSingleLine(t *testing.T) {
 	content := "onlyone\n"
-	sortWriteTestFile(t, "test_sort_check_single.txt", content)
-	defer os.Remove("test_sort_check_single.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_check_single.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-c", "test_sort_check_single.txt"})
+	output, err := runSortCmd([]string{"-c", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -648,17 +719,20 @@ func TestSortCheckSingleLine(t *testing.T) {
 
 func TestSortOutputFile(t *testing.T) {
 	content := "banana\napple\ncherry\n"
-	sortWriteTestFile(t, "test_sort_out_input.txt", content)
-	defer os.Remove("test_sort_out_input.txt")
-	defer os.Remove("test_sort_output.txt")
+	tmpDir := t.TempDir()
+	inputFile := filepath.Join(tmpDir, "test_sort_out_input.txt")
+	outputFile := filepath.Join(tmpDir, "test_sort_output.txt")
+	os.WriteFile(inputFile, []byte(content), 0644)
+	defer os.Remove(inputFile)
+	defer os.Remove(outputFile)
 
-	err := SortCmd([]string{"-o", "test_sort_output.txt", "test_sort_out_input.txt"})
+	err := SortCmd([]string{"-o", outputFile, inputFile})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
 
 	// Check output file exists and has correct content
-	data, err := os.ReadFile("test_sort_output.txt")
+	data, err := os.ReadFile(outputFile)
 	if err != nil {
 		t.Fatalf("Cannot read output file: %v", err)
 	}
@@ -672,16 +746,17 @@ func TestSortOutputFile(t *testing.T) {
 
 func TestSortOutputFileOverwrite(t *testing.T) {
 	content := "banana\napple\ncherry\n"
-	sortWriteTestFile(t, "test_sort_out_input2.txt", content)
-	defer os.Remove("test_sort_out_input2.txt")
-	defer os.Remove("test_sort_out_input2.txt") // Same file as input and output
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_out_input2.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	err := SortCmd([]string{"-o", "test_sort_out_input2.txt", "test_sort_out_input2.txt"})
+	err := SortCmd([]string{"-o", filename, filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
 
-	data, err := os.ReadFile("test_sort_out_input2.txt")
+	data, err := os.ReadFile(filename)
 	if err != nil {
 		t.Fatalf("Cannot read output file: %v", err)
 	}
@@ -704,10 +779,12 @@ func TestSortOutputRequiresArgument(t *testing.T) {
 
 func TestSortZeroTerminated(t *testing.T) {
 	content := "banana\x00apple\x00cherry\x00"
-	sortWriteTestFile(t, "test_sort_zero.txt", content)
-	defer os.Remove("test_sort_zero.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_zero.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-z", "test_sort_zero.txt"})
+	output, err := runSortCmd([]string{"-z", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -721,10 +798,12 @@ func TestSortZeroTerminated(t *testing.T) {
 
 func TestSortZeroTerminatedInput(t *testing.T) {
 	content := "banana\x00apple\x00cherry\x00"
-	sortWriteTestFile(t, "test_sort_zero_in.txt", content)
-	defer os.Remove("test_sort_zero_in.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_zero_in.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-z", "test_sort_zero_in.txt"})
+	output, err := runSortCmd([]string{"-z", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -812,10 +891,12 @@ func TestSortNonexistentFile(t *testing.T) {
 
 func TestSortInvalidKey(t *testing.T) {
 	content := "apple\nbanana\n"
-	sortWriteTestFile(t, "test_sort_bad_key.txt", content)
-	defer os.Remove("test_sort_bad_key.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_bad_key.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runSortCmd([]string{"-kabc", "test_sort_bad_key.txt"})
+	_, err := runSortCmd([]string{"-kabc", filename})
 	if err == nil {
 		t.Errorf("Expected error for invalid key")
 	}
@@ -823,10 +904,12 @@ func TestSortInvalidKey(t *testing.T) {
 
 func TestSortInvalidKeyZero(t *testing.T) {
 	content := "apple\nbanana\n"
-	sortWriteTestFile(t, "test_sort_key_zero.txt", content)
-	defer os.Remove("test_sort_key_zero.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_key_zero.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runSortCmd([]string{"-k", "0", "test_sort_key_zero.txt"})
+	_, err := runSortCmd([]string{"-k", "0", filename})
 	if err == nil {
 		t.Errorf("Expected error for key 0")
 	}
@@ -834,10 +917,12 @@ func TestSortInvalidKeyZero(t *testing.T) {
 
 func TestSortInvalidKeyNegative(t *testing.T) {
 	content := "apple\nbanana\n"
-	sortWriteTestFile(t, "test_sort_key_neg.txt", content)
-	defer os.Remove("test_sort_key_neg.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_key_neg.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runSortCmd([]string{"-k", "-1", "test_sort_key_neg.txt"})
+	_, err := runSortCmd([]string{"-k", "-1", filename})
 	if err == nil {
 		t.Errorf("Expected error for negative key")
 	}
@@ -867,12 +952,15 @@ func TestSortHelp(t *testing.T) {
 func TestSortMultipleFiles(t *testing.T) {
 	content1 := "apple\ncherry\n"
 	content2 := "banana\ndate\n"
-	sortWriteTestFile(t, "test_sort_multi1.txt", content1)
-	sortWriteTestFile(t, "test_sort_multi2.txt", content2)
-	defer os.Remove("test_sort_multi1.txt")
-	defer os.Remove("test_sort_multi2.txt")
+	tmpDir := t.TempDir()
+	filename1 := filepath.Join(tmpDir, "test_sort_multi1.txt")
+	filename2 := filepath.Join(tmpDir, "test_sort_multi2.txt")
+	os.WriteFile(filename1, []byte(content1), 0644)
+	os.WriteFile(filename2, []byte(content2), 0644)
+	defer os.Remove(filename1)
+	defer os.Remove(filename2)
 
-	output, err := runSortCmd([]string{"test_sort_multi1.txt", "test_sort_multi2.txt"})
+	output, err := runSortCmd([]string{filename1, filename2})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -904,10 +992,12 @@ func TestSortPipe(t *testing.T) {
 
 func TestSortDecimal(t *testing.T) {
 	content := "1.5\n1.25\n1.75\n1.0\n"
-	sortWriteTestFile(t, "test_sort_decimal.txt", content)
-	defer os.Remove("test_sort_decimal.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_decimal.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-n", "test_sort_decimal.txt"})
+	output, err := runSortCmd([]string{"-n", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -921,10 +1011,12 @@ func TestSortDecimal(t *testing.T) {
 
 func TestSortNegativeNumbers(t *testing.T) {
 	content := "10\n-5\n20\n-15\n"
-	sortWriteTestFile(t, "test_sort_negative.txt", content)
-	defer os.Remove("test_sort_negative.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_negative.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-n", "test_sort_negative.txt"})
+	output, err := runSortCmd([]string{"-n", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -938,10 +1030,12 @@ func TestSortNegativeNumbers(t *testing.T) {
 
 func TestSortNegativeDecimal(t *testing.T) {
 	content := "-1.5\n1.5\n-0.5\n0.5\n"
-	sortWriteTestFile(t, "test_sort_neg_decimal.txt", content)
-	defer os.Remove("test_sort_neg_decimal.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_neg_decimal.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"-n", "test_sort_neg_decimal.txt"})
+	output, err := runSortCmd([]string{"-n", filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -958,10 +1052,12 @@ func TestSortNegativeDecimal(t *testing.T) {
 func TestSortLongLines(t *testing.T) {
 	longLine := strings.Repeat("a", 10000)
 	content := longLine + "\n" + longLine + "b\n" + longLine + "a\n"
-	sortWriteTestFile(t, "test_sort_long.txt", content)
-	defer os.Remove("test_sort_long.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_long.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"test_sort_long.txt"})
+	output, err := runSortCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -977,10 +1073,12 @@ func TestSortLongLines(t *testing.T) {
 
 func TestSortCaseSensitive(t *testing.T) {
 	content := "Apple\napple\nAPPLE\n"
-	sortWriteTestFile(t, "test_sort_case.txt", content)
-	defer os.Remove("test_sort_case.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_case.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"test_sort_case.txt"})
+	output, err := runSortCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}
@@ -999,10 +1097,12 @@ func TestSortStability(t *testing.T) {
 	// When lines compare equal, they should maintain original order
 	// Using identical strings ensures equal comparison
 	content := "aaa\nbbb\naaa\nccc\naaa\n"
-	sortWriteTestFile(t, "test_sort_stable.txt", content)
-	defer os.Remove("test_sort_stable.txt")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_stable.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runSortCmd([]string{"test_sort_stable.txt"})
+	output, err := runSortCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("sort command failed: %v", err)
 	}

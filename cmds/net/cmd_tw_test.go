@@ -893,9 +893,10 @@ func TestTwIntegrationPortOption(t *testing.T) {
 
 func TestTwIntegrationDirOption(t *testing.T) {
 	// Test that dir option is accepted
-	output, err := runTwCmd([]string{"-d", "/tmp", "-h"})
+	tmpDir := t.TempDir()
+	output, err := runTwCmd([]string{"-d", tmpDir, "-h"})
 	if err != nil {
-		t.Fatalf("tw -d /tmp -h failed: %v", err)
+		t.Fatalf("tw -d tmpDir -h failed: %v", err)
 	}
 
 	result := string(output)
@@ -919,7 +920,8 @@ func TestTwIntegrationReuseOption(t *testing.T) {
 
 func TestTwIntegrationCombinedOptions(t *testing.T) {
 	// Test combining multiple options
-	output, err := runTwCmd([]string{"--bench", "-p", "9999", "-d", "/tmp", "-r", "-h"})
+	tmpDir := t.TempDir()
+	output, err := runTwCmd([]string{"--bench", "-p", "9999", "-d", tmpDir, "-r", "-h"})
 	if err != nil {
 		t.Fatalf("tw combined options failed: %v", err)
 	}

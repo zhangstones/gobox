@@ -3,6 +3,7 @@ package text
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -19,23 +20,20 @@ func wcWriteTestFile(t *testing.T, filename, content string) {
 // ============== BASIC TESTS ==============
 
 func TestWcBasic(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\nfoo bar\nhello again\n"
-	wcWriteTestFile(t, "test_wc_basic.txt", content)
-	defer os.Remove("test_wc_basic.txt")
+	filename := filepath.Join(tmpDir, "test_wc_basic.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"test_wc_basic.txt"})
+	output, err := runWcCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("wc command failed: %v", err)
 	}
 
 	result := string(output)
-	// Default output: lines words bytes filename
-	// 3 lines, 3 words (bug: last word on each line not counted), 32 bytes
 	if !strings.Contains(result, "3") {
 		t.Errorf("Expected 3 lines in output, got: %s", result)
-	}
-	if !strings.Contains(result, "3") {
-		t.Errorf("Expected 3 words in output, got: %s", result)
 	}
 	if !strings.Contains(result, "test_wc_basic.txt") {
 		t.Errorf("Expected filename in output, got: %s", result)
@@ -43,11 +41,13 @@ func TestWcBasic(t *testing.T) {
 }
 
 func TestWcLinesFlag(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "line1\nline2\nline3\nline4\n"
-	wcWriteTestFile(t, "test_wc_lines.txt", content)
-	defer os.Remove("test_wc_lines.txt")
+	filename := filepath.Join(tmpDir, "test_wc_lines.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"-l", "test_wc_lines.txt"})
+	output, err := runWcCmd([]string{"-l", filename})
 	if err != nil {
 		t.Fatalf("wc -l command failed: %v", err)
 	}
@@ -60,11 +60,13 @@ func TestWcLinesFlag(t *testing.T) {
 }
 
 func TestWcWordsFlag(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\nfoo bar baz\n"
-	wcWriteTestFile(t, "test_wc_words.txt", content)
-	defer os.Remove("test_wc_words.txt")
+	filename := filepath.Join(tmpDir, "test_wc_words.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"-w", "test_wc_words.txt"})
+	output, err := runWcCmd([]string{"-w", filename})
 	if err != nil {
 		t.Fatalf("wc -w command failed: %v", err)
 	}
@@ -77,11 +79,13 @@ func TestWcWordsFlag(t *testing.T) {
 }
 
 func TestWcBytesFlag(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\n"
-	wcWriteTestFile(t, "test_wc_bytes.txt", content)
-	defer os.Remove("test_wc_bytes.txt")
+	filename := filepath.Join(tmpDir, "test_wc_bytes.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"-c", "test_wc_bytes.txt"})
+	output, err := runWcCmd([]string{"-c", filename})
 	if err != nil {
 		t.Fatalf("wc -c command failed: %v", err)
 	}
@@ -94,11 +98,13 @@ func TestWcBytesFlag(t *testing.T) {
 }
 
 func TestWcCharsFlag(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\n"
-	wcWriteTestFile(t, "test_wc_chars.txt", content)
-	defer os.Remove("test_wc_chars.txt")
+	filename := filepath.Join(tmpDir, "test_wc_chars.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"-m", "test_wc_chars.txt"})
+	output, err := runWcCmd([]string{"-m", filename})
 	if err != nil {
 		t.Fatalf("wc -m command failed: %v", err)
 	}
@@ -111,11 +117,13 @@ func TestWcCharsFlag(t *testing.T) {
 }
 
 func TestWcMaxLineLengthFlag(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "short\nthis is a longer line\ntiny\n"
-	wcWriteTestFile(t, "test_wc_maxlen.txt", content)
-	defer os.Remove("test_wc_maxlen.txt")
+	filename := filepath.Join(tmpDir, "test_wc_maxlen.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"-L", "test_wc_maxlen.txt"})
+	output, err := runWcCmd([]string{"-L", filename})
 	if err != nil {
 		t.Fatalf("wc -L command failed: %v", err)
 	}
@@ -130,11 +138,13 @@ func TestWcMaxLineLengthFlag(t *testing.T) {
 // ============== COMBINED FLAGS TESTS ==============
 
 func TestWcCombinedFlagsLW(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\nfoo bar\n"
-	wcWriteTestFile(t, "test_wc_lw.txt", content)
-	defer os.Remove("test_wc_lw.txt")
+	filename := filepath.Join(tmpDir, "test_wc_lw.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"-lw", "test_wc_lw.txt"})
+	output, err := runWcCmd([]string{"-lw", filename})
 	if err != nil {
 		t.Fatalf("wc -lw command failed: %v", err)
 	}
@@ -147,11 +157,13 @@ func TestWcCombinedFlagsLW(t *testing.T) {
 }
 
 func TestWcCombinedFlagsLC(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\nfoo bar\n"
-	wcWriteTestFile(t, "test_wc_lc.txt", content)
-	defer os.Remove("test_wc_lc.txt")
+	filename := filepath.Join(tmpDir, "test_wc_lc.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"-lc", "test_wc_lc.txt"})
+	output, err := runWcCmd([]string{"-lc", filename})
 	if err != nil {
 		t.Fatalf("wc -lc command failed: %v", err)
 	}
@@ -167,11 +179,13 @@ func TestWcCombinedFlagsLC(t *testing.T) {
 }
 
 func TestWcCombinedFlagsLWM(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\nfoo bar\n"
-	wcWriteTestFile(t, "test_wc_lwm.txt", content)
-	defer os.Remove("test_wc_lwm.txt")
+	filename := filepath.Join(tmpDir, "test_wc_lwm.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"-lwm", "test_wc_lwm.txt"})
+	output, err := runWcCmd([]string{"-lwm", filename})
 	if err != nil {
 		t.Fatalf("wc -lwm command failed: %v", err)
 	}
@@ -190,11 +204,13 @@ func TestWcCombinedFlagsLWM(t *testing.T) {
 }
 
 func TestWcCombinedFlagsAll(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\nfoo bar\n"
-	wcWriteTestFile(t, "test_wc_all.txt", content)
-	defer os.Remove("test_wc_all.txt")
+	filename := filepath.Join(tmpDir, "test_wc_all.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"-lwm", "-c", "test_wc_all.txt"})
+	output, err := runWcCmd([]string{"-lwm", "-c", filename})
 	if err != nil {
 		t.Fatalf("wc -lwm -c command failed: %v", err)
 	}
@@ -212,14 +228,17 @@ func TestWcCombinedFlagsAll(t *testing.T) {
 // ============== MULTIPLE FILES TESTS ==============
 
 func TestWcMultipleFiles(t *testing.T) {
+	tmpDir := t.TempDir()
 	content1 := "hello world\n"
 	content2 := "foo bar baz\n"
-	wcWriteTestFile(t, "test_wc_multi1.txt", content1)
-	wcWriteTestFile(t, "test_wc_multi2.txt", content2)
-	defer os.Remove("test_wc_multi1.txt")
-	defer os.Remove("test_wc_multi2.txt")
+	filename1 := filepath.Join(tmpDir, "test_wc_multi1.txt")
+	filename2 := filepath.Join(tmpDir, "test_wc_multi2.txt")
+	os.WriteFile(filename1, []byte(content1), 0644)
+	os.WriteFile(filename2, []byte(content2), 0644)
+	defer os.Remove(filename1)
+	defer os.Remove(filename2)
 
-	output, err := runWcCmd([]string{"test_wc_multi1.txt", "test_wc_multi2.txt"})
+	output, err := runWcCmd([]string{filename1, filename2})
 	if err != nil {
 		t.Fatalf("wc multiple files command failed: %v", err)
 	}
@@ -239,14 +258,17 @@ func TestWcMultipleFiles(t *testing.T) {
 }
 
 func TestWcMultipleFilesWithFlags(t *testing.T) {
+	tmpDir := t.TempDir()
 	content1 := "a b c\n"
 	content2 := "d e f g\n"
-	wcWriteTestFile(t, "test_wc_multi_f1.txt", content1)
-	wcWriteTestFile(t, "test_wc_multi_f2.txt", content2)
-	defer os.Remove("test_wc_multi_f1.txt")
-	defer os.Remove("test_wc_multi_f2.txt")
+	filename1 := filepath.Join(tmpDir, "test_wc_multi_f1.txt")
+	filename2 := filepath.Join(tmpDir, "test_wc_multi_f2.txt")
+	os.WriteFile(filename1, []byte(content1), 0644)
+	os.WriteFile(filename2, []byte(content2), 0644)
+	defer os.Remove(filename1)
+	defer os.Remove(filename2)
 
-	output, err := runWcCmd([]string{"-l", "test_wc_multi_f1.txt", "test_wc_multi_f2.txt"})
+	output, err := runWcCmd([]string{"-l", filename1, filename2})
 	if err != nil {
 		t.Fatalf("wc -l multiple files command failed: %v", err)
 	}
@@ -309,11 +331,13 @@ func TestWcStdinDash(t *testing.T) {
 // ============== EDGE CASES ==============
 
 func TestWcEmptyFile(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := ""
-	wcWriteTestFile(t, "test_wc_empty.txt", content)
-	defer os.Remove("test_wc_empty.txt")
+	filename := filepath.Join(tmpDir, "test_wc_empty.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"test_wc_empty.txt"})
+	output, err := runWcCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("wc empty file command failed: %v", err)
 	}
@@ -326,11 +350,13 @@ func TestWcEmptyFile(t *testing.T) {
 }
 
 func TestWcSingleLine(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\n"
-	wcWriteTestFile(t, "test_wc_single.txt", content)
-	defer os.Remove("test_wc_single.txt")
+	filename := filepath.Join(tmpDir, "test_wc_single.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"test_wc_single.txt"})
+	output, err := runWcCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("wc single line command failed: %v", err)
 	}
@@ -349,11 +375,13 @@ func TestWcSingleLine(t *testing.T) {
 }
 
 func TestWcSingleLineNoNewline(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world"
-	wcWriteTestFile(t, "test_wc_single_nl.txt", content)
-	defer os.Remove("test_wc_single_nl.txt")
+	filename := filepath.Join(tmpDir, "test_wc_single_nl.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"test_wc_single_nl.txt"})
+	output, err := runWcCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("wc single line no newline command failed: %v", err)
 	}
@@ -373,11 +401,13 @@ func TestWcSingleLineNoNewline(t *testing.T) {
 }
 
 func TestWcMultipleBlankLines(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "\n\n\nhello world\n\n\n"
-	wcWriteTestFile(t, "test_wc_blank.txt", content)
-	defer os.Remove("test_wc_blank.txt")
+	filename := filepath.Join(tmpDir, "test_wc_blank.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"-l", "test_wc_blank.txt"})
+	output, err := runWcCmd([]string{"-l", filename})
 	if err != nil {
 		t.Fatalf("wc blank lines command failed: %v", err)
 	}
@@ -390,11 +420,13 @@ func TestWcMultipleBlankLines(t *testing.T) {
 }
 
 func TestWcTabCharacters(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello\tworld\nfoo\tbar\n"
-	wcWriteTestFile(t, "test_wc_tabs.txt", content)
-	defer os.Remove("test_wc_tabs.txt")
+	filename := filepath.Join(tmpDir, "test_wc_tabs.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"-w", "test_wc_tabs.txt"})
+	output, err := runWcCmd([]string{"-w", filename})
 	if err != nil {
 		t.Fatalf("wc tabs command failed: %v", err)
 	}
@@ -407,12 +439,13 @@ func TestWcTabCharacters(t *testing.T) {
 }
 
 func TestWcLongLine(t *testing.T) {
-	// Create a line with known length
+	tmpDir := t.TempDir()
 	content := strings.Repeat("a", 1000) + "\n"
-	wcWriteTestFile(t, "test_wc_long.txt", content)
-	defer os.Remove("test_wc_long.txt")
+	filename := filepath.Join(tmpDir, "test_wc_long.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"-L", "test_wc_long.txt"})
+	output, err := runWcCmd([]string{"-L", filename})
 	if err != nil {
 		t.Fatalf("wc long line command failed: %v", err)
 	}
@@ -425,11 +458,13 @@ func TestWcLongLine(t *testing.T) {
 }
 
 func TestWcOnlySpaces(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "   \n   \n   \n"
-	wcWriteTestFile(t, "test_wc_spaces.txt", content)
-	defer os.Remove("test_wc_spaces.txt")
+	filename := filepath.Join(tmpDir, "test_wc_spaces.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"-w", "test_wc_spaces.txt"})
+	output, err := runWcCmd([]string{"-w", filename})
 	if err != nil {
 		t.Fatalf("wc spaces only command failed: %v", err)
 	}
@@ -442,11 +477,13 @@ func TestWcOnlySpaces(t *testing.T) {
 }
 
 func TestWcOnlyNewlines(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "\n\n\n\n"
-	wcWriteTestFile(t, "test_wc_newlines.txt", content)
-	defer os.Remove("test_wc_newlines.txt")
+	filename := filepath.Join(tmpDir, "test_wc_newlines.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"-l", "test_wc_newlines.txt"})
+	output, err := runWcCmd([]string{"-l", filename})
 	if err != nil {
 		t.Fatalf("wc newlines only command failed: %v", err)
 	}
@@ -461,15 +498,16 @@ func TestWcOnlyNewlines(t *testing.T) {
 // ============== BINARY DATA TESTS ==============
 
 func TestWcBinaryData(t *testing.T) {
-	// Create binary-like content with null bytes
+	tmpDir := t.TempDir()
 	content := []byte("hello\x00world\nfoo\x00bar\n")
-	err := os.WriteFile("test_wc_binary.dat", content, 0644)
+	filename := filepath.Join(tmpDir, "test_wc_binary.dat")
+	err := os.WriteFile(filename, content, 0644)
 	if err != nil {
 		t.Fatalf("Failed to write binary test file: %v", err)
 	}
-	defer os.Remove("test_wc_binary.dat")
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"test_wc_binary.dat"})
+	output, err := runWcCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("wc binary command failed: %v", err)
 	}
@@ -485,15 +523,16 @@ func TestWcBinaryData(t *testing.T) {
 }
 
 func TestWcBinaryDataMaxLineLen(t *testing.T) {
-	// Create binary content with null bytes in longest line
+	tmpDir := t.TempDir()
 	content := []byte("short\nlo\x00ng line\n")
-	err := os.WriteFile("test_wc_binary_len.dat", content, 0644)
+	filename := filepath.Join(tmpDir, "test_wc_binary_len.dat")
+	err := os.WriteFile(filename, content, 0644)
 	if err != nil {
 		t.Fatalf("Failed to write binary test file: %v", err)
 	}
-	defer os.Remove("test_wc_binary_len.dat")
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"-L", "test_wc_binary_len.dat"})
+	output, err := runWcCmd([]string{"-L", filename})
 	if err != nil {
 		t.Fatalf("wc binary max line len command failed: %v", err)
 	}
@@ -515,11 +554,13 @@ func TestWcNonexistentFile(t *testing.T) {
 }
 
 func TestWcMultipleFilesOneMissing(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\n"
-	wcWriteTestFile(t, "test_wc_exist.txt", content)
-	defer os.Remove("test_wc_exist.txt")
+	filename := filepath.Join(tmpDir, "test_wc_exist.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runWcCmd([]string{"test_wc_exist.txt", "nonexistent_xyz.txt"})
+	_, err := runWcCmd([]string{filename, "nonexistent_xyz.txt"})
 	if err == nil {
 		t.Fatalf("wc should fail when one file is missing")
 	}
@@ -527,7 +568,7 @@ func TestWcMultipleFilesOneMissing(t *testing.T) {
 
 func TestWcDirectoryAsFile(t *testing.T) {
 	// Create a temporary directory
-	tmpDir := "test_wc_dir"
+	tmpDir := filepath.Join(t.TempDir(), "test_wc_dir")
 	err := os.Mkdir(tmpDir, 0755)
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -568,11 +609,13 @@ func TestWcLongHelpFlag(t *testing.T) {
 // ============== LONG FLAG EQUIVALENTS TESTS ==============
 
 func TestWcLongFlagLines(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "a\nb\nc\n"
-	wcWriteTestFile(t, "test_wc_long_l.txt", content)
-	defer os.Remove("test_wc_long_l.txt")
+	filename := filepath.Join(tmpDir, "test_wc_long_l.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"--lines", "test_wc_long_l.txt"})
+	output, err := runWcCmd([]string{"--lines", filename})
 	if err != nil {
 		t.Fatalf("wc --lines command failed: %v", err)
 	}
@@ -584,11 +627,13 @@ func TestWcLongFlagLines(t *testing.T) {
 }
 
 func TestWcLongFlagWords(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\nfoo bar\n"
-	wcWriteTestFile(t, "test_wc_long_w.txt", content)
-	defer os.Remove("test_wc_long_w.txt")
+	filename := filepath.Join(tmpDir, "test_wc_long_w.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"--words", "test_wc_long_w.txt"})
+	output, err := runWcCmd([]string{"--words", filename})
 	if err != nil {
 		t.Fatalf("wc --words command failed: %v", err)
 	}
@@ -601,11 +646,13 @@ func TestWcLongFlagWords(t *testing.T) {
 }
 
 func TestWcLongFlagBytes(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\n"
-	wcWriteTestFile(t, "test_wc_long_c.txt", content)
-	defer os.Remove("test_wc_long_c.txt")
+	filename := filepath.Join(tmpDir, "test_wc_long_c.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"--bytes", "test_wc_long_c.txt"})
+	output, err := runWcCmd([]string{"--bytes", filename})
 	if err != nil {
 		t.Fatalf("wc --bytes command failed: %v", err)
 	}
@@ -617,11 +664,13 @@ func TestWcLongFlagBytes(t *testing.T) {
 }
 
 func TestWcLongFlagChars(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\n"
-	wcWriteTestFile(t, "test_wc_long_m.txt", content)
-	defer os.Remove("test_wc_long_m.txt")
+	filename := filepath.Join(tmpDir, "test_wc_long_m.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"--chars", "test_wc_long_m.txt"})
+	output, err := runWcCmd([]string{"--chars", filename})
 	if err != nil {
 		t.Fatalf("wc --chars command failed: %v", err)
 	}
@@ -633,11 +682,13 @@ func TestWcLongFlagChars(t *testing.T) {
 }
 
 func TestWcLongFlagMaxLineLength(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "short\nthis is longer\n"
-	wcWriteTestFile(t, "test_wc_long_L.txt", content)
-	defer os.Remove("test_wc_long_L.txt")
+	filename := filepath.Join(tmpDir, "test_wc_long_L.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"--max-line-length", "test_wc_long_L.txt"})
+	output, err := runWcCmd([]string{"--max-line-length", filename})
 	if err != nil {
 		t.Fatalf("wc --max-line-length command failed: %v", err)
 	}
@@ -652,11 +703,13 @@ func TestWcLongFlagMaxLineLength(t *testing.T) {
 // ============== SPECIAL CHARACTER TESTS ==============
 
 func TestWcUnicode(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\n"
-	wcWriteTestFile(t, "test_wc_ascii.txt", content)
-	defer os.Remove("test_wc_ascii.txt")
+	filename := filepath.Join(tmpDir, "test_wc_ascii.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"test_wc_ascii.txt"})
+	output, err := runWcCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("wc ascii command failed: %v", err)
 	}
@@ -668,11 +721,13 @@ func TestWcUnicode(t *testing.T) {
 }
 
 func TestWcSpecialCharsInWords(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello-world foo_bar baz@qux\n"
-	wcWriteTestFile(t, "test_wc_special.txt", content)
-	defer os.Remove("test_wc_special.txt")
+	filename := filepath.Join(tmpDir, "test_wc_special.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runWcCmd([]string{"-w", "test_wc_special.txt"})
+	output, err := runWcCmd([]string{"-w", filename})
 	if err != nil {
 		t.Fatalf("wc special chars command failed: %v", err)
 	}
@@ -687,13 +742,16 @@ func TestWcSpecialCharsInWords(t *testing.T) {
 // ============== CONCURRENT FILE TESTING ==============
 
 func TestWcFileOrder(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "line1\n"
-	wcWriteTestFile(t, "test_wc_order_a.txt", content)
-	wcWriteTestFile(t, "test_wc_order_b.txt", content)
-	defer os.Remove("test_wc_order_a.txt")
-	defer os.Remove("test_wc_order_b.txt")
+	filenameA := filepath.Join(tmpDir, "test_wc_order_a.txt")
+	filenameB := filepath.Join(tmpDir, "test_wc_order_b.txt")
+	os.WriteFile(filenameA, []byte(content), 0644)
+	os.WriteFile(filenameB, []byte(content), 0644)
+	defer os.Remove(filenameA)
+	defer os.Remove(filenameB)
 
-	output, err := runWcCmd([]string{"test_wc_order_a.txt", "test_wc_order_b.txt"})
+	output, err := runWcCmd([]string{filenameA, filenameB})
 	if err != nil {
 		t.Fatalf("wc order command failed: %v", err)
 	}
@@ -712,22 +770,26 @@ func TestWcFileOrder(t *testing.T) {
 // ============== FLAG PARSING TESTS ==============
 
 func TestWcUnknownFlag(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\n"
-	wcWriteTestFile(t, "test_wc_unknown.txt", content)
-	defer os.Remove("test_wc_unknown.txt")
+	filename := filepath.Join(tmpDir, "test_wc_unknown.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runWcCmd([]string{"-x", "test_wc_unknown.txt"})
+	_, err := runWcCmd([]string{"-x", filename})
 	if err == nil {
 		t.Fatalf("wc should fail with unknown flag -x")
 	}
 }
 
 func TestWcCombinedUnknownFlag(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\n"
-	wcWriteTestFile(t, "test_wc_combo_unknown.txt", content)
-	defer os.Remove("test_wc_combo_unknown.txt")
+	filename := filepath.Join(tmpDir, "test_wc_combo_unknown.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	_, err := runWcCmd([]string{"-lxw", "test_wc_combo_unknown.txt"})
+	_, err := runWcCmd([]string{"-lxw", filename})
 	if err == nil {
 		t.Fatalf("wc should fail with unknown flag in combination")
 	}
@@ -736,17 +798,17 @@ func TestWcCombinedUnknownFlag(t *testing.T) {
 // ============== PERFORMANCE / LARGE FILE TESTS ==============
 
 func TestWcLargeFile(t *testing.T) {
-	// Create a moderately large file
+	tmpDir := t.TempDir()
 	var sb strings.Builder
 	for i := 0; i < 1000; i++ {
 		fmt.Fprintf(&sb, "line %d contains some text here\n", i)
 	}
 	content := sb.String()
+	filename := filepath.Join(tmpDir, "test_wc_large.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	wcWriteTestFile(t, "test_wc_large.txt", content)
-	defer os.Remove("test_wc_large.txt")
-
-	output, err := runWcCmd([]string{"test_wc_large.txt"})
+	output, err := runWcCmd([]string{filename})
 	if err != nil {
 		t.Fatalf("wc large file command failed: %v", err)
 	}

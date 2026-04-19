@@ -218,7 +218,8 @@ func TestCurlOutputToFileError(t *testing.T) {
 	defer server.Close()
 
 	// Try to write to a directory (should fail)
-	_, err := runCurlCmd([]string{"-o", "/tmp", server.URL})
+	tmpDir := t.TempDir()
+	_, err := runCurlCmd([]string{"-o", tmpDir, server.URL})
 	if err == nil {
 		t.Errorf("Expected error when writing to directory")
 	}

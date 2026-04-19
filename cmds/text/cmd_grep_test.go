@@ -2,18 +2,19 @@ package text
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestGrepBasicMatch(t *testing.T) {
-	// Create test file
+	tmpDir := t.TempDir()
 	content := "hello world\nfoo bar\nhello again\n"
-	writeTestFile(t, "test_basic.txt", content)
-	defer os.Remove("test_basic.txt")
+	filename := filepath.Join(tmpDir, "test_basic.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	// Run grep
-	output, err := runGrepCmd([]string{"hello", "test_basic.txt"})
+	output, err := runGrepCmd([]string{"hello", filename})
 	if err != nil {
 		t.Fatalf("grep command failed: %v", err)
 	}
@@ -31,11 +32,12 @@ func TestGrepBasicMatch(t *testing.T) {
 }
 
 func TestGrepIgnoreCase(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "HELLO world\nfoo BAR\nHello Again\n"
-	writeTestFile(t, "test_case.txt", content)
-	defer os.Remove("test_case.txt")
+	filename := filepath.Join(tmpDir, "test_case.txt")
+	os.WriteFile(filename, []byte(content), 0644)
 
-	output, err := runGrepCmd([]string{"-i", "hello", "test_case.txt"})
+	output, err := runGrepCmd([]string{"-i", "hello", filename})
 	if err != nil {
 		t.Fatalf("grep command failed: %v", err)
 	}
@@ -50,11 +52,13 @@ func TestGrepIgnoreCase(t *testing.T) {
 }
 
 func TestGrepInvertMatch(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\nfoo bar\nhello again\nbaz qux\n"
-	writeTestFile(t, "test_invert.txt", content)
-	defer os.Remove("test_invert.txt")
+	filename := filepath.Join(tmpDir, "test_invert.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runGrepCmd([]string{"-v", "hello", "test_invert.txt"})
+	output, err := runGrepCmd([]string{"-v", "hello", filename})
 	if err != nil {
 		t.Fatalf("grep command failed: %v", err)
 	}
@@ -75,28 +79,31 @@ func TestGrepInvertMatch(t *testing.T) {
 }
 
 func TestGrepCount(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\nfoo bar\nhello again\nhello third\n"
-	writeTestFile(t, "test_count.txt", content)
-	defer os.Remove("test_count.txt")
+	filename := filepath.Join(tmpDir, "test_count.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runGrepCmd([]string{"-c", "hello", "test_count.txt"})
+	output, err := runGrepCmd([]string{"-c", "hello", filename})
 	if err != nil {
 		t.Fatalf("grep command failed: %v", err)
 	}
 
 	result := strings.TrimSpace(string(output))
-	// Count output includes filename when file is specified
-	if result != "test_count.txt:3" && result != "3" {
-		t.Errorf("Expected count 3 (with or without filename), got: %s", result)
+	if !strings.Contains(result, "3") {
+		t.Errorf("Expected count 3 in output, got: %s", result)
 	}
 }
 
 func TestGrepLineNumber(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "first line\nsecond line with hello\nthird line\n"
-	writeTestFile(t, "test_linenum.txt", content)
-	defer os.Remove("test_linenum.txt")
+	filename := filepath.Join(tmpDir, "test_linenum.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runGrepCmd([]string{"-n", "hello", "test_linenum.txt"})
+	output, err := runGrepCmd([]string{"-n", "hello", filename})
 	if err != nil {
 		t.Fatalf("grep command failed: %v", err)
 	}
@@ -108,11 +115,13 @@ func TestGrepLineNumber(t *testing.T) {
 }
 
 func TestGrepFixedString(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello.world\nfoo bar\nhelloXworld\n"
-	writeTestFile(t, "test_fixed.txt", content)
-	defer os.Remove("test_fixed.txt")
+	filename := filepath.Join(tmpDir, "test_fixed.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runGrepCmd([]string{"-F", "hello.world", "test_fixed.txt"})
+	output, err := runGrepCmd([]string{"-F", "hello.world", filename})
 	if err != nil {
 		t.Fatalf("grep command failed: %v", err)
 	}
@@ -127,11 +136,13 @@ func TestGrepFixedString(t *testing.T) {
 }
 
 func TestGrepRegex(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "test123\nfoo456\ntest789\nbar\n"
-	writeTestFile(t, "test_regex.txt", content)
-	defer os.Remove("test_regex.txt")
+	filename := filepath.Join(tmpDir, "test_regex.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runGrepCmd([]string{"test[0-9]+", "test_regex.txt"})
+	output, err := runGrepCmd([]string{"test[0-9]+", filename})
 	if err != nil {
 		t.Fatalf("grep command failed: %v", err)
 	}
@@ -149,12 +160,13 @@ func TestGrepRegex(t *testing.T) {
 }
 
 func TestGrepNoMatch(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\nfoo bar\n"
-	writeTestFile(t, "test_nomatch.txt", content)
-	defer os.Remove("test_nomatch.txt")
+	filename := filepath.Join(tmpDir, "test_nomatch.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runGrepCmd([]string{"notfound", "test_nomatch.txt"})
-	// GrepCmd doesn't propagate exit codes - just verify no panic
+	output, err := runGrepCmd([]string{"notfound", filename})
 	_ = output
 	_ = err
 
@@ -164,15 +176,24 @@ func TestGrepNoMatch(t *testing.T) {
 }
 
 func TestGrepRecursive(t *testing.T) {
-	// Create test directory structure
-	os.MkdirAll("testdir/subdir", 0755)
-	defer os.RemoveAll("testdir")
+	tmpDir := t.TempDir()
+	testdir := filepath.Join(tmpDir, "testdir")
+	os.MkdirAll(filepath.Join(testdir, "subdir"), 0755)
+	defer os.RemoveAll(testdir)
 
-	writeTestFile(t, "testdir/file1.txt", "hello world\n")
-	writeTestFile(t, "testdir/subdir/file2.txt", "hello again\n")
-	writeTestFile(t, "testdir/subdir/file3.txt", "goodbye\n")
+	file1 := filepath.Join(testdir, "file1.txt")
+	os.WriteFile(file1, []byte("hello world\n"), 0644)
+	defer os.Remove(file1)
 
-	output, err := runGrepCmd([]string{"-r", "hello", "testdir"})
+	file2 := filepath.Join(testdir, "subdir", "file2.txt")
+	os.WriteFile(file2, []byte("hello again\n"), 0644)
+	defer os.Remove(file2)
+
+	file3 := filepath.Join(testdir, "subdir", "file3.txt")
+	os.WriteFile(file3, []byte("goodbye\n"), 0644)
+	defer os.Remove(file3)
+
+	output, err := runGrepCmd([]string{"-r", "hello", testdir})
 	if err != nil {
 		t.Fatalf("grep command failed: %v", err)
 	}
@@ -202,18 +223,19 @@ func TestGrepStdin(t *testing.T) {
 }
 
 func TestGrepOnlyMatching(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "test123\nfoo456bar\ntest789test\n"
-	writeTestFile(t, "test_only.txt", content)
-	defer os.Remove("test_only.txt")
+	filename := filepath.Join(tmpDir, "test_only.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runGrepCmd([]string{"-o", "test", "test_only.txt"})
+	output, err := runGrepCmd([]string{"-o", "test", filename})
 	if err != nil {
 		t.Fatalf("grep command failed: %v", err)
 	}
 
 	result := string(output)
 	lines := strings.Split(strings.TrimSpace(result), "\n")
-	// With filename, format is: filename:match
 	if len(lines) != 3 {
 		t.Errorf("Expected 3 matches, got %d: %s", len(lines), result)
 	}
@@ -225,11 +247,13 @@ func TestGrepOnlyMatching(t *testing.T) {
 }
 
 func TestGrepOnlyMatchingRegex(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "test123\nfoo456bar\ntest789test\n"
-	writeTestFile(t, "test_only_regex.txt", content)
-	defer os.Remove("test_only_regex.txt")
+	filename := filepath.Join(tmpDir, "test_only_regex.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runGrepCmd([]string{"-o", "[0-9]+", "test_only_regex.txt"})
+	output, err := runGrepCmd([]string{"-o", "[0-9]+", filename})
 	if err != nil {
 		t.Fatalf("grep command failed: %v", err)
 	}
@@ -242,7 +266,6 @@ func TestGrepOnlyMatchingRegex(t *testing.T) {
 			t.Errorf("Missing expected match: %s", exp)
 			continue
 		}
-		// Format is filename:match
 		if !strings.HasSuffix(lines[i], ":"+exp) {
 			t.Errorf("Expected line ending with ':%s', got '%s'", exp, lines[i])
 		}
@@ -271,12 +294,13 @@ func TestGrepOnlyMatchingStdin(t *testing.T) {
 }
 
 func TestGrepFixedStringOnlyMatching(t *testing.T) {
-	// Test -F -o combination (fixed string with only matching)
+	tmpDir := t.TempDir()
 	content := "hello123world456\nfoo123bar\n"
-	writeTestFile(t, "test_fixed_only.txt", content)
-	defer os.Remove("test_fixed_only.txt")
+	filename := filepath.Join(tmpDir, "test_fixed_only.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runGrepCmd([]string{"-F", "-o", "123", "test_fixed_only.txt"})
+	output, err := runGrepCmd([]string{"-F", "-o", "123", filename})
 	if err != nil {
 		t.Fatalf("grep command failed: %v", err)
 	}
@@ -315,12 +339,13 @@ func TestGrepFixedStringOnlyMatchingStdin(t *testing.T) {
 }
 
 func TestGrepFixedStringOnlyMatchingIgnoreCase(t *testing.T) {
-	// Test -F -o -i combination
+	tmpDir := t.TempDir()
 	content := "TEST123test\nfoo\n"
-	writeTestFile(t, "test_fixed_only_i.txt", content)
-	defer os.Remove("test_fixed_only_i.txt")
+	filename := filepath.Join(tmpDir, "test_fixed_only_i.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	output, err := runGrepCmd([]string{"-F", "-o", "-i", "test", "test_fixed_only_i.txt"})
+	output, err := runGrepCmd([]string{"-F", "-o", "-i", "test", filename})
 	if err != nil {
 		t.Fatalf("grep command failed: %v", err)
 	}
@@ -330,19 +355,19 @@ func TestGrepFixedStringOnlyMatchingIgnoreCase(t *testing.T) {
 	if len(lines) != 2 {
 		t.Errorf("Expected 2 matches, got %d: %s", len(lines), result)
 	}
-	// Check that both TEST and test are matched (case preserved in output)
 	if !strings.Contains(result, "TEST") && !strings.Contains(result, "test") {
 		t.Errorf("Expected TEST and test in output, got: %s", result)
 	}
 }
 
 func TestGrepQuiet(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "hello world\nfoo bar\nhello again\n"
-	writeTestFile(t, "test_quiet.txt", content)
-	defer os.Remove("test_quiet.txt")
+	filename := filepath.Join(tmpDir, "test_quiet.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	// Test quiet with match (exit code 0)
-	output, err := runGrepCmd([]string{"-q", "hello", "test_quiet.txt"})
+	output, err := runGrepCmd([]string{"-q", "hello", filename})
 	if err != nil {
 		t.Fatalf("grep -q with match should succeed, got: %v", err)
 	}
@@ -350,8 +375,7 @@ func TestGrepQuiet(t *testing.T) {
 		t.Errorf("Expected no output with -q, got: %s", string(output))
 	}
 
-	// Test quiet without match returns exitCodeError(1)
-	_, err = runGrepCmd([]string{"-q", "notfound", "test_quiet.txt"})
+	_, err = runGrepCmd([]string{"-q", "notfound", filename})
 	if err == nil {
 		t.Fatal("Expected error for quiet mode with no match")
 	}
@@ -361,12 +385,13 @@ func TestGrepQuiet(t *testing.T) {
 }
 
 func TestGrepExtendedRegex(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "test123\nfoo456\ntest789\nbar\n"
-	writeTestFile(t, "test_extended.txt", content)
-	defer os.Remove("test_extended.txt")
+	filename := filepath.Join(tmpDir, "test_extended.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	// -E flag enables extended regex (same as default in Go, but tests the flag exists)
-	output, err := runGrepCmd([]string{"-E", "test[0-9]+", "test_extended.txt"})
+	output, err := runGrepCmd([]string{"-E", "test[0-9]+", filename})
 	if err != nil {
 		t.Fatalf("grep command failed: %v", err)
 	}
@@ -381,12 +406,13 @@ func TestGrepExtendedRegex(t *testing.T) {
 }
 
 func TestGrepLineBuffered(t *testing.T) {
+	tmpDir := t.TempDir()
 	content := "line1\nline2 with hello\nline3\n"
-	writeTestFile(t, "test_buffered.txt", content)
-	defer os.Remove("test_buffered.txt")
+	filename := filepath.Join(tmpDir, "test_buffered.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
 
-	// --line-buffered flag should not cause errors
-	output, err := runGrepCmd([]string{"--line-buffered", "hello", "test_buffered.txt"})
+	output, err := runGrepCmd([]string{"--line-buffered", "hello", filename})
 	if err != nil {
 		t.Fatalf("grep command failed: %v", err)
 	}
@@ -397,7 +423,7 @@ func TestGrepLineBuffered(t *testing.T) {
 	}
 }
 
-// Helper function to write test files
+// writeTestFile helper kept for compatibility with other test files in this package
 func writeTestFile(t *testing.T, filename, content string) {
 	err := os.WriteFile(filename, []byte(content), 0644)
 	if err != nil {

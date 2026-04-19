@@ -2,6 +2,7 @@ package text
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -11,10 +12,10 @@ import (
 func TestUniqBasic(t *testing.T) {
 	// Basic uniq: removes adjacent duplicates
 	content := "apple\napple\nbanana\norange\norange\norange\n"
-	uniqWriteTestFile(t, "test_uniq_basic.txt", content)
-	defer os.Remove("test_uniq_basic.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_basic.txt", content)
 
-	output, err := runUniqCmd([]string{"test_uniq_basic.txt"})
+	output, err := runUniqCmd([]string{filepath.Join(tmpDir, "test_uniq_basic.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -38,10 +39,10 @@ func TestUniqBasic(t *testing.T) {
 func TestUniqCount(t *testing.T) {
 	// -c flag: prefix lines by number of occurrences
 	content := "foo\nfoo\nfoo\nbar\nbar\nbaz\n"
-	uniqWriteTestFile(t, "test_uniq_count.txt", content)
-	defer os.Remove("test_uniq_count.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_count.txt", content)
 
-	output, err := runUniqCmd([]string{"-c", "test_uniq_count.txt"})
+	output, err := runUniqCmd([]string{"-c", filepath.Join(tmpDir, "test_uniq_count.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -61,10 +62,10 @@ func TestUniqCount(t *testing.T) {
 func TestUniqRepeated(t *testing.T) {
 	// -d flag: only print duplicate lines
 	content := "apple\napple\nbanana\ncherry\ncherry\ncherry\ndate\n"
-	uniqWriteTestFile(t, "test_uniq_dup.txt", content)
-	defer os.Remove("test_uniq_dup.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_dup.txt", content)
 
-	output, err := runUniqCmd([]string{"-d", "test_uniq_dup.txt"})
+	output, err := runUniqCmd([]string{"-d", filepath.Join(tmpDir, "test_uniq_dup.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -89,10 +90,10 @@ func TestUniqRepeated(t *testing.T) {
 func TestUniqUnique(t *testing.T) {
 	// -u flag: only print unique lines
 	content := "apple\napple\nbanana\ncherry\ncherry\ncherry\ndate\negg\n"
-	uniqWriteTestFile(t, "test_uniq_uniq.txt", content)
-	defer os.Remove("test_uniq_uniq.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_uniq.txt", content)
 
-	output, err := runUniqCmd([]string{"-u", "test_uniq_uniq.txt"})
+	output, err := runUniqCmd([]string{"-u", filepath.Join(tmpDir, "test_uniq_uniq.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -118,10 +119,10 @@ func TestUniqUnique(t *testing.T) {
 
 func TestUniqEmptyFile(t *testing.T) {
 	content := ""
-	uniqWriteTestFile(t, "test_uniq_empty.txt", content)
-	defer os.Remove("test_uniq_empty.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_empty.txt", content)
 
-	output, err := runUniqCmd([]string{"test_uniq_empty.txt"})
+	output, err := runUniqCmd([]string{filepath.Join(tmpDir, "test_uniq_empty.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -134,10 +135,10 @@ func TestUniqEmptyFile(t *testing.T) {
 
 func TestUniqSingleLine(t *testing.T) {
 	content := "onlyone\n"
-	uniqWriteTestFile(t, "test_uniq_single.txt", content)
-	defer os.Remove("test_uniq_single.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_single.txt", content)
 
-	output, err := runUniqCmd([]string{"test_uniq_single.txt"})
+	output, err := runUniqCmd([]string{filepath.Join(tmpDir, "test_uniq_single.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -150,10 +151,10 @@ func TestUniqSingleLine(t *testing.T) {
 
 func TestUniqAllIdentical(t *testing.T) {
 	content := "same\nsame\nsame\nsame\nsame\n"
-	uniqWriteTestFile(t, "test_uniq_all_same.txt", content)
-	defer os.Remove("test_uniq_all_same.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_all_same.txt", content)
 
-	output, err := runUniqCmd([]string{"test_uniq_all_same.txt"})
+	output, err := runUniqCmd([]string{filepath.Join(tmpDir, "test_uniq_all_same.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -166,10 +167,10 @@ func TestUniqAllIdentical(t *testing.T) {
 
 func TestUniqAllUnique(t *testing.T) {
 	content := "one\ntwo\nthree\nfour\nfive\n"
-	uniqWriteTestFile(t, "test_uniq_all_unique.txt", content)
-	defer os.Remove("test_uniq_all_unique.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_all_unique.txt", content)
 
-	output, err := runUniqCmd([]string{"test_uniq_all_unique.txt"})
+	output, err := runUniqCmd([]string{filepath.Join(tmpDir, "test_uniq_all_unique.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -184,10 +185,10 @@ func TestUniqAllUnique(t *testing.T) {
 
 func TestUniqAlternating(t *testing.T) {
 	content := "a\na\nb\nb\nc\nc\n"
-	uniqWriteTestFile(t, "test_uniq_alternating.txt", content)
-	defer os.Remove("test_uniq_alternating.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_alternating.txt", content)
 
-	output, err := runUniqCmd([]string{"test_uniq_alternating.txt"})
+	output, err := runUniqCmd([]string{filepath.Join(tmpDir, "test_uniq_alternating.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -202,10 +203,10 @@ func TestUniqAlternating(t *testing.T) {
 func TestUniqCountWithSingleLines(t *testing.T) {
 	// All lines are unique, each should show count of 1
 	content := "a\nb\nc\nd\n"
-	uniqWriteTestFile(t, "test_uniq_count_single.txt", content)
-	defer os.Remove("test_uniq_count_single.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_count_single.txt", content)
 
-	output, err := runUniqCmd([]string{"-c", "test_uniq_count_single.txt"})
+	output, err := runUniqCmd([]string{"-c", filepath.Join(tmpDir, "test_uniq_count_single.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -225,10 +226,10 @@ func TestUniqCountWithSingleLines(t *testing.T) {
 
 func TestUniqCountWithAllIdentical(t *testing.T) {
 	content := "x\nx\nx\nx\n"
-	uniqWriteTestFile(t, "test_uniq_count_all_same.txt", content)
-	defer os.Remove("test_uniq_count_all_same.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_count_all_same.txt", content)
 
-	output, err := runUniqCmd([]string{"-c", "test_uniq_count_all_same.txt"})
+	output, err := runUniqCmd([]string{"-c", filepath.Join(tmpDir, "test_uniq_count_all_same.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -243,10 +244,10 @@ func TestUniqCountWithAllIdentical(t *testing.T) {
 
 func TestUniqIgnoreCase(t *testing.T) {
 	content := "Apple\nAPPLE\napple\nBanana\nBANANA\nbanana\n"
-	uniqWriteTestFile(t, "test_uniq_ignore_case.txt", content)
-	defer os.Remove("test_uniq_ignore_case.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_ignore_case.txt", content)
 
-	output, err := runUniqCmd([]string{"-i", "test_uniq_ignore_case.txt"})
+	output, err := runUniqCmd([]string{"-i", filepath.Join(tmpDir, "test_uniq_ignore_case.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -260,10 +261,10 @@ func TestUniqIgnoreCase(t *testing.T) {
 
 func TestUniqIgnoreCaseCount(t *testing.T) {
 	content := "Foo\nfoo\nFoo\nBar\nbar\n"
-	uniqWriteTestFile(t, "test_uniq_ignore_case_count.txt", content)
-	defer os.Remove("test_uniq_ignore_case_count.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_ignore_case_count.txt", content)
 
-	output, err := runUniqCmd([]string{"-c", "-i", "test_uniq_ignore_case_count.txt"})
+	output, err := runUniqCmd([]string{"-c", "-i", filepath.Join(tmpDir, "test_uniq_ignore_case_count.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -279,10 +280,10 @@ func TestUniqIgnoreCaseCount(t *testing.T) {
 
 func TestUniqIgnoreCaseRepeated(t *testing.T) {
 	content := "AAA\naaa\nBBB\nbbb\nCCC\n"
-	uniqWriteTestFile(t, "test_uniq_ignore_case_dup.txt", content)
-	defer os.Remove("test_uniq_ignore_case_dup.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_ignore_case_dup.txt", content)
 
-	output, err := runUniqCmd([]string{"-d", "-i", "test_uniq_ignore_case_dup.txt"})
+	output, err := runUniqCmd([]string{"-d", "-i", filepath.Join(tmpDir, "test_uniq_ignore_case_dup.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -296,10 +297,10 @@ func TestUniqIgnoreCaseRepeated(t *testing.T) {
 
 func TestUniqIgnoreCaseUnique(t *testing.T) {
 	content := "AAA\naaa\nBBB\nbbb\nCCC\n"
-	uniqWriteTestFile(t, "test_uniq_ignore_case_uniq.txt", content)
-	defer os.Remove("test_uniq_ignore_case_uniq.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_ignore_case_uniq.txt", content)
 
-	output, err := runUniqCmd([]string{"-u", "-i", "test_uniq_ignore_case_uniq.txt"})
+	output, err := runUniqCmd([]string{"-u", "-i", filepath.Join(tmpDir, "test_uniq_ignore_case_uniq.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -319,10 +320,10 @@ func TestUniqCheckChars(t *testing.T) {
 	// "abcdef" -> "abcd", "ghijkl" -> "ghij", "abcxyz" -> "abcx", "ghmnop" -> "ghmn", "abc123" -> "abc1"
 	// None of these are equal to their predecessor, so all 5 appear
 	content := "abcdef\nghijkl\nabcxyz\nghmnop\nabc123\n"
-	uniqWriteTestFile(t, "test_uniq_check_chars.txt", content)
-	defer os.Remove("test_uniq_check_chars.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_check_chars.txt", content)
 
-	output, err := runUniqCmd([]string{"-w", "4", "test_uniq_check_chars.txt"})
+	output, err := runUniqCmd([]string{"-w", "4", filepath.Join(tmpDir, "test_uniq_check_chars.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -337,10 +338,10 @@ func TestUniqCheckChars(t *testing.T) {
 
 func TestUniqCheckCharsCount(t *testing.T) {
 	content := "hello world\nhello there\nhello again\n"
-	uniqWriteTestFile(t, "test_uniq_check_chars_count.txt", content)
-	defer os.Remove("test_uniq_check_chars_count.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_check_chars_count.txt", content)
 
-	output, err := runUniqCmd([]string{"-c", "-w", "5", "test_uniq_check_chars_count.txt"})
+	output, err := runUniqCmd([]string{"-c", "-w", "5", filepath.Join(tmpDir, "test_uniq_check_chars_count.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -354,10 +355,10 @@ func TestUniqCheckCharsCount(t *testing.T) {
 func TestUniqCheckCharsRepeated(t *testing.T) {
 	// -w 3 means only first 3 chars are compared
 	content := "foobar1\nfoobar2\nbazbar1\nbazbar2\n"
-	uniqWriteTestFile(t, "test_uniq_check_chars_dup.txt", content)
-	defer os.Remove("test_uniq_check_chars_dup.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_check_chars_dup.txt", content)
 
-	output, err := runUniqCmd([]string{"-d", "-w", "3", "test_uniq_check_chars_dup.txt"})
+	output, err := runUniqCmd([]string{"-d", "-w", "3", filepath.Join(tmpDir, "test_uniq_check_chars_dup.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -374,10 +375,10 @@ func TestUniqCheckCharsRepeated(t *testing.T) {
 func TestUniqCheckCharsZero(t *testing.T) {
 	// -w 0 means no truncation, full line comparison
 	content := "a\na\nb\nb\n"
-	uniqWriteTestFile(t, "test_uniq_check_chars_zero.txt", content)
-	defer os.Remove("test_uniq_check_chars_zero.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_check_chars_zero.txt", content)
 
-	output, err := runUniqCmd([]string{"-w", "0", "test_uniq_check_chars_zero.txt"})
+	output, err := runUniqCmd([]string{"-w", "0", filepath.Join(tmpDir, "test_uniq_check_chars_zero.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -393,10 +394,10 @@ func TestUniqCheckCharsZero(t *testing.T) {
 func TestUniqCheckCharsExact(t *testing.T) {
 	// Compare exactly 3 characters: "abc" and "abd" are different
 	content := "abcdef\nabdxyz\nabc123\n"
-	uniqWriteTestFile(t, "test_uniq_check_chars_exact.txt", content)
-	defer os.Remove("test_uniq_check_chars_exact.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_check_chars_exact.txt", content)
 
-	output, err := runUniqCmd([]string{"-w", "3", "test_uniq_check_chars_exact.txt"})
+	output, err := runUniqCmd([]string{"-w", "3", filepath.Join(tmpDir, "test_uniq_check_chars_exact.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -414,10 +415,10 @@ func TestUniqSkipFields(t *testing.T) {
 	// Skip first field (whitespace separated)
 	// After skipping 1 field: "word1", "word2", "hello", "world" - all different
 	content := "field1 word1\nfield1 word2\nfield2 hello\nfield2 world\n"
-	uniqWriteTestFile(t, "test_uniq_skip_fields.txt", content)
-	defer os.Remove("test_uniq_skip_fields.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_skip_fields.txt", content)
 
-	output, err := runUniqCmd([]string{"-f", "1", "test_uniq_skip_fields.txt"})
+	output, err := runUniqCmd([]string{"-f", "1", filepath.Join(tmpDir, "test_uniq_skip_fields.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -433,10 +434,10 @@ func TestUniqSkipFields(t *testing.T) {
 func TestUniqSkipFieldsCount(t *testing.T) {
 	// After skipping first field: "X", "Y", "Z", "P", "Q" - all different
 	content := "a X\na Y\na Z\nb P\nb Q\n"
-	uniqWriteTestFile(t, "test_uniq_skip_fields_count.txt", content)
-	defer os.Remove("test_uniq_skip_fields_count.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_skip_fields_count.txt", content)
 
-	output, err := runUniqCmd([]string{"-c", "-f", "1", "test_uniq_skip_fields_count.txt"})
+	output, err := runUniqCmd([]string{"-c", "-f", "1", filepath.Join(tmpDir, "test_uniq_skip_fields_count.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -452,10 +453,10 @@ func TestUniqSkipFieldsCount(t *testing.T) {
 func TestUniqSkipFieldsRepeated(t *testing.T) {
 	// After skipping 1 field: data1, data2, data3, data4, data5 - all different
 	content := "ID1 data1\nID1 data2\nID2 data3\nID2 data4\nID3 data5\n"
-	uniqWriteTestFile(t, "test_uniq_skip_fields_dup.txt", content)
-	defer os.Remove("test_uniq_skip_fields_dup.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_skip_fields_dup.txt", content)
 
-	output, err := runUniqCmd([]string{"-d", "-f", "1", "test_uniq_skip_fields_dup.txt"})
+	output, err := runUniqCmd([]string{"-d", "-f", "1", filepath.Join(tmpDir, "test_uniq_skip_fields_dup.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -471,10 +472,10 @@ func TestUniqSkipFieldsMultiple(t *testing.T) {
 	// Skip first 2 fields
 	// After skip 2: "value1", "value2", "value3", "value4" - all different
 	content := "f1 f2 value1\nf1 f2 value2\nf1 f3 value3\nf2 f2 value4\n"
-	uniqWriteTestFile(t, "test_uniq_skip_fields_multi.txt", content)
-	defer os.Remove("test_uniq_skip_fields_multi.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_skip_fields_multi.txt", content)
 
-	output, err := runUniqCmd([]string{"-f", "2", "test_uniq_skip_fields_multi.txt"})
+	output, err := runUniqCmd([]string{"-f", "2", filepath.Join(tmpDir, "test_uniq_skip_fields_multi.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -491,10 +492,10 @@ func TestUniqSkipFieldsZero(t *testing.T) {
 	// -f 0 means no fields skipped, just regular uniq
 	// Input "a\na\nb\nb\n" should output "a", "b"
 	content := "a\na\nb\nb\n"
-	uniqWriteTestFile(t, "test_uniq_skip_fields_zero.txt", content)
-	defer os.Remove("test_uniq_skip_fields_zero.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_skip_fields_zero.txt", content)
 
-	output, err := runUniqCmd([]string{"-f", "0", "test_uniq_skip_fields_zero.txt"})
+	output, err := runUniqCmd([]string{"-f", "0", filepath.Join(tmpDir, "test_uniq_skip_fields_zero.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -510,10 +511,10 @@ func TestUniqSkipFieldsZero(t *testing.T) {
 func TestUniqSkipFieldsMoreThanLineHas(t *testing.T) {
 	// Skip more fields than line has - line becomes empty
 	content := "singlefield\nanother\n"
-	uniqWriteTestFile(t, "test_uniq_skip_fields_over.txt", content)
-	defer os.Remove("test_uniq_skip_fields_over.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_skip_fields_over.txt", content)
 
-	output, err := runUniqCmd([]string{"-f", "5", "test_uniq_skip_fields_over.txt"})
+	output, err := runUniqCmd([]string{"-f", "5", filepath.Join(tmpDir, "test_uniq_skip_fields_over.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -533,10 +534,10 @@ func TestUniqIgnoreCaseAndCheckChars(t *testing.T) {
 	// "ABCdef" -> "abc", "abcDEF" -> "abc", "abcxyz" -> "abc", "ABCGHI" -> "abc"
 	// All the same after truncation and case fold
 	content := "ABCdef\nabcDEF\nabcxyz\nABCGHI\n"
-	uniqWriteTestFile(t, "test_uniq_combo1.txt", content)
-	defer os.Remove("test_uniq_combo1.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_combo1.txt", content)
 
-	output, err := runUniqCmd([]string{"-i", "-w", "3", "test_uniq_combo1.txt"})
+	output, err := runUniqCmd([]string{"-i", "-w", "3", filepath.Join(tmpDir, "test_uniq_combo1.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -555,10 +556,10 @@ func TestUniqSkipFieldsAndIgnoreCase(t *testing.T) {
 	// hello appears 2 times then once separated, world appears once
 	// With -u: only lines with count=1 are printed: "ID World" and "id hello"
 	content := "ID Hello\nID hello\nID World\nid hello\n"
-	uniqWriteTestFile(t, "test_uniq_combo2.txt", content)
-	defer os.Remove("test_uniq_combo2.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_combo2.txt", content)
 
-	output, err := runUniqCmd([]string{"-u", "-f", "1", "-i", "test_uniq_combo2.txt"})
+	output, err := runUniqCmd([]string{"-u", "-f", "1", "-i", filepath.Join(tmpDir, "test_uniq_combo2.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -579,10 +580,10 @@ func TestUniqSkipFieldsAndIgnoreCase(t *testing.T) {
 
 func TestUniqSkipFieldsAndCheckChars(t *testing.T) {
 	content := "f1 abcdef\nf1 abcxyz\nf2 abc123\nf2 abc789\n"
-	uniqWriteTestFile(t, "test_uniq_combo3.txt", content)
-	defer os.Remove("test_uniq_combo3.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_combo3.txt", content)
 
-	output, err := runUniqCmd([]string{"-f", "1", "-w", "3", "test_uniq_combo3.txt"})
+	output, err := runUniqCmd([]string{"-f", "1", "-w", "3", filepath.Join(tmpDir, "test_uniq_combo3.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -599,10 +600,10 @@ func TestUniqSkipFieldsAndCheckChars(t *testing.T) {
 func TestUniqCountWithRepeatedAndUnique(t *testing.T) {
 	// -c and -d together: shows count for repeated lines only
 	content := "a\na\na\nb\nc\nc\n"
-	uniqWriteTestFile(t, "test_uniq_combo4.txt", content)
-	defer os.Remove("test_uniq_combo4.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_combo4.txt", content)
 
-	output, err := runUniqCmd([]string{"-c", "-d", "test_uniq_combo4.txt"})
+	output, err := runUniqCmd([]string{"-c", "-d", filepath.Join(tmpDir, "test_uniq_combo4.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -630,10 +631,10 @@ func TestUniqAllFlagsCombined(t *testing.T) {
 	// Groups: "aaa"(f1 AAaaa), "f2 "(aa f2 AAAbb), "aaa"(f1 aaaaA), "aaa"(f2 AAa)
 	// Output: 3 lines: f1 AAaaa, aa f2 AAAbb, f1 aaaaA
 	content := "f1 AAaaa\naa f2 AAAbb\nf1 aaaaA\nf2 AAa\n"
-	uniqWriteTestFile(t, "test_uniq_combo_all.txt", content)
-	defer os.Remove("test_uniq_combo_all.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_combo_all.txt", content)
 
-	output, err := runUniqCmd([]string{"-f", "1", "-i", "-w", "3", "test_uniq_combo_all.txt"})
+	output, err := runUniqCmd([]string{"-f", "1", "-i", "-w", "3", filepath.Join(tmpDir, "test_uniq_combo_all.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -770,10 +771,10 @@ func TestUniqNonexistentFile(t *testing.T) {
 
 func TestUniqInvalidCheckChars(t *testing.T) {
 	content := "a\nb\n"
-	uniqWriteTestFile(t, "test_uniq_invalid_chars.txt", content)
-	defer os.Remove("test_uniq_invalid_chars.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_invalid_chars.txt", content)
 
-	_, err := runUniqCmd([]string{"-w", "abc", "test_uniq_invalid_chars.txt"})
+	_, err := runUniqCmd([]string{"-w", "abc", filepath.Join(tmpDir, "test_uniq_invalid_chars.txt")})
 	if err == nil {
 		t.Fatalf("Expected error for invalid -w argument, got none")
 	}
@@ -781,10 +782,10 @@ func TestUniqInvalidCheckChars(t *testing.T) {
 
 func TestUniqInvalidSkipFields(t *testing.T) {
 	content := "a\nb\n"
-	uniqWriteTestFile(t, "test_uniq_invalid_fields.txt", content)
-	defer os.Remove("test_uniq_invalid_fields.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_invalid_fields.txt", content)
 
-	_, err := runUniqCmd([]string{"-f", "xyz", "test_uniq_invalid_fields.txt"})
+	_, err := runUniqCmd([]string{"-f", "xyz", filepath.Join(tmpDir, "test_uniq_invalid_fields.txt")})
 	if err == nil {
 		t.Fatalf("Expected error for invalid -f argument, got none")
 	}
@@ -792,10 +793,10 @@ func TestUniqInvalidSkipFields(t *testing.T) {
 
 func TestUniqNegativeCheckChars(t *testing.T) {
 	content := "a\nb\n"
-	uniqWriteTestFile(t, "test_uniq_neg_chars.txt", content)
-	defer os.Remove("test_uniq_neg_chars.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_neg_chars.txt", content)
 
-	_, err := runUniqCmd([]string{"-w", "-1", "test_uniq_neg_chars.txt"})
+	_, err := runUniqCmd([]string{"-w", "-1", filepath.Join(tmpDir, "test_uniq_neg_chars.txt")})
 	if err == nil {
 		t.Fatalf("Expected error for negative -w argument, got none")
 	}
@@ -803,10 +804,10 @@ func TestUniqNegativeCheckChars(t *testing.T) {
 
 func TestUniqNegativeSkipFields(t *testing.T) {
 	content := "a\nb\n"
-	uniqWriteTestFile(t, "test_uniq_neg_fields.txt", content)
-	defer os.Remove("test_uniq_neg_fields.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_neg_fields.txt", content)
 
-	_, err := runUniqCmd([]string{"-f", "-5", "test_uniq_neg_fields.txt"})
+	_, err := runUniqCmd([]string{"-f", "-5", filepath.Join(tmpDir, "test_uniq_neg_fields.txt")})
 	if err == nil {
 		t.Fatalf("Expected error for negative -f argument, got none")
 	}
@@ -814,10 +815,10 @@ func TestUniqNegativeSkipFields(t *testing.T) {
 
 func TestUniqUnknownOption(t *testing.T) {
 	content := "a\nb\n"
-	uniqWriteTestFile(t, "test_uniq_unknown.txt", content)
-	defer os.Remove("test_uniq_unknown.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_unknown.txt", content)
 
-	_, err := runUniqCmd([]string{"-z", "test_uniq_unknown.txt"})
+	_, err := runUniqCmd([]string{"-z", filepath.Join(tmpDir, "test_uniq_unknown.txt")})
 	if err == nil {
 		t.Fatalf("Expected error for unknown option, got none")
 	}
@@ -825,10 +826,10 @@ func TestUniqUnknownOption(t *testing.T) {
 
 func TestUniqMissingCheckCharsArg(t *testing.T) {
 	content := "a\nb\n"
-	uniqWriteTestFile(t, "test_uniq_missing_chars.txt", content)
-	defer os.Remove("test_uniq_missing_chars.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_missing_chars.txt", content)
 
-	_, err := runUniqCmd([]string{"-w", "test_uniq_missing_chars.txt"})
+	_, err := runUniqCmd([]string{"-w", filepath.Join(tmpDir, "test_uniq_missing_chars.txt")})
 	if err == nil {
 		t.Fatalf("Expected error for missing -w argument, got none")
 	}
@@ -836,10 +837,10 @@ func TestUniqMissingCheckCharsArg(t *testing.T) {
 
 func TestUniqMissingSkipFieldsArg(t *testing.T) {
 	content := "a\nb\n"
-	uniqWriteTestFile(t, "test_uniq_missing_fields.txt", content)
-	defer os.Remove("test_uniq_missing_fields.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_missing_fields.txt", content)
 
-	_, err := runUniqCmd([]string{"-f", "test_uniq_missing_fields.txt"})
+	_, err := runUniqCmd([]string{"-f", filepath.Join(tmpDir, "test_uniq_missing_fields.txt")})
 	if err == nil {
 		t.Fatalf("Expected error for missing -f argument, got none")
 	}
@@ -848,14 +849,13 @@ func TestUniqMissingSkipFieldsArg(t *testing.T) {
 // ============== MULTIPLE FILES TESTS ==============
 
 func TestUniqMultipleFiles(t *testing.T) {
+	tmpDir := t.TempDir()
 	content1 := "a\na\nb\n"
 	content2 := "b\nc\nc\n"
-	uniqWriteTestFile(t, "test_uniq_multi1.txt", content1)
-	uniqWriteTestFile(t, "test_uniq_multi2.txt", content2)
-	defer os.Remove("test_uniq_multi1.txt")
-	defer os.Remove("test_uniq_multi2.txt")
+	uniqWriteTestFile(t, tmpDir, "test_uniq_multi1.txt", content1)
+	uniqWriteTestFile(t, tmpDir, "test_uniq_multi2.txt", content2)
 
-	output, err := runUniqCmd([]string{"test_uniq_multi1.txt", "test_uniq_multi2.txt"})
+	output, err := runUniqCmd([]string{filepath.Join(tmpDir, "test_uniq_multi1.txt"), filepath.Join(tmpDir, "test_uniq_multi2.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -876,14 +876,13 @@ func TestUniqMultipleFiles(t *testing.T) {
 }
 
 func TestUniqMultipleFilesCount(t *testing.T) {
+	tmpDir := t.TempDir()
 	content1 := "x\nx\n"
 	content2 := "y\ny\ny\n"
-	uniqWriteTestFile(t, "test_uniq_multi_count1.txt", content1)
-	uniqWriteTestFile(t, "test_uniq_multi_count2.txt", content2)
-	defer os.Remove("test_uniq_multi_count1.txt")
-	defer os.Remove("test_uniq_multi_count2.txt")
+	uniqWriteTestFile(t, tmpDir, "test_uniq_multi_count1.txt", content1)
+	uniqWriteTestFile(t, tmpDir, "test_uniq_multi_count2.txt", content2)
 
-	output, err := runUniqCmd([]string{"-c", "test_uniq_multi_count1.txt", "test_uniq_multi_count2.txt"})
+	output, err := runUniqCmd([]string{"-c", filepath.Join(tmpDir, "test_uniq_multi_count1.txt"), filepath.Join(tmpDir, "test_uniq_multi_count2.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -900,10 +899,10 @@ func TestUniqMultipleFilesCount(t *testing.T) {
 
 func TestUniqMultipleFilesOneMissing(t *testing.T) {
 	content := "a\nb\n"
-	uniqWriteTestFile(t, "test_uniq_multi_exists.txt", content)
-	defer os.Remove("test_uniq_multi_exists.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_multi_exists.txt", content)
 
-	_, err := runUniqCmd([]string{"test_uniq_multi_exists.txt", "nonexistent_file.txt"})
+	_, err := runUniqCmd([]string{filepath.Join(tmpDir, "test_uniq_multi_exists.txt"), filepath.Join(tmpDir, "nonexistent_file.txt")})
 	if err == nil {
 		t.Fatalf("Expected error when one file is missing, got none")
 	}
@@ -942,10 +941,10 @@ func TestUniqHelpLong(t *testing.T) {
 
 func TestUniqLongFlags(t *testing.T) {
 	content := "a\na\nb\nb\nc\n"
-	uniqWriteTestFile(t, "test_uniq_long1.txt", content)
-	defer os.Remove("test_uniq_long1.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_long1.txt", content)
 
-	output, err := runUniqCmd([]string{"--count", "test_uniq_long1.txt"})
+	output, err := runUniqCmd([]string{"--count", filepath.Join(tmpDir, "test_uniq_long1.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -958,10 +957,10 @@ func TestUniqLongFlags(t *testing.T) {
 
 func TestUniqLongFlagRepeated(t *testing.T) {
 	content := "x\nx\ny\nz\nz\n"
-	uniqWriteTestFile(t, "test_uniq_long2.txt", content)
-	defer os.Remove("test_uniq_long2.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_long2.txt", content)
 
-	output, err := runUniqCmd([]string{"--repeated", "test_uniq_long2.txt"})
+	output, err := runUniqCmd([]string{"--repeated", filepath.Join(tmpDir, "test_uniq_long2.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -975,10 +974,10 @@ func TestUniqLongFlagRepeated(t *testing.T) {
 
 func TestUniqLongFlagUnique(t *testing.T) {
 	content := "x\nx\ny\nz\nz\n"
-	uniqWriteTestFile(t, "test_uniq_long3.txt", content)
-	defer os.Remove("test_uniq_long3.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_long3.txt", content)
 
-	output, err := runUniqCmd([]string{"--unique", "test_uniq_long3.txt"})
+	output, err := runUniqCmd([]string{"--unique", filepath.Join(tmpDir, "test_uniq_long3.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -991,10 +990,10 @@ func TestUniqLongFlagUnique(t *testing.T) {
 
 func TestUniqLongFlagIgnoreCase(t *testing.T) {
 	content := "AAA\naaa\nBBB\n"
-	uniqWriteTestFile(t, "test_uniq_long4.txt", content)
-	defer os.Remove("test_uniq_long4.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_long4.txt", content)
 
-	output, err := runUniqCmd([]string{"--ignore-case", "test_uniq_long4.txt"})
+	output, err := runUniqCmd([]string{"--ignore-case", filepath.Join(tmpDir, "test_uniq_long4.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -1008,10 +1007,10 @@ func TestUniqLongFlagIgnoreCase(t *testing.T) {
 
 func TestUniqLongFlagCheckChars(t *testing.T) {
 	content := "abcdef\nghijkl\n"
-	uniqWriteTestFile(t, "test_uniq_long5.txt", content)
-	defer os.Remove("test_uniq_long5.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_long5.txt", content)
 
-	output, err := runUniqCmd([]string{"--check-chars=3", "test_uniq_long5.txt"})
+	output, err := runUniqCmd([]string{"--check-chars=3", filepath.Join(tmpDir, "test_uniq_long5.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -1025,10 +1024,10 @@ func TestUniqLongFlagCheckChars(t *testing.T) {
 
 func TestUniqLongFlagSkipFields(t *testing.T) {
 	content := "id1 val1\nid1 val2\n"
-	uniqWriteTestFile(t, "test_uniq_long6.txt", content)
-	defer os.Remove("test_uniq_long6.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_long6.txt", content)
 
-	output, err := runUniqCmd([]string{"--skip-fields=1", "test_uniq_long6.txt"})
+	output, err := runUniqCmd([]string{"--skip-fields=1", filepath.Join(tmpDir, "test_uniq_long6.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -1045,10 +1044,10 @@ func TestUniqLongFlagSkipFields(t *testing.T) {
 
 func TestUniqSpecialChars(t *testing.T) {
 	content := "hello world\nhello world\nprice: $100\nprice: $100\ntest\ttab\ntest\ttab\n"
-	uniqWriteTestFile(t, "test_uniq_special.txt", content)
-	defer os.Remove("test_uniq_special.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_special.txt", content)
 
-	output, err := runUniqCmd([]string{"test_uniq_special.txt"})
+	output, err := runUniqCmd([]string{filepath.Join(tmpDir, "test_uniq_special.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -1062,10 +1061,10 @@ func TestUniqSpecialChars(t *testing.T) {
 
 func TestUniqWhitespace(t *testing.T) {
 	content := "  leading\n  leading\ntrailing  \ntrailing  \n"
-	uniqWriteTestFile(t, "test_uniq_whitespace.txt", content)
-	defer os.Remove("test_uniq_whitespace.txt")
+	tmpDir := t.TempDir()
+	uniqWriteTestFile(t, tmpDir, "test_uniq_whitespace.txt", content)
 
-	output, err := runUniqCmd([]string{"test_uniq_whitespace.txt"})
+	output, err := runUniqCmd([]string{filepath.Join(tmpDir, "test_uniq_whitespace.txt")})
 	if err != nil {
 		t.Fatalf("uniq command failed: %v", err)
 	}
@@ -1079,8 +1078,8 @@ func TestUniqWhitespace(t *testing.T) {
 }
 
 // Helper function to write test files
-func uniqWriteTestFile(t *testing.T, filename, content string) {
-	err := os.WriteFile(filename, []byte(content), 0644)
+func uniqWriteTestFile(t *testing.T, tmpDir, filename, content string) {
+	err := os.WriteFile(filepath.Join(tmpDir, filename), []byte(content), 0644)
 	if err != nil {
 		t.Fatalf("Failed to write test file %s: %v", filename, err)
 	}
