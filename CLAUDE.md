@@ -53,7 +53,21 @@ When adding new features, changing behavior, or fixing bugs that affect user-vis
 
 **Less is more**: Only implement the minimum necessary set of commands and parameters. Do not add features "just in case". Every addition must be justified by a real K8s debugging scenario.
 
-- When adding a command, implement only the most commonly used parameters
+**Minimum changes principle**: When modifying code or fixing bugs, use the minimum changes necessary to achieve the goal. Prefer:
+- Targeted fixes over refactoring
+- Reusing existing test infrastructure over creating new tests
+- Running specific tests (`-run` flag) over full test suites when validating
+- Simple solutions over complex ones
+
+**Failure recovery principle**: When a task or subagent fails:
+1. Verify the actual problem state before attempting fixes
+2. Retry with improved approach if initial attempt fails
+3. Try alternative methods if one approach doesn't work
+4. Only escalate as unresolved if all reasonable attempts are exhausted
+5. **Never ignore failures** - always verify and attempt resolution
+
+**When adding commands**:
+- Implement only the most commonly used parameters
 - Avoid completeness (e.g., awk can replace cut, so don't add cut)
 - Avoid redundant commands that kubectl exec can handle (e.g., kill, timeout)
 - Question every new addition: "Is this truly necessary?"
