@@ -240,8 +240,8 @@ func TestGrepOnlyMatching(t *testing.T) {
 		t.Errorf("Expected 3 matches, got %d: %s", len(lines), result)
 	}
 	for _, line := range lines {
-		if !strings.HasSuffix(line, ":test") {
-			t.Errorf("Expected line ending with ':test', got: %s", line)
+		if line != "test" {
+			t.Errorf("Expected exact match 'test', got: %s", line)
 		}
 	}
 }
@@ -266,8 +266,8 @@ func TestGrepOnlyMatchingRegex(t *testing.T) {
 			t.Errorf("Missing expected match: %s", exp)
 			continue
 		}
-		if !strings.HasSuffix(lines[i], ":"+exp) {
-			t.Errorf("Expected line ending with ':%s', got '%s'", exp, lines[i])
+		if lines[i] != exp {
+			t.Errorf("Expected %q, got %q", exp, lines[i])
 		}
 	}
 }
@@ -311,8 +311,8 @@ func TestGrepFixedStringOnlyMatching(t *testing.T) {
 		t.Errorf("Expected 2 matches, got %d: %s", len(lines), result)
 	}
 	for _, line := range lines {
-		if !strings.HasSuffix(line, ":123") {
-			t.Errorf("Expected line ending with ':123', got: %s", line)
+		if line != "123" {
+			t.Errorf("Expected exact match '123', got: %s", line)
 		}
 	}
 }

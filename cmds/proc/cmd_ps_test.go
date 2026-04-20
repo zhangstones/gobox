@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -67,7 +68,7 @@ func TestPsCmdLengthLimitAppliesWithoutTTY(t *testing.T) {
 	filter := filepath.Base(exePath)
 
 	output, err := captureProcOutput(t, func() error {
-		return PsCmd([]string{"-name", filter, "-n", "1", "-l", "8", "-i", "1", "-sort", "pid", "-r"})
+		return PsCmd([]string{"-full", filter, "-n", "1", "-l", "8", "-i", "1", "-sort", "pid", "-r"})
 	})
 	if err != nil {
 		t.Fatalf("PsCmd failed: %v", err)
@@ -105,7 +106,7 @@ func TestTopCmdNonTTYOutputDoesNotEmitClearScreen(t *testing.T) {
 	}
 }
 
-func TestPsCmdNameFilterMatchesSubstring(t *testing.T) {
+func TestPsCmdNameFilterMatchesPgrepStyleRegex(t *testing.T) {
 	exePath, err := os.Executable()
 	if err != nil {
 		t.Fatalf("os.Executable: %v", err)
@@ -114,10 +115,10 @@ func TestPsCmdNameFilterMatchesSubstring(t *testing.T) {
 	if len(base) < 3 {
 		t.Fatalf("unexpected executable name %q", base)
 	}
-	filter := base[:3]
+	filter := regexp.QuoteMeta(base[:3]) + ".*"
 
 	output, err := captureProcOutput(t, func() error {
-		return PsCmd([]string{"-name", filter, "-n", "20", "-i", "1"})
+		return PsCmd([]string{"-full", filter, "-n", "20", "-i", "1"})
 	})
 	if err != nil {
 		t.Fatalf("PsCmd failed: %v", err)
@@ -129,13 +130,13 @@ func TestPsCmdNameFilterMatchesSubstring(t *testing.T) {
 	}
 	found := false
 	for _, line := range lines[1:] {
-		if strings.Contains(line, filter) {
+		if strings.Contains(line, base[:3]) {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected at least one row to contain substring %q, got %q", filter, output)
+		t.Fatalf("expected at least one row to match regex %q, got %q", filter, output)
 	}
 }
 
@@ -147,7 +148,7 @@ func TestPsCmdWideWideDisablesTruncation(t *testing.T) {
 	filter := filepath.Base(exePath)
 
 	output, err := captureProcOutput(t, func() error {
-		return PsCmd([]string{"-name", filter, "-n", "1", "-l", "4", "-ww", "-i", "1", "-sort", "pid", "-r"})
+		return PsCmd([]string{"-full", filter, "-n", "1", "-l", "4", "-ww", "-i", "1", "-sort", "pid", "-r"})
 	})
 	if err != nil {
 		t.Fatalf("PsCmd failed: %v", err)

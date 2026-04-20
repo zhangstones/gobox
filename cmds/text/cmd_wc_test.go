@@ -72,9 +72,9 @@ func TestWcWordsFlag(t *testing.T) {
 	}
 
 	result := string(output)
-	// Should only show word count (3 words due to bug: last word on each line not counted)
-	if !strings.Contains(result, "3") {
-		t.Errorf("Expected 3 words in output, got: %s", result)
+	// hello world + foo bar baz = 5 words
+	if !strings.Contains(result, "5") {
+		t.Errorf("Expected 5 words in output, got: %s", result)
 	}
 }
 
@@ -432,9 +432,8 @@ func TestWcTabCharacters(t *testing.T) {
 	}
 
 	result := string(output)
-	// Tabs are word separators, but bug doesn't count last word on each line: 2 words
-	if !strings.Contains(result, "2") {
-		t.Errorf("Expected 2 words, got: %s", result)
+	if !strings.Contains(result, "4") {
+		t.Errorf("Expected 4 words, got: %s", result)
 	}
 }
 
@@ -639,9 +638,8 @@ func TestWcLongFlagWords(t *testing.T) {
 	}
 
 	result := string(output)
-	// Due to bug, only 2 words counted
-	if !strings.Contains(result, "2") {
-		t.Errorf("Expected 2 words, got: %s", result)
+	if !strings.Contains(result, "4") {
+		t.Errorf("Expected 4 words, got: %s", result)
 	}
 }
 
@@ -733,9 +731,8 @@ func TestWcSpecialCharsInWords(t *testing.T) {
 	}
 
 	result := string(output)
-	// Hyphens and underscores are part of words, bug gives 2 words
-	if !strings.Contains(result, "2") {
-		t.Errorf("Expected 2 words with special chars, got: %s", result)
+	if !strings.Contains(result, "3") {
+		t.Errorf("Expected 3 words with special chars, got: %s", result)
 	}
 }
 

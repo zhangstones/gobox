@@ -84,7 +84,7 @@ func TestParseProcNetTCP(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	conns, err := parseProcNetTCP(path)
+	conns, err := parseProcNetTCP(path, "TCP")
 	if err != nil {
 		t.Fatalf("parseProcNetTCP: %v", err)
 	}
@@ -114,6 +114,26 @@ func TestParseProcNetUDP(t *testing.T) {
 	}
 	if conns[0].Proto != "UDP" {
 		t.Fatalf("expected proto UDP, got %q", conns[0].Proto)
+	}
+}
+
+func TestParseProcNetUnix(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "unix")
+	content := "Num       RefCount Protocol Flags    Type St Inode Path\n" +
+		"00000000: 00000002 00000000 00010000 0001 01 12345 " + filepath.Join(dir, "sock") + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	conns, err := parseProcNetUnix(path)
+	if err != nil {
+		t.Fatalf("parseProcNetUnix: %v", err)
+	}
+	if len(conns) != 1 {
+		t.Fatalf("expected 1 conn, got %d", len(conns))
+	}
+	if conns[0].Proto != "UNIX" || conns[0].State != "LISTENING" || !strings.Contains(conns[0].LocalIP, "sock") {
+		t.Fatalf("unexpected unix conn: %+v", conns[0])
 	}
 }
 
@@ -265,5 +285,85 @@ func TestNetstatCmdNumericFlagAccepted(t *testing.T) {
 		return NetstatCmd([]string{"-n"})
 	}); err != nil {
 		t.Fatalf("expected -n to be accepted, got %v", err)
+	}
+}
+
+func TestNetstatCmdTCPUDPAndUnixFilters(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("netstat is only supported on Linux")
+	}
+
+	tcpLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp: %v", err)
+	}
+	defer tcpLn.Close()
+	tcpPort := tcpLn.Addr().(*net.TCPAddr).Port
+
+	udpConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	defer udpConn.Close()
+	udpPort := udpConn.LocalAddr().(*net.UDPAddr).Port
+
+	unixPath := filepath.Join(t.TempDir(), "netstat.sock")
+	unixLn, err := net.Listen("unix", unixPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	defer unixLn.Close()
+
+	tcpOut, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"-t", "-port", strconv.Itoa(tcpPort)})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd -t failed: %v", err)
+	}
+	if !strings.Contains(tcpOut, "TCP") || strings.Contains(tcpOut, "UDP") || strings.Contains(tcpOut, "UNIX") {
+		t.Fatalf("expected TCP-only output, got %q", tcpOut)
+	}
+
+	udpOut, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"-u", "-port", strconv.Itoa(udpPort)})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd -u failed: %v", err)
+	}
+	if !strings.Contains(udpOut, "UDP") || strings.Contains(udpOut, "TCP") || strings.Contains(udpOut, "UNIX") {
+		t.Fatalf("expected UDP-only output, got %q", udpOut)
+	}
+
+	unixOut, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"-x", "-l"})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd -x failed: %v", err)
+	}
+	if !strings.Contains(unixOut, "UNIX") || !strings.Contains(unixOut, unixPath) {
+		t.Fatalf("expected unix socket output for %s, got %q", unixPath, unixOut)
+	}
+}
+
+func TestNetstatCmdCommonFlagsAccepted(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("netstat is only supported on Linux")
+	}
+	for _, args := range [][]string{
+		{"-a"},
+		{"-p"},
+		{"-4"},
+		{"-6"},
+		{"-e"},
+		{"-o"},
+		{"-W"},
+		{"--listening"},
+		{"--numeric"},
+	} {
+		if _, err := captureNetOutput(t, func() error {
+			return NetstatCmd(args)
+		}); err != nil {
+			t.Fatalf("expected %v to be accepted, got %v", args, err)
+		}
 	}
 }
