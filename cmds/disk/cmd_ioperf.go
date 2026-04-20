@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,9 @@ import (
 
 // O_DIRECT flag value for Linux
 const O_DIRECT = 0x40000
+
+// O_DSYNC flag value for Linux
+const O_DSYNC = 0x1000
 
 // IoperfCmd implements an I/O performance benchmark tool, simplified fio-like.
 func IoperfCmd(args []string) error {
@@ -31,13 +35,15 @@ func IoperfCmd(args []string) error {
 	ioDepth := fsFlags.Int("iodepth", 1, "queue depth")
 	direct := fsFlags.Int("direct", 0, "use O_DIRECT to bypass cache (0 or 1)")
 	fsync := fsFlags.Int("fsync", 0, "execute fsync after each write (0 or 1)")
-	syncFlag := fsFlags.Int("sync", 0, "use O_SYNC (0 or 1)")
+	syncMode := fsFlags.String("sync", "none", "use synchronous write IO: none|sync|dsync|0|1")
 	rate := fsFlags.String("rate", "", "rate limit (e.g., 100M)")
 	timeBased := fsFlags.Bool("time_based", false, "run based on time")
 	runtimeSec := fsFlags.Int("runtime", 0, "runtime in seconds (for time_based mode)")
 	groupReporting := fsFlags.Bool("group_reporting", false, "aggregate multi-job reports")
-	percentile := fsFlags.Int("percentile", 0, "latency percentile to report (e.g., 99)")
+	percentile := fsFlags.Int("percentile", 0, "legacy alias for percentile_list with a single percentile (e.g., 99)")
+	percentileList := fsFlags.String("percentile_list", "", "fio-compatible latency percentile list (e.g., 95 or 95:99)")
 	latency := fsFlags.Bool("latency", false, "output latency distribution histogram")
+	writeHistLog := fsFlags.String("write_hist_log", "", "fio-compatible histogram log prefix")
 
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox ioperf [options]")
@@ -104,6 +110,27 @@ func IoperfCmd(args []string) error {
 		return fmt.Errorf("ioperf: rwmixread is only valid in readwrite mode")
 	}
 
+	var syncFileFlag int
+	switch strings.ToLower(strings.TrimSpace(*syncMode)) {
+	case "", "none", "0":
+		syncFileFlag = 0
+	case "sync", "1":
+		syncFileFlag = os.O_SYNC
+	case "dsync":
+		syncFileFlag = O_DSYNC
+	default:
+		return fmt.Errorf("ioperf: invalid sync mode %q (valid: none, 0, sync, 1, dsync)", *syncMode)
+	}
+
+	latencyPercentiles, err := parsePercentileList(*percentileList, *percentile)
+	if err != nil {
+		return fmt.Errorf("ioperf: invalid percentile_list: %v", err)
+	}
+	if len(latencyPercentiles) == 0 {
+		latencyPercentiles = []float64{99}
+	}
+	histogramEnabled := *latency || *writeHistLog != ""
+
 	// Validate time-based parameters
 	if *timeBased && *runtimeSec <= 0 {
 		return fmt.Errorf("ioperf: runtime must be specified with time_based mode")
@@ -153,15 +180,18 @@ func IoperfCmd(args []string) error {
 			result := jobResult{jobID: jid}
 
 			// Create job-specific filename
-			jobFilename := fmt.Sprintf("%s.%d", *filename, jid)
+			jobFilename := *filename
+			if *numJobs > 1 {
+				jobFilename = fmt.Sprintf("%s.%d", *filename, jid)
+			}
 
 			// Open file for this job
 			fileFlags := os.O_RDWR | os.O_CREATE
 			if *direct == 1 {
 				fileFlags |= O_DIRECT
 			}
-			if *syncFlag == 1 {
-				fileFlags |= os.O_SYNC
+			if syncFileFlag != 0 {
+				fileFlags |= syncFileFlag
 			}
 			file, err := os.OpenFile(jobFilename, fileFlags, 0644)
 			if err != nil {
@@ -341,9 +371,9 @@ func IoperfCmd(args []string) error {
 	}
 
 	// Calculate latency stats
-	calcLatencyStats := func(latencies []int64, percentile int) (avg float64, pVal float64) {
+	calcLatencyStats := func(latencies []int64, percentiles []float64) (avg float64, pVals map[float64]float64) {
 		if len(latencies) == 0 {
-			return 0, 0
+			return 0, map[float64]float64{}
 		}
 		var sum int64
 		for _, l := range latencies {
@@ -351,38 +381,42 @@ func IoperfCmd(args []string) error {
 		}
 		avg = float64(sum) / float64(len(latencies))
 
-		if percentile > 0 {
-			sorted := make([]int64, len(latencies))
-			copy(sorted, latencies)
-			sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-			idx := int(math.Ceil(float64(len(sorted))*float64(percentile)/100.0)) - 1
+		sorted := make([]int64, len(latencies))
+		copy(sorted, latencies)
+		sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+		pVals = make(map[float64]float64, len(percentiles))
+		for _, percentile := range percentiles {
+			if percentile <= 0 {
+				continue
+			}
+			idx := int(math.Ceil(float64(len(sorted))*percentile/100.0)) - 1
 			if idx < 0 {
 				idx = 0
 			}
 			if idx >= len(sorted) {
 				idx = len(sorted) - 1
 			}
-			pVal = float64(sorted[idx])
+			pVals[percentile] = float64(sorted[idx])
 		}
 		return
 	}
 
 	// Format latency for output
-	formatLat := func(avg, pVal float64, pIdx int) string {
-		if pVal > 0 && pIdx > 0 {
-			return fmt.Sprintf("avg=%.2fus, p%d=%.2fus", avg/1000, pIdx, pVal/1000)
+	formatLat := func(avg float64, pVals map[float64]float64, percentiles []float64) string {
+		if len(pVals) == 0 {
+			return fmt.Sprintf("avg=%.2fus", avg/1000)
 		}
-		return fmt.Sprintf("avg=%.2fus", avg/1000)
+		parts := []string{fmt.Sprintf("avg=%.2fus", avg/1000)}
+		for _, percentile := range percentiles {
+			if pVal, ok := pVals[percentile]; ok {
+				parts = append(parts, fmt.Sprintf("p%s=%.2fus", formatPercentile(percentile), pVal/1000))
+			}
+		}
+		return strings.Join(parts, ", ")
 	}
 
 	// Print header
 	fmt.Printf("ioperf: bs=%s, jobs=%d, iodepth=%d\n", *blockSize, *numJobs, *ioDepth)
-
-	// Print latency percentile
-	pIdx := *percentile
-	if pIdx == 0 {
-		pIdx = 99
-	}
 
 	printResult := func(prefix string, readOps, writeOps, readBytes, writeBytes int64, readLatencies, writeLatencies []int64) {
 		localReadBW := float64(readBytes) / (1024 * 1024) / duration
@@ -391,12 +425,12 @@ func IoperfCmd(args []string) error {
 		localWriteIOPS := float64(writeOps) / duration
 
 		if readOps > 0 || *rwMode == "read" || *rwMode == "randread" || *rwMode == "readwrite" {
-			avgLat, pLat := calcLatencyStats(readLatencies, pIdx)
-			fmt.Printf("%sREAD:  IOPS=%.0f, BW=%.2fMB/s, lat=%s\n", prefix, localReadIOPS, localReadBW, formatLat(avgLat, pLat, pIdx))
+			avgLat, pLat := calcLatencyStats(readLatencies, latencyPercentiles)
+			fmt.Printf("%sREAD:  IOPS=%.0f, BW=%.2fMB/s, lat=%s\n", prefix, localReadIOPS, localReadBW, formatLat(avgLat, pLat, latencyPercentiles))
 		}
 		if writeOps > 0 || *rwMode == "write" || *rwMode == "randwrite" || *rwMode == "readwrite" {
-			avgLat, pLat := calcLatencyStats(writeLatencies, pIdx)
-			fmt.Printf("%sWRITE: IOPS=%.0f, BW=%.2fMB/s, lat=%s\n", prefix, localWriteIOPS, localWriteBW, formatLat(avgLat, pLat, pIdx))
+			avgLat, pLat := calcLatencyStats(writeLatencies, latencyPercentiles)
+			fmt.Printf("%sWRITE: IOPS=%.0f, BW=%.2fMB/s, lat=%s\n", prefix, localWriteIOPS, localWriteBW, formatLat(avgLat, pLat, latencyPercentiles))
 		}
 	}
 
@@ -410,13 +444,25 @@ func IoperfCmd(args []string) error {
 	}
 
 	// Print latency histogram if requested
-	if *latency {
+	if histogramEnabled {
 		fmt.Println("\nLatency histogram (us):")
 		if len(allReadLatencies) > 0 {
 			printLatencyHistogram("READ", allReadLatencies)
 		}
 		if len(allWriteLatencies) > 0 {
 			printLatencyHistogram("WRITE", allWriteLatencies)
+		}
+	}
+	if *writeHistLog != "" {
+		if len(allReadLatencies) > 0 {
+			if err := writeLatencyHistogramLog(*writeHistLog, "read", allReadLatencies); err != nil {
+				return err
+			}
+		}
+		if len(allWriteLatencies) > 0 {
+			if err := writeLatencyHistogramLog(*writeHistLog, "write", allWriteLatencies); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -568,4 +614,75 @@ func printLatencyHistogram(label string, latencies []int64) {
 	count := bucketCounts[len(buckets)]
 	percent := float64(count) * 100 / float64(total)
 	fmt.Printf("%-15s %10d %9.2f%%\n", fmt.Sprintf("> %d", buckets[len(buckets)-1]), count, percent)
+}
+
+func parsePercentileList(list string, single int) ([]float64, error) {
+	if strings.TrimSpace(list) == "" {
+		if single <= 0 {
+			return nil, nil
+		}
+		return []float64{float64(single)}, nil
+	}
+
+	parts := strings.Split(list, ":")
+	result := make([]float64, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return nil, fmt.Errorf("empty percentile value")
+		}
+		value, err := strconv.ParseFloat(part, 64)
+		if err != nil {
+			return nil, err
+		}
+		if value <= 0 || value > 100 {
+			return nil, fmt.Errorf("percentile %.2f out of range", value)
+		}
+		result = append(result, value)
+	}
+	return result, nil
+}
+
+func formatPercentile(v float64) string {
+	if math.Mod(v, 1) == 0 {
+		return strconv.FormatInt(int64(v), 10)
+	}
+	return strings.TrimRight(strings.TrimRight(strconv.FormatFloat(v, 'f', 2, 64), "0"), ".")
+}
+
+func writeLatencyHistogramLog(prefix, mode string, latencies []int64) error {
+	if prefix == "" || len(latencies) == 0 {
+		return nil
+	}
+
+	path := fmt.Sprintf("%s_%s_hist.1.log", prefix, mode)
+	file, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("ioperf: create histogram log %s: %w", path, err)
+	}
+	defer file.Close()
+
+	buckets := []int64{100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000}
+	bucketCounts := make([]int, len(buckets)+1)
+	for _, latency := range latencies {
+		latencyUs := latency / 1000
+		idx := len(buckets)
+		for i, bucket := range buckets {
+			if latencyUs < bucket {
+				idx = i
+				break
+			}
+		}
+		bucketCounts[idx]++
+	}
+
+	for i, bucket := range buckets {
+		if _, err := fmt.Fprintf(file, "%s,%d,%d\n", mode, bucket, bucketCounts[i]); err != nil {
+			return fmt.Errorf("ioperf: write histogram log %s: %w", path, err)
+		}
+	}
+	if _, err := fmt.Fprintf(file, "%s,%d+,%d\n", mode, buckets[len(buckets)-1], bucketCounts[len(buckets)]); err != nil {
+		return fmt.Errorf("ioperf: write histogram log %s: %w", path, err)
+	}
+	return nil
 }

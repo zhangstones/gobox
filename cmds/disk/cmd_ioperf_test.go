@@ -108,9 +108,8 @@ func TestIoperfCmdWriteMode(t *testing.T) {
 		t.Errorf("Expected WRITE: in output, got: %s", result)
 	}
 
-	// Verify file was created (ioperf appends .0 for job 0)
-	if _, err := os.Stat(filename + ".0"); os.IsNotExist(err) {
-		t.Errorf("Expected output file to be created at %s", filename+".0")
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		t.Errorf("Expected output file to be created at %s", filename)
 	}
 }
 
@@ -168,9 +167,8 @@ func TestIoperfCmdRandwriteMode(t *testing.T) {
 		t.Errorf("Expected WRITE: in output, got: %s", result)
 	}
 
-	// Verify file was created (ioperf appends .0 for job 0)
-	if _, err := os.Stat(filename + ".0"); os.IsNotExist(err) {
-		t.Errorf("Expected output file to be created at %s", filename+".0")
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		t.Errorf("Expected output file to be created at %s", filename)
 	}
 }
 
@@ -444,9 +442,8 @@ func TestIoperfCmdNonExistentFile(t *testing.T) {
 	// So no error is expected, but the file should be created
 	t.Logf("Output: %s, Error: %v", output, err)
 
-	// Verify the file was created (ioperf creates it)
-	if _, err := os.Stat(filename + ".0"); os.IsNotExist(err) {
-		t.Errorf("Expected file to be created at %s", filename+".0")
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		t.Errorf("Expected file to be created at %s", filename)
 	}
 }
 
@@ -617,7 +614,7 @@ func TestIoperfCmdLatencyHistogramOutput(t *testing.T) {
 		"--filename=" + filename,
 		"--size=128k",
 		"--bs=4k",
-		"--latency",
+		"--write_hist_log=" + filepath.Join(tmpDir, "latency_read"),
 	}
 
 	output, err := runIoperfCmd(args)
@@ -633,6 +630,9 @@ func TestIoperfCmdLatencyHistogramOutput(t *testing.T) {
 	if !strings.Contains(result, "READ latency distribution") {
 		t.Errorf("Expected 'READ latency distribution' in output, got: %s", result)
 	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "latency_read_read_hist.1.log")); err != nil {
+		t.Errorf("Expected histogram log to be created: %v", err)
+	}
 	if !strings.Contains(result, "Bucket") && !strings.Contains(result, "Count") {
 		t.Logf("Note: histogram format may vary, output: %s", result)
 	}
@@ -647,7 +647,7 @@ func TestIoperfCmdLatencyHistogramWrite(t *testing.T) {
 		"--filename=" + filename,
 		"--size=64k",
 		"--bs=4k",
-		"--latency",
+		"--write_hist_log=" + filepath.Join(tmpDir, "latency_write"),
 	}
 
 	output, err := runIoperfCmd(args)
@@ -662,6 +662,9 @@ func TestIoperfCmdLatencyHistogramWrite(t *testing.T) {
 	}
 	if !strings.Contains(result, "WRITE latency distribution") {
 		t.Errorf("Expected 'WRITE latency distribution' in output, got: %s", result)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "latency_write_write_hist.1.log")); err != nil {
+		t.Errorf("Expected histogram log to be created: %v", err)
 	}
 }
 
@@ -682,8 +685,8 @@ func TestIoperfCmdLatencyWithPercentile(t *testing.T) {
 		"--filename=" + filename,
 		"--size=128k",
 		"--bs=4k",
-		"--percentile=95",
-		"--latency",
+		"--percentile_list=95",
+		"--write_hist_log=" + filepath.Join(tmpDir, "latency_pct"),
 	}
 
 	output, err := runIoperfCmd(args)
@@ -935,7 +938,7 @@ func TestIoperfCmdSyncFlag(t *testing.T) {
 		"--filename=" + filename,
 		"--size=64k",
 		"--bs=4k",
-		"--sync=1",
+		"--sync=sync",
 	}
 
 	output, err := runIoperfCmd(args)
@@ -961,4 +964,3 @@ func TestIoperfCmdLinuxOnly(t *testing.T) {
 		t.Skip("ioperf is Linux-only")
 	}
 }
-

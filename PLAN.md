@@ -79,7 +79,7 @@
 - `-i`, `-p`, `-n`, `-a`, `-A`, `-e`, `-d`
 
 ### 10. ioperf ✅ 已完成
-- `--rw`, `--rwmixread`, `--filename`, `--bs`, `--size`, `--numjobs`, `--iodepth`, `--direct`, `--fsync`, `--sync`, `--rate`, `--time_based`, `--runtime`, `--group_reporting`, `--percentile`, `--latency`
+- `--rw`, `--rwmixread`, `--filename`, `--bs`, `--size`, `--numjobs`, `--iodepth`, `--direct`, `--fsync`, `--sync`, `--rate`, `--time_based`, `--runtime`, `--group_reporting`, `--percentile_list`, `--write_hist_log`
 
 ### 11. md5sum ✅ 已完成
 - 默认计算模式
