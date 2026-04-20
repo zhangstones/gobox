@@ -438,7 +438,7 @@ func TestParity_ContractCommands(t *testing.T) {
 			t.Skip("linux only")
 		}
 		env := t.TempDir()
-		res := runGoboxCLI(t, env, "", "ioperf", "-filename", filepath.Join(env, "io.dat"), "-size", "64K", "-runtime", "1", "-time_based", "-iodepth", "2")
+		res := runGoboxCLI(t, env, "", "ioperf", "--filename", filepath.Join(env, "io.dat"), "--size", "64K", "--runtime", "1", "--time_based", "--iodepth", "2")
 		if res.ExitCode != 0 {
 			t.Fatalf("ioperf failed: %+v", res)
 		}

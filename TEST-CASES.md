@@ -343,22 +343,22 @@
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
-| IOPERF-001 | `-bs string` | contract | gobox-only | temp file | 块大小参数生效 |
-| IOPERF-002 | `-direct int` | contract | gobox-only | temp file | direct 参数可解析 |
-| IOPERF-003 | `-filename string` | contract | gobox-only | temp file | 指定文件路径可用 |
-| IOPERF-004 | `-fsync int` | contract | gobox-only | temp file | fsync 参数可解析 |
-| IOPERF-005 | `-group_reporting` | contract | gobox-only | temp file + multi job | 聚合输出生效 |
-| IOPERF-006 | `-iodepth int` | contract | gobox-only | temp file | 队列深度影响执行 |
-| IOPERF-007 | `-latency` | contract | gobox-only | temp file | 延迟统计输出出现 |
-| IOPERF-008 | `-numjobs int` | contract | gobox-only | temp file | 并发 job 参数生效 |
-| IOPERF-009 | `-percentile int` | contract | gobox-only | temp file | 百分位输出出现 |
-| IOPERF-010 | `-rate string` | contract | gobox-only | temp file | 限速参数可解析 |
-| IOPERF-011 | `-runtime int` | contract | gobox-only | temp file | 运行时长参数生效 |
-| IOPERF-012 | `-rw string` | contract | gobox-only | temp file | I/O 模式切换生效 |
-| IOPERF-013 | `-rwmixread int` | contract | gobox-only | temp file | 混合读比例可解析 |
-| IOPERF-014 | `-size string` | contract | gobox-only | temp file | 数据量参数生效 |
-| IOPERF-015 | `-sync int` | contract | gobox-only | temp file | sync 参数可解析 |
-| IOPERF-016 | `-time_based` | contract | gobox-only | temp file | 时间模式生效 |
+| IOPERF-001 | `--bs string` | behavior | `fio --bs` | temp file | 块大小参数进入执行并产出 I/O 结果 |
+| IOPERF-002 | `--direct int` | behavior | `fio --direct` | temp file | direct 参数进入执行路径 |
+| IOPERF-003 | `--filename string` | behavior | `fio --filename` | temp file | 指定文件路径可用并创建测试文件 |
+| IOPERF-004 | `--fsync int` | behavior | `fio --fsync` | temp file | fsync 参数进入写入路径 |
+| IOPERF-005 | `--group_reporting` | behavior | `fio --group_reporting` | temp file + multi job | 聚合输出生效 |
+| IOPERF-006 | `--iodepth int` | behavior | `fio --iodepth` | temp file | 队列深度影响执行 |
+| IOPERF-007 | `--latency` | behavior | `fio --latency` | temp file | 延迟统计输出出现 |
+| IOPERF-008 | `--numjobs int` | behavior | `fio --numjobs` | temp file | 并发 job 参数生效 |
+| IOPERF-009 | `--percentile int` | behavior | `fio --percentile` | temp file | 百分位输出出现 |
+| IOPERF-010 | `--rate string` | behavior | `fio --rate` | temp file | 限速参数进入执行路径 |
+| IOPERF-011 | `--runtime int` | behavior | `fio --runtime` | temp file | 运行时长参数生效 |
+| IOPERF-012 | `--rw string` | behavior | `fio --rw` | temp file | I/O 模式切换生效 |
+| IOPERF-013 | `--rwmixread int` | behavior | `fio --rwmixread` | temp file | 混合读比例进入执行路径 |
+| IOPERF-014 | `--size string` | behavior | `fio --size` | temp file | 数据量参数生效 |
+| IOPERF-015 | `--sync int` | behavior | `fio --sync` | temp file | sync 参数进入执行路径 |
+| IOPERF-016 | `--time_based` | behavior | `fio --time_based` | temp file | 时间模式生效 |
 
 ### md5sum
 

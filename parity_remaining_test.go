@@ -1085,21 +1085,21 @@ func TestParity_RemainingLightweightCases(t *testing.T) {
 			id   string
 			args []string
 		}{
-			{"IOPERF-001", []string{"ioperf", "-filename", "io.dat", "-bs", "4k", "-size", "32K", "-runtime", "1"}},
-			{"IOPERF-002", []string{"ioperf", "-filename", "io.dat", "-direct", "0", "-size", "32K", "-runtime", "1"}},
-			{"IOPERF-003", []string{"ioperf", "-filename", "io.dat", "-size", "32K", "-runtime", "1"}},
-			{"IOPERF-004", []string{"ioperf", "-filename", "io.dat", "-fsync", "1", "-size", "32K", "-runtime", "1"}},
-			{"IOPERF-005", []string{"ioperf", "-filename", "io.dat", "-group_reporting", "-numjobs", "2", "-size", "32K", "-runtime", "1"}},
-			{"IOPERF-007", []string{"ioperf", "-filename", "io.dat", "-latency", "-size", "32K", "-runtime", "1"}},
-			{"IOPERF-008", []string{"ioperf", "-filename", "io.dat", "-numjobs", "2", "-size", "32K", "-runtime", "1"}},
-			{"IOPERF-009", []string{"ioperf", "-filename", "io.dat", "-percentile", "95", "-size", "32K", "-runtime", "1"}},
-			{"IOPERF-010", []string{"ioperf", "-filename", "io.dat", "-rate", "1M", "-size", "32K", "-runtime", "1"}},
-			{"IOPERF-011", []string{"ioperf", "-filename", "io.dat", "-runtime", "1", "-size", "32K"}},
-			{"IOPERF-012", []string{"ioperf", "-filename", "io.dat", "-rw", "read", "-size", "32K", "-runtime", "1"}},
-			{"IOPERF-013", []string{"ioperf", "-filename", "io.dat", "-rw", "readwrite", "-rwmixread", "70", "-size", "32K", "-runtime", "1"}},
-			{"IOPERF-014", []string{"ioperf", "-filename", "io.dat", "-size", "32K", "-runtime", "1"}},
-			{"IOPERF-015", []string{"ioperf", "-filename", "io.dat", "-sync", "1", "-size", "32K", "-runtime", "1"}},
-			{"IOPERF-016", []string{"ioperf", "-filename", "io.dat", "-time_based", "-runtime", "1", "-size", "32K"}},
+			{"IOPERF-001", []string{"ioperf", "--filename", "io.dat", "--bs", "4k", "--size", "32K", "--runtime", "1"}},
+			{"IOPERF-002", []string{"ioperf", "--filename", "io.dat", "--direct", "0", "--size", "32K", "--runtime", "1"}},
+			{"IOPERF-003", []string{"ioperf", "--filename", "io.dat", "--size", "32K", "--runtime", "1"}},
+			{"IOPERF-004", []string{"ioperf", "--filename", "io.dat", "--fsync", "1", "--size", "32K", "--runtime", "1"}},
+			{"IOPERF-005", []string{"ioperf", "--filename", "io.dat", "--group_reporting", "--numjobs", "2", "--size", "32K", "--runtime", "1"}},
+			{"IOPERF-007", []string{"ioperf", "--filename", "io.dat", "--latency", "--size", "32K", "--runtime", "1"}},
+			{"IOPERF-008", []string{"ioperf", "--filename", "io.dat", "--numjobs", "2", "--size", "32K", "--runtime", "1"}},
+			{"IOPERF-009", []string{"ioperf", "--filename", "io.dat", "--percentile", "95", "--size", "32K", "--runtime", "1"}},
+			{"IOPERF-010", []string{"ioperf", "--filename", "io.dat", "--rate", "1M", "--size", "32K", "--runtime", "1"}},
+			{"IOPERF-011", []string{"ioperf", "--filename", "io.dat", "--runtime", "1", "--size", "32K"}},
+			{"IOPERF-012", []string{"ioperf", "--filename", "io.dat", "--rw", "read", "--size", "32K", "--runtime", "1"}},
+			{"IOPERF-013", []string{"ioperf", "--filename", "io.dat", "--rw", "readwrite", "--rwmixread", "70", "--size", "32K", "--runtime", "1"}},
+			{"IOPERF-014", []string{"ioperf", "--filename", "io.dat", "--size", "32K", "--runtime", "1"}},
+			{"IOPERF-015", []string{"ioperf", "--filename", "io.dat", "--sync", "1", "--size", "32K", "--runtime", "1"}},
+			{"IOPERF-016", []string{"ioperf", "--filename", "io.dat", "--time_based", "--runtime", "1", "--size", "32K"}},
 		} {
 			t.Run(tc.id, func(t *testing.T) {
 				env := t.TempDir()
@@ -1116,6 +1116,74 @@ func TestParity_RemainingLightweightCases(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestParity_IoperfAgainstFio(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux only")
+	}
+	if _, err := exec.LookPath("fio"); err != nil {
+		t.Skip("native fio not found")
+	}
+
+	t.Run("IOPERF-FIO-001", func(t *testing.T) {
+		env := t.TempDir()
+		file := filepath.Join(env, "io.dat")
+		writeFile(t, file, strings.Repeat("a", 32*1024))
+		gobox := runGoboxCLI(t, env, "", "ioperf", "--filename", file, "--rw", "read", "--bs", "4k", "--size", "32K")
+		native := runNativeCLI(t, env, "", "fio", "--name=job", "--filename="+file, "--rw=read", "--bs=4k", "--size=32K")
+		if gobox.ExitCode != 0 || native.ExitCode != 0 {
+			t.Fatalf("ioperf/fio read failed gobox=%+v native=%+v", gobox, native)
+		}
+		if !strings.Contains(gobox.Stdout, "READ:") || !strings.Contains(strings.ToLower(native.Stdout), "read:") {
+			t.Fatalf("ioperf/fio read output mismatch gobox=%+v native=%+v", gobox, native)
+		}
+	})
+
+	t.Run("IOPERF-FIO-002", func(t *testing.T) {
+		env := t.TempDir()
+		file := filepath.Join(env, "io.dat")
+		gobox := runGoboxCLI(t, env, "", "ioperf", "--filename", file, "--rw", "write", "--bs", "4k", "--size", "32K")
+		native := runNativeCLI(t, env, "", "fio", "--name=job", "--filename="+file, "--rw=write", "--bs=4k", "--size=32K")
+		if gobox.ExitCode != 0 || native.ExitCode != 0 {
+			t.Fatalf("ioperf/fio write failed gobox=%+v native=%+v", gobox, native)
+		}
+		if !strings.Contains(gobox.Stdout, "WRITE:") || !strings.Contains(strings.ToLower(native.Stdout), "write:") {
+			t.Fatalf("ioperf/fio write output mismatch gobox=%+v native=%+v", gobox, native)
+		}
+	})
+
+	t.Run("IOPERF-FIO-003", func(t *testing.T) {
+		env := t.TempDir()
+		file := filepath.Join(env, "io.dat")
+		writeFile(t, file, strings.Repeat("b", 32*1024))
+		gobox := runGoboxCLI(t, env, "", "ioperf", "--filename", file, "--rw", "readwrite", "--rwmixread", "70", "--bs", "4k", "--size", "32K")
+		native := runNativeCLI(t, env, "", "fio", "--name=job", "--filename="+file, "--rw=readwrite", "--rwmixread=70", "--bs=4k", "--size=32K")
+		if gobox.ExitCode != 0 || native.ExitCode != 0 {
+			t.Fatalf("ioperf/fio readwrite failed gobox=%+v native=%+v", gobox, native)
+		}
+		if !strings.Contains(gobox.Stdout, "READ:") || !strings.Contains(gobox.Stdout, "WRITE:") {
+			t.Fatalf("gobox readwrite missing read/write stats: %+v", gobox)
+		}
+		nativeLower := strings.ToLower(native.Stdout)
+		if !strings.Contains(nativeLower, "read:") || !strings.Contains(nativeLower, "write:") {
+			t.Fatalf("fio readwrite missing read/write stats: %+v", native)
+		}
+	})
+
+	t.Run("IOPERF-FIO-004", func(t *testing.T) {
+		env := t.TempDir()
+		file := filepath.Join(env, "io.dat")
+		writeFile(t, file, strings.Repeat("c", 32*1024))
+		gobox := runGoboxCLI(t, env, "", "ioperf", "--filename", file, "--rw", "read", "--size", "32K", "--time_based", "--runtime", "1")
+		native := runNativeCLI(t, env, "", "fio", "--name=job", "--filename="+file, "--rw=read", "--size=32K", "--time_based", "--runtime=1")
+		if gobox.ExitCode != 0 || native.ExitCode != 0 {
+			t.Fatalf("ioperf/fio time_based failed gobox=%+v native=%+v", gobox, native)
+		}
+		if !strings.Contains(gobox.Stdout, "READ:") || !strings.Contains(strings.ToLower(native.Stdout), "read:") {
+			t.Fatalf("ioperf/fio time_based output mismatch gobox=%+v native=%+v", gobox, native)
+		}
+	})
 }
 
 func TestParity_RemainingSmokeReferences(t *testing.T) {

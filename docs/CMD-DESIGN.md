@@ -332,22 +332,22 @@
 
 | gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
 |------------|---------------|------------|----------|
-| `gobox ioperf -bs string` | `fio --bs` | ✅ 一致 | 块大小，如 4k, 8k（默认 "4k"） |
-| `gobox ioperf -direct int` | `fio --direct` | ✅ 一致 | 使用 O_DIRECT 绕过缓存（0 或 1） |
-| `gobox ioperf -filename string` | `fio --filename` | ✅ 一致 | 测试文件路径（默认 "/tmp/ioperf_test"） |
-| `gobox ioperf -fsync int` | `fio --fsync` | ✅ 一致 | 每次写后执行 fsync（0 或 1） |
-| `gobox ioperf -group_reporting` | `fio --group_reporting` | ✅ 一致 | 聚合多任务报告 |
-| `gobox ioperf -iodepth int` | `fio --iodepth` | ✅ 一致 | 队列深度（默认 1） |
-| `gobox ioperf -latency` | `fio --latency` | ✅ 一致 | 输出延迟分布直方图 |
-| `gobox ioperf -numjobs int` | `fio --numjobs` | ✅ 一致 | 并行任务数量（默认 1） |
-| `gobox ioperf -percentile int` | `fio --percentile` | ✅ 一致 | 报告延迟百分位 |
-| `gobox ioperf -rate string` | `fio --rate` | ✅ 一致 | 速率限制（如 100M） |
-| `gobox ioperf -runtime int` | `fio --runtime` | ✅ 一致 | 运行时间（秒） |
-| `gobox ioperf -rw string` | `fio --rw` | ✅ 一致 | I/O 模式：read/write/randread/randwrite/readwrite（默认 "read"） |
-| `gobox ioperf -rwmixread int` | `fio --rwmixread` | ✅ 一致 | 读操作比例（0-100，用于 readwrite，默认 50） |
-| `gobox ioperf -size string` | `fio --size` | ✅ 一致 | 总 I/O 大小（如 1G，默认 "1G"） |
-| `gobox ioperf -sync int` | `fio --sync` | ✅ 一致 | 使用 O_SYNC（0 或 1） |
-| `gobox ioperf -time_based` | `fio --time_based` | ✅ 一致 | 基于时间运行 |
+| `gobox ioperf --bs string` | `fio --bs` | ✅ 一致 | 块大小，如 4k, 8k（默认 "4k"） |
+| `gobox ioperf --direct int` | `fio --direct` | ✅ 一致 | 使用 O_DIRECT 绕过缓存（0 或 1） |
+| `gobox ioperf --filename string` | `fio --filename` | ✅ 一致 | 测试文件路径（默认 "/tmp/ioperf_test"） |
+| `gobox ioperf --fsync int` | `fio --fsync` | ✅ 一致 | 每次写后执行 fsync（0 或 1） |
+| `gobox ioperf --group_reporting` | `fio --group_reporting` | ✅ 一致 | 聚合多任务报告 |
+| `gobox ioperf --iodepth int` | `fio --iodepth` | ✅ 一致 | 队列深度（默认 1） |
+| `gobox ioperf --latency` | `fio --latency` | ✅ 一致 | 输出延迟分布直方图 |
+| `gobox ioperf --numjobs int` | `fio --numjobs` | ✅ 一致 | 并行任务数量（默认 1） |
+| `gobox ioperf --percentile int` | `fio --percentile` | ✅ 一致 | 报告延迟百分位 |
+| `gobox ioperf --rate string` | `fio --rate` | ✅ 一致 | 速率限制（如 100M） |
+| `gobox ioperf --runtime int` | `fio --runtime` | ✅ 一致 | 运行时间（秒） |
+| `gobox ioperf --rw string` | `fio --rw` | ✅ 一致 | I/O 模式：read/write/randread/randwrite/readwrite（默认 "read"） |
+| `gobox ioperf --rwmixread int` | `fio --rwmixread` | ✅ 一致 | 读操作比例（0-100，用于 readwrite，默认 50） |
+| `gobox ioperf --size string` | `fio --size` | ✅ 一致 | 总 I/O 大小（如 1G，默认 "1G"） |
+| `gobox ioperf --sync int` | `fio --sync` | ✅ 一致 | 使用 O_SYNC（0 或 1） |
+| `gobox ioperf --time_based` | `fio --time_based` | ✅ 一致 | 基于时间运行 |
 
 ### md5sum
 
