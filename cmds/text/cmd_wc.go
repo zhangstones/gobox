@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -181,13 +182,16 @@ func wcReader(r io.Reader, filename string) (wcResult, error) {
 		}
 
 		if b == '\n' {
+			if inWord {
+				result.words++
+			}
 			result.lines++
 			if lineLen > result.maxLineLen {
 				result.maxLineLen = lineLen
 			}
 			lineLen = 0
 			inWord = false
-		} else if b == ' ' || b == '\t' || b == '\r' {
+		} else if unicode.IsSpace(rune(b)) {
 			if inWord {
 				result.words++
 				inWord = false

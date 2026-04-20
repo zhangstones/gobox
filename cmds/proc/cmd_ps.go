@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -36,7 +37,8 @@ func PsCmd(args []string) error {
 	// always show human-readable memory sizes
 	sortBy := fsFlags.String("sort", "pid", "sort by: pid|cpu|rss|vms|cmd")
 	rev := fsFlags.Bool("r", false, "reverse sort order")
-	nameFilter := fsFlags.String("name", "", "filter by substring in command name/cmdline")
+	fullFilter := fsFlags.String("full", "", "filter by extended regular expression in full command line (pgrep -f style)")
+	commFilter := fsFlags.String("comm", "", "filter by exact process name pattern (pgrep -x style)")
 	limit := fsFlags.Int("n", 0, "show only N entries (0 = all)")
 	sampleMs := fsFlags.Int("i", 500, "CPU sample interval in milliseconds")
 	maxCmd := fsFlags.Int("l", 40, "max command length (0 = unlimited)")
@@ -60,6 +62,9 @@ func PsCmd(args []string) error {
 	if *wideWide {
 		*maxCmd = 0
 	}
+	if *fullFilter != "" && *commFilter != "" {
+		return fmt.Errorf("-full and -comm cannot be used together")
+	}
 
 	var customFields []string
 	if *outputFormat != "" {
@@ -75,11 +80,28 @@ func PsCmd(args []string) error {
 			// fallback to go-ps listing if gathering detailed info fails
 			return psFallback(fsFlags, all, full)
 		}
-		// filtering by name
-		if *nameFilter != "" {
+		if *fullFilter != "" {
+			fullRe, err := regexp.Compile(*fullFilter)
+			if err != nil {
+				return fmt.Errorf("invalid -full pattern: %w", err)
+			}
 			filtered := infos[:0]
 			for _, pi := range infos {
-				if strings.Contains(pi.cmdline, *nameFilter) || strings.Contains(pi.exe, *nameFilter) {
+				if fullRe.MatchString(psFullCommand(pi)) {
+					filtered = append(filtered, pi)
+				}
+			}
+			infos = filtered
+		}
+
+		if *commFilter != "" {
+			commRe, err := regexp.Compile("^(?:" + *commFilter + ")$")
+			if err != nil {
+				return fmt.Errorf("invalid -comm pattern: %w", err)
+			}
+			filtered := infos[:0]
+			for _, pi := range infos {
+				if commRe.MatchString(pi.exe) {
 					filtered = append(filtered, pi)
 				}
 			}
@@ -152,6 +174,13 @@ func PsCmd(args []string) error {
 		return psFallbackCustom(customFields, *maxCmd)
 	}
 	return psFallback(fsFlags, all, full)
+}
+
+func psFullCommand(pi procInfo) string {
+	if pi.cmdline != "" {
+		return pi.cmdline
+	}
+	return pi.exe
 }
 
 func psFallback(fsFlags *flag.FlagSet, all, full *bool) error {

@@ -20,13 +20,31 @@ func NetstatCmd(args []string) error {
 	stateFilter := fsFlags.String("state", "", "filter by connection state (comma-separated, e.g., LISTEN,ESTABLISHED)")
 	portFilter := fsFlags.Int("port", 0, "filter by local or remote port")
 	sortBy := fsFlags.String("sort", "", "sort by recvq|sendq|local|remote|pid")
+	allSockets := fsFlags.Bool("a", false, "show all sockets")
+	allSocketsLong := fsFlags.Bool("all", false, "show all sockets")
+	tcpOnly := fsFlags.Bool("t", false, "show TCP sockets")
+	tcpOnlyLong := fsFlags.Bool("tcp", false, "show TCP sockets")
+	udpOnly := fsFlags.Bool("u", false, "show UDP sockets")
+	udpOnlyLong := fsFlags.Bool("udp", false, "show UDP sockets")
+	unixOnly := fsFlags.Bool("x", false, "show Unix domain sockets")
+	unixOnlyLong := fsFlags.Bool("unix", false, "show Unix domain sockets")
 	listeningOnly := fsFlags.Bool("l", false, "show listening sockets only")
 	listeningOnlyLong := fsFlags.Bool("listening", false, "show listening sockets only")
 	numericOnly := fsFlags.Bool("n", false, "show numeric addresses and ports")
 	numericOnlyLong := fsFlags.Bool("numeric", false, "show numeric addresses and ports")
+	programs := fsFlags.Bool("p", false, "show PID/Program name for sockets")
+	programsLong := fsFlags.Bool("programs", false, "show PID/Program name for sockets")
+	ipv4Only := fsFlags.Bool("4", false, "show IPv4 sockets")
+	ipv6Only := fsFlags.Bool("6", false, "show IPv6 sockets")
+	extended := fsFlags.Bool("e", false, "show extended socket information")
+	extendedLong := fsFlags.Bool("extend", false, "show extended socket information")
+	timers := fsFlags.Bool("o", false, "show TCP timer information")
+	timersLong := fsFlags.Bool("timers", false, "show TCP timer information")
+	wide := fsFlags.Bool("W", false, "wide output (accepted; gobox does not truncate addresses)")
+	wideLong := fsFlags.Bool("wide", false, "wide output (accepted; gobox does not truncate addresses)")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox netstat")
-		fmt.Fprintln(os.Stderr, "Print network connection statistics (Linux /proc/net/tcp*, /proc/net/udp*).")
+		fmt.Fprintln(os.Stderr, "Print network connection statistics (Linux /proc/net/tcp*, /proc/net/udp*, /proc/net/unix).")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fsFlags.PrintDefaults()
 	}
@@ -36,9 +54,30 @@ func NetstatCmd(args []string) error {
 		}
 		return err
 	}
+	_ = *allSockets || *allSocketsLong
 	_ = *numericOnly || *numericOnlyLong
+	_ = *programs || *programsLong
+	_ = *wide || *wideLong
 	if *listeningOnlyLong {
 		*listeningOnly = true
+	}
+	if *tcpOnlyLong {
+		*tcpOnly = true
+	}
+	if *udpOnlyLong {
+		*udpOnly = true
+	}
+	if *unixOnlyLong {
+		*unixOnly = true
+	}
+	if *extendedLong {
+		*extended = true
+	}
+	if *timersLong {
+		*timers = true
+	}
+	if *ipv4Only && *ipv6Only {
+		return fmt.Errorf("netstat: -4 and -6 cannot be used together")
 	}
 
 	if runtime.GOOS != "linux" {
@@ -47,17 +86,46 @@ func NetstatCmd(args []string) error {
 
 	// Parse tcp/udp tables
 	conns := make([]tcpConn, 0)
-	if cs, err := parseProcNetTCP("/proc/net/tcp"); err == nil {
-		conns = append(conns, cs...)
+	if !*unixOnly && !*ipv6Only {
+		if cs, err := parseProcNetTCP("/proc/net/tcp", "TCP"); err == nil {
+			conns = append(conns, cs...)
+		}
 	}
-	if cs, err := parseProcNetTCP("/proc/net/tcp6"); err == nil {
-		conns = append(conns, cs...)
+	if !*unixOnly && !*ipv4Only {
+		if cs, err := parseProcNetTCP("/proc/net/tcp6", "TCP6"); err == nil {
+			conns = append(conns, cs...)
+		}
 	}
-	if cs, err := parseProcNetUDP("/proc/net/udp", "UDP"); err == nil {
-		conns = append(conns, cs...)
+	if !*unixOnly && !*ipv6Only {
+		if cs, err := parseProcNetUDP("/proc/net/udp", "UDP"); err == nil {
+			conns = append(conns, cs...)
+		}
 	}
-	if cs, err := parseProcNetUDP("/proc/net/udp6", "UDP6"); err == nil {
-		conns = append(conns, cs...)
+	if !*unixOnly && !*ipv4Only {
+		if cs, err := parseProcNetUDP("/proc/net/udp6", "UDP6"); err == nil {
+			conns = append(conns, cs...)
+		}
+	}
+	if *unixOnly || (!*tcpOnly && !*udpOnly && !*ipv4Only && !*ipv6Only) {
+		if cs, err := parseProcNetUnix("/proc/net/unix"); err == nil {
+			conns = append(conns, cs...)
+		}
+	}
+
+	if *tcpOnly || *udpOnly || *unixOnly {
+		filtered := conns[:0]
+		for _, c := range conns {
+			if *tcpOnly && strings.HasPrefix(c.Proto, "TCP") {
+				filtered = append(filtered, c)
+			}
+			if *udpOnly && strings.HasPrefix(c.Proto, "UDP") {
+				filtered = append(filtered, c)
+			}
+			if *unixOnly && c.Proto == "UNIX" {
+				filtered = append(filtered, c)
+			}
+		}
+		conns = filtered
 	}
 
 	inodeToPid, pidName := buildInodePidMap()
@@ -117,8 +185,7 @@ func NetstatCmd(args []string) error {
 		})
 	}
 
-	// Print header: Recv-Q Send-Q Proto LocalAddress RemoteAddress State PID/Program
-	fmt.Printf("%-7s %-7s %-6s %-25s %-25s %-12s %s\n", "Recv-Q", "Send-Q", "Proto", "LocalAddress", "RemoteAddress", "State", "PID/Program")
+	printNetstatHeader(*extended, *timers)
 	for _, c := range conns {
 		pid := "-"
 		pname := "-"
@@ -128,19 +195,54 @@ func NetstatCmd(args []string) error {
 				pname = n
 			}
 		}
-		local := fmt.Sprintf("%s:%d", c.LocalIP, c.LocalPort)
-		remote := fmt.Sprintf("%s:%d", c.RemoteIP, c.RemotePort)
+		local := formatNetstatAddress(c.LocalIP, c.LocalPort)
+		remote := formatNetstatAddress(c.RemoteIP, c.RemotePort)
 		proto := c.Proto
 		if proto == "" {
 			proto = "TCP"
 		}
-		fmt.Printf("%-7d %-7d %-6s %-25s %-25s %-12s %s\n", c.RxQueue, c.TxQueue, proto, local, remote, c.State, pid+"/"+pname)
+		printNetstatRow(c, proto, local, remote, pid+"/"+pname, *extended, *timers)
 	}
 	return nil
 }
 
+func printNetstatHeader(extended, timers bool) {
+	fmt.Printf("%-7s %-7s %-6s %-25s %-25s %-12s %s", "Recv-Q", "Send-Q", "Proto", "LocalAddress", "RemoteAddress", "State", "PID/Program")
+	if extended {
+		fmt.Printf(" %-8s %s", "User", "Inode")
+	}
+	if timers {
+		fmt.Printf(" %s", "Timer")
+	}
+	fmt.Println()
+}
+
+func printNetstatRow(c tcpConn, proto, local, remote, pidProgram string, extended, timers bool) {
+	fmt.Printf("%-7d %-7d %-6s %-25s %-25s %-12s %s", c.RxQueue, c.TxQueue, proto, local, remote, c.State, pidProgram)
+	if extended {
+		fmt.Printf(" %-8s %s", c.UID, c.Inode)
+	}
+	if timers {
+		fmt.Printf(" %s", c.Timer)
+	}
+	fmt.Println()
+}
+
+func formatNetstatAddress(addr string, port int) string {
+	if port == 0 {
+		if addr == "" {
+			return "-"
+		}
+		return addr
+	}
+	return fmt.Sprintf("%s:%d", addr, port)
+}
+
 func isListeningConn(c tcpConn) bool {
 	if strings.EqualFold(c.State, "LISTEN") {
+		return true
+	}
+	if c.Proto == "UNIX" && strings.EqualFold(c.State, "LISTENING") {
 		return true
 	}
 	return strings.HasPrefix(c.Proto, "UDP") && c.RemotePort == 0
@@ -152,13 +254,15 @@ type tcpConn struct {
 	TxQueue    int
 	RxQueue    int
 	Inode      string
+	UID        string
 	LocalIP    string
 	RemoteIP   string
 	State      string
 	Proto      string
+	Timer      string
 }
 
-func parseProcNetTCP(path string) ([]tcpConn, error) {
+func parseProcNetTCP(path string, proto string) ([]tcpConn, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -182,6 +286,8 @@ func parseProcNetTCP(path string) ([]tcpConn, error) {
 		remote := fields[2]
 		stateHex := fields[3]
 		txrx := fields[4]
+		timer := fields[5]
+		uid := fields[7]
 		inode := fields[9]
 
 		lp := parsePortFromAddr(local)
@@ -205,10 +311,12 @@ func parseProcNetTCP(path string) ([]tcpConn, error) {
 			TxQueue:    tx,
 			RxQueue:    rx,
 			Inode:      inode,
+			UID:        uid,
 			LocalIP:    lip,
 			RemoteIP:   rip,
 			State:      tcpStateName(stateHex),
-			Proto:      "TCP",
+			Proto:      proto,
+			Timer:      timer,
 		})
 	}
 	if err := scanner.Err(); err != nil {
@@ -287,6 +395,8 @@ func parseProcNetUDP(path string, proto string) ([]tcpConn, error) {
 		remote := fields[2]
 		stateHex := fields[3]
 		txrx := fields[4]
+		timer := fields[5]
+		uid := fields[7]
 		inode := fields[9]
 
 		lp := parsePortFromAddr(local)
@@ -310,16 +420,70 @@ func parseProcNetUDP(path string, proto string) ([]tcpConn, error) {
 			TxQueue:    tx,
 			RxQueue:    rx,
 			Inode:      inode,
+			UID:        uid,
 			LocalIP:    lip,
 			RemoteIP:   rip,
 			State:      tcpStateName(stateHex),
 			Proto:      proto,
+			Timer:      timer,
 		})
 	}
 	if err := scanner.Err(); err != nil {
 		return res, err
 	}
 	return res, nil
+}
+
+func parseProcNetUnix(path string) ([]tcpConn, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var res []tcpConn
+	scanner := bufio.NewScanner(f)
+	first := true
+	for scanner.Scan() {
+		line := scanner.Text()
+		if first {
+			first = false
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 7 {
+			continue
+		}
+		path := "-"
+		if len(fields) >= 8 {
+			path = strings.Join(fields[7:], " ")
+		}
+		res = append(res, tcpConn{
+			Inode:    fields[6],
+			LocalIP:  path,
+			RemoteIP: "-",
+			State:    unixStateName(fields[5]),
+			Proto:    "UNIX",
+		})
+	}
+	if err := scanner.Err(); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+func unixStateName(h string) string {
+	switch strings.ToUpper(strings.TrimPrefix(h, "0x")) {
+	case "01", "1":
+		return "LISTENING"
+	case "02", "2":
+		return "CONNECTED"
+	case "03", "3":
+		return "CONNECTING"
+	case "04", "4":
+		return "DISCONNECTING"
+	default:
+		return h
+	}
 }
 
 func tcpStateName(h string) string {

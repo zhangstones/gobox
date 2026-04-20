@@ -28,6 +28,7 @@ type resolveHost struct {
 type curlCommandError struct {
 	err            error
 	suppressStderr bool
+	exitCode       int
 }
 
 type curlFormField struct {
@@ -52,6 +53,13 @@ func (e curlCommandError) Unwrap() error {
 
 func (e curlCommandError) SuppressCLIError() bool {
 	return e.suppressStderr
+}
+
+func (e curlCommandError) ExitCode() int {
+	if e.exitCode != 0 {
+		return e.exitCode
+	}
+	return 2
 }
 
 // curlCmd implements curl functionality
@@ -320,12 +328,17 @@ doneFlags:
 }
 
 func wrapCurlError(err error, silent, showError bool) error {
+	return wrapCurlErrorWithCode(err, silent, showError, 2)
+}
+
+func wrapCurlErrorWithCode(err error, silent, showError bool, exitCode int) error {
 	if err == nil {
 		return nil
 	}
 	return curlCommandError{
 		err:            err,
 		suppressStderr: silent && !showError,
+		exitCode:       exitCode,
 	}
 }
 
@@ -500,7 +513,7 @@ func runSingle(client *http.Client, targetURL, method string, headers []string, 
 		if !silent || showError {
 			fmt.Fprintf(os.Stderr, "curl: HTTP error %d\n", resp.StatusCode)
 		}
-		return wrapCurlError(fmt.Errorf("HTTP error %d", resp.StatusCode), silent, showError)
+		return wrapCurlErrorWithCode(fmt.Errorf("HTTP error %d", resp.StatusCode), silent, showError, 22)
 	}
 
 	// Build output

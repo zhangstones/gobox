@@ -3,6 +3,7 @@ package text
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -26,6 +27,26 @@ type sortConfig struct {
 	check         bool
 	output        string
 	zeroTerminated bool
+}
+
+type sortExitError struct {
+	code int
+	err  error
+}
+
+func (e sortExitError) Error() string {
+	if e.err != nil {
+		return e.err.Error()
+	}
+	return fmt.Sprintf("exit code %d", e.code)
+}
+
+func (e sortExitError) Unwrap() error {
+	return e.err
+}
+
+func (e sortExitError) ExitCode() int {
+	return e.code
 }
 
 var monthNames = map[string]time.Month{
@@ -410,7 +431,7 @@ func checkSorted(lines []string, cfg sortConfig) error {
 		}
 		if less {
 			fmt.Fprintf(os.Stderr, "Sort: %s: disorder: line %d\n", os.Stdin.Name(), i+1)
-			return fmt.Errorf("check failed")
+			return sortExitError{code: 1, err: errors.New("check failed")}
 		}
 	}
 	fmt.Fprintln(os.Stdout, "sorted")

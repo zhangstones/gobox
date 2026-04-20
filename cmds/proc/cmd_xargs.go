@@ -13,6 +13,7 @@ import (
 
 // xargsCmd implements a basic subset of xargs
 func XargsCmd(args []string) error {
+	args = normalizeLegacyXargsArgs(args)
 	xargsFlags := flag.NewFlagSet("xargs", flag.ContinueOnError)
 	xargsFlags.SetOutput(os.Stderr)
 	replaceStr := xargsFlags.String("i", "", "replace string (same as -I, use {} as default)")
@@ -20,7 +21,8 @@ func XargsCmd(args []string) error {
 	delimiter := xargsFlags.String("d", "\n", "input delimiter (default: newline)")
 	numArgs := xargsFlags.Int("n", 0, "max number of arguments per command invocation")
 	maxProcs := xargsFlags.Int("P", 1, "max number of parallel processes")
-	verbose := xargsFlags.Bool("v", false, "print commands before executing")
+	trace := xargsFlags.Bool("t", false, "print commands before executing")
+	verboseAlias := xargsFlags.Bool("v", false, "print commands before executing (legacy alias for -t)")
 	noRun := xargsFlags.Bool("r", false, "do not run command if no input")
 
 	xargsFlags.Usage = func() {
@@ -71,9 +73,11 @@ func XargsCmd(args []string) error {
 		return nil
 	}
 
+	verbose := *trace || *verboseAlias
+
 	// If no input, run command once
 	if len(inputs) == 0 {
-		if *verbose {
+		if verbose {
 			fmt.Fprintf(os.Stderr, "%s\n", strings.Join(cmdArgs, " "))
 		}
 		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
@@ -86,11 +90,33 @@ func XargsCmd(args []string) error {
 	// Process inputs in batches and execute commands in parallel
 	if replaceString != "" {
 		// Replace mode: replace placeholder with each input
-		return executeReplaceMode(cmdArgs, inputs, replaceString, *verbose, *maxProcs)
+		return executeReplaceMode(cmdArgs, inputs, replaceString, verbose, *maxProcs)
 	} else {
 		// Append mode: append inputs to command
-		return executeAppendMode(cmdArgs, inputs, *numArgs, *verbose, *maxProcs)
+		return executeAppendMode(cmdArgs, inputs, *numArgs, verbose, *maxProcs)
 	}
+}
+
+func normalizeLegacyXargsArgs(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	out := make([]string, 0, len(args)+1)
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-i":
+			out = append(out, "-i")
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				out = append(out, "{}")
+			}
+		case strings.HasPrefix(arg, "-i") && len(arg) > 2:
+			out = append(out, "-i", arg[2:])
+		default:
+			out = append(out, arg)
+		}
+	}
+	return out
 }
 
 func parseXargsInputs(r io.Reader, delimiter string) ([]string, error) {

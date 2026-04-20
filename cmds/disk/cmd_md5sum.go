@@ -8,8 +8,31 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 )
+
+var md5HexPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
+
+type md5sumExitError struct {
+	code int
+	err  error
+}
+
+func (e md5sumExitError) Error() string {
+	if e.err != nil {
+		return e.err.Error()
+	}
+	return fmt.Sprintf("exit code %d", e.code)
+}
+
+func (e md5sumExitError) Unwrap() error {
+	return e.err
+}
+
+func (e md5sumExitError) ExitCode() int {
+	return e.code
+}
 
 func Md5sumCmd(args []string) error {
 	fsFlags := flag.NewFlagSet("md5sum", flag.ContinueOnError)
@@ -184,6 +207,13 @@ func md5sumCheck(files []string, warn, status, quiet bool) error {
 					continue
 				}
 				expectedHash = parts[0]
+				if !md5HexPattern.MatchString(expectedHash) {
+					if warn {
+						fmt.Fprintf(os.Stderr, "md5sum: %s:%d: improperly formatted checksum line\n", file, lineNum)
+					}
+					hasError = true
+					continue
+				}
 				// Filename might have spaces, so join remaining parts
 				filename = strings.Join(parts[1:], " ")
 			}
@@ -233,8 +263,8 @@ func md5sumCheck(files []string, warn, status, quiet bool) error {
 
 	}
 
-	if status && hasError {
-		return errors.New("checksum verification failed")
+	if hasError {
+		return md5sumExitError{code: 1, err: errors.New("checksum verification failed")}
 	}
 	return nil
 }

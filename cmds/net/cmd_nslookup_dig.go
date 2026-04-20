@@ -124,11 +124,15 @@ func newResolver(dnsServer string, useTCP bool) *net.Resolver {
 	if useTCP {
 		network = "tcp"
 	}
+	dnsAddress := dnsServer
+	if _, _, err := net.SplitHostPort(dnsServer); err != nil {
+		dnsAddress = net.JoinHostPort(dnsServer, "53")
+	}
 	return &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, networkArg, address string) (net.Conn, error) {
 			dialer := &net.Dialer{Timeout: 5 * time.Second}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(dnsServer, "53"))
+			return dialer.DialContext(ctx, network, dnsAddress)
 		},
 	}
 }

@@ -1,6 +1,7 @@
 package net
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -14,6 +15,11 @@ import (
 
 // ncCmd implements netcat functionality
 func NcCmd(args []string) error {
+	return NcCmdWithContext(context.Background(), args)
+}
+
+// NcCmdWithContext implements netcat functionality and allows tests/callers to cancel listen mode.
+func NcCmdWithContext(ctx context.Context, args []string) error {
 	var (
 		listenMode     bool
 		zeroIO         bool
@@ -150,7 +156,7 @@ doneFlags:
 			return fmt.Errorf("listen mode requires port")
 		}
 		port := remaining[0]
-		return ncServer(port, udpMode, zeroIO, verbose, benchMode, blockSize, numericOnly, forceIPv4, forceIPv6)
+		return ncServer(ctx, port, udpMode, zeroIO, verbose, benchMode, blockSize, numericOnly, forceIPv4, forceIPv6)
 	}
 
 	// Client mode
@@ -303,7 +309,7 @@ func ncClient(host, port string, udp, zeroIO, verbose, numericOnly, forceIPv4, f
 }
 
 // ncServer implements netcat server/listen mode
-func ncServer(port string, udp, zeroIO, verbose, benchMode bool, blockSize int64, numericOnly, forceIPv4, forceIPv6 bool) error {
+func ncServer(ctx context.Context, port string, udp, zeroIO, verbose, benchMode bool, blockSize int64, numericOnly, forceIPv4, forceIPv6 bool) error {
 	network := "tcp"
 	if udp {
 		network = "udp"
@@ -331,30 +337,61 @@ func ncServer(port string, udp, zeroIO, verbose, benchMode bool, blockSize int64
 		fmt.Printf("Listening on port %s\n", port)
 	}
 
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = listener.Close()
+		case <-done:
+		}
+	}()
+
 	if benchMode {
 		return ncBenchServer(listener, udp, blockSize, verbose)
 	}
 
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			continue
+	conn, err := listener.Accept()
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
+		return err
+	}
+	defer conn.Close()
 
-		if verbose {
-			fmt.Printf("Connection from %s\n", conn.RemoteAddr().String())
+	if verbose {
+		fmt.Printf("Connection from %s\n", conn.RemoteAddr().String())
+	}
+
+	if zeroIO {
+		return nil
+	}
+
+	stdinDone := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(conn, os.Stdin)
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			_ = tcpConn.CloseWrite()
 		}
+		stdinDone <- err
+	}()
 
-		if zeroIO {
-			conn.Close()
-			continue
-		}
+	_, err = io.Copy(os.Stdout, conn)
+	if err != nil {
+		return err
+	}
 
-		// Handle connection in background
-		go func(c net.Conn) {
-			io.Copy(c, c)
-			c.Close()
-		}(conn)
+	select {
+	case err := <-stdinDone:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Second):
+		return nil
 	}
 }
 

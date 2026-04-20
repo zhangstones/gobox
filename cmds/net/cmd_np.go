@@ -2,11 +2,13 @@ package net
 
 import (
 	"bufio"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,6 +57,12 @@ func NpCmd(args []string) error {
 		}
 		return err
 	}
+	countExplicit := false
+	fsFlags.Visit(func(f *flag.Flag) {
+		if f.Name == "c" {
+			countExplicit = true
+		}
+	})
 
 	remaining := fsFlags.Args()
 
@@ -105,7 +113,9 @@ func NpCmd(args []string) error {
 
 	// Configure flood mode
 	if *flood {
-		*count = 0 // unlimited
+		if !countExplicit {
+			*count = 0 // unlimited unless -c provides a bounded run.
+		}
 		*interval = 0
 	}
 
@@ -173,6 +183,7 @@ func npTCP(opts *npOptions) error {
 	latencies := []int64{}
 
 	stopChan := make(chan struct{})
+	var progressWG sync.WaitGroup
 
 	// Worker pool
 	for w := 0; w < opts.workers; w++ {
@@ -185,11 +196,16 @@ func npTCP(opts *npOptions) error {
 
 	// Progress reporter
 	if !opts.quiet {
-		go npProgressReporter(&sent, &received, &errors, opts, stopChan)
+		progressWG.Add(1)
+		go func() {
+			defer progressWG.Done()
+			npProgressReporter(&sent, &received, &errors, opts, stopChan)
+		}()
 	}
 
 	wg.Wait()
 	close(stopChan)
+	progressWG.Wait()
 
 	// Calculate statistics
 	if len(latencies) > 0 {
@@ -225,8 +241,7 @@ func npTCPWorker(workerId int, opts *npOptions, sent, received, errors *int64, m
 		default:
 		}
 
-		// Check count limit (if not flood)
-		if !opts.flood && opts.count > 0 && atomic.LoadInt64(sent) >= int64(opts.count) {
+		if opts.count > 0 && atomic.LoadInt64(sent) >= int64(opts.count) {
 			return
 		}
 
@@ -364,11 +379,8 @@ func npICMP(opts *npOptions) error {
 	mu := sync.Mutex{}
 
 	for i := 0; i < opts.count || opts.flood; i++ {
-		start := time.Now()
-
-		// Use net.Dial with "ip:icmp" for ICMP ping
-		conn, err := net.DialTimeout("ip4:icmp", opts.host, opts.wait)
-		latency := time.Since(start).Microseconds()
+		latencyDuration, err := sendICMPEcho(opts.host, i, opts.wait)
+		latency := latencyDuration.Microseconds()
 
 		atomic.AddInt64(&sent, 1)
 
@@ -387,7 +399,6 @@ func npICMP(opts *npOptions) error {
 				fmt.Printf("64 bytes from %s: seq=%d ttl=64 time=%.3f ms\n",
 					opts.host, i, float64(latency)/1000.0)
 			}
-			conn.Close()
 		}
 
 		if opts.interval > 0 && !opts.flood {
@@ -420,11 +431,96 @@ func npICMP(opts *npOptions) error {
 	return nil
 }
 
+func sendICMPEcho(host string, seq int, timeout time.Duration) (time.Duration, error) {
+	ipAddr, err := net.ResolveIPAddr("ip4", host)
+	if err != nil {
+		return 0, err
+	}
+	conn, err := net.DialTimeout("ip4:icmp", ipAddr.String(), timeout)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+
+	id := os.Getpid() & 0xffff
+	packet := make([]byte, 8)
+	packet[0] = 8 // echo request
+	packet[1] = 0
+	binary.BigEndian.PutUint16(packet[4:6], uint16(id))
+	binary.BigEndian.PutUint16(packet[6:8], uint16(seq))
+	binary.BigEndian.PutUint16(packet[2:4], icmpChecksum(packet))
+
+	start := time.Now()
+	if _, err := conn.Write(packet); err != nil {
+		return 0, err
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return 0, err
+	}
+
+	buf := make([]byte, 1500)
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			return 0, err
+		}
+		msg := icmpPayload(buf[:n])
+		if len(msg) < 8 {
+			continue
+		}
+		if msg[0] == 0 &&
+			binary.BigEndian.Uint16(msg[4:6]) == uint16(id) &&
+			binary.BigEndian.Uint16(msg[6:8]) == uint16(seq) {
+			return time.Since(start), nil
+		}
+	}
+}
+
+func icmpPayload(packet []byte) []byte {
+	if len(packet) < 1 {
+		return packet
+	}
+	if packet[0]>>4 == 4 && len(packet) >= 20 {
+		headerLen := int(packet[0]&0x0f) * 4
+		if headerLen >= 20 && len(packet) >= headerLen {
+			return packet[headerLen:]
+		}
+	}
+	return packet
+}
+
+func icmpChecksum(packet []byte) uint16 {
+	var sum uint32
+	for i := 0; i+1 < len(packet); i += 2 {
+		sum += uint32(binary.BigEndian.Uint16(packet[i : i+2]))
+	}
+	if len(packet)%2 == 1 {
+		sum += uint32(packet[len(packet)-1]) << 8
+	}
+	for sum>>16 != 0 {
+		sum = (sum & 0xffff) + (sum >> 16)
+	}
+	return ^uint16(sum)
+}
+
 // ARP ping (ARP discovery on local network)
 func npARP(opts *npOptions) error {
-	// ARP requires raw socket or using system tools
-	// Since we can't easily create raw ARP packets without admin,
-	// we'll use the net library to check ARP table entries
+	if path, err := exec.LookPath("arping"); err == nil {
+		args := []string{"-c", strconv.Itoa(npPacketCount(opts)), "-w", strconv.Itoa(npWaitSeconds(opts))}
+		if opts.iface != "" {
+			args = append(args, "-I", opts.iface)
+		}
+		args = append(args, opts.host)
+		cmd := exec.Command(path, args...)
+		if opts.quiet {
+			cmd.Stdout = io.Discard
+			cmd.Stderr = io.Discard
+		} else {
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+		}
+		return cmd.Run()
+	}
 
 	if !opts.quiet {
 		fmt.Printf("ARPING %s from unspecified\n", opts.host)
@@ -469,6 +565,24 @@ func npARP(opts *npOptions) error {
 
 	fmt.Printf("%s not found in ARP cache (request sent)\n", opts.host)
 	return nil
+}
+
+func npPacketCount(opts *npOptions) int {
+	if opts.count > 0 {
+		return opts.count
+	}
+	return 1
+}
+
+func npWaitSeconds(opts *npOptions) int {
+	if opts.wait <= 0 {
+		return 1
+	}
+	seconds := int((opts.wait + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
 }
 
 // Port scanning

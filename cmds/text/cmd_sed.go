@@ -555,7 +555,8 @@ func sedReader(r io.Reader, out io.Writer, commands []sedCommand, quiet bool) er
 	totalLines := len(lines)
 	for lineNum < totalLines {
 		line := lines[lineNum]
-		printLine := !quiet
+		autoPrint := !quiet
+		explicitPrints := 0
 		deleteLine := false
 		var insertTexts []string
 		var appendTexts []string
@@ -610,13 +611,13 @@ func sedReader(r io.Reader, out io.Writer, commands []sedCommand, quiet bool) er
 				if changed {
 					line = newLine
 					if cmd.printOnMatch {
-						printLine = true
+						explicitPrints++
 					}
 				}
 			case cmdDelete:
 				deleteLine = true
 			case cmdPrint:
-				printLine = true
+				explicitPrints++
 			case cmdInsert:
 				insertTexts = append(insertTexts, cmd.text)
 			case cmdAppend:
@@ -636,7 +637,7 @@ func sedReader(r io.Reader, out io.Writer, commands []sedCommand, quiet bool) er
 
 		// Handle change command (replaces the entire line)
 		if changeMatch {
-			if !quiet {
+			if autoPrint {
 				fmt.Fprintln(out, changeLine)
 			}
 			lineNum++
@@ -644,8 +645,13 @@ func sedReader(r io.Reader, out io.Writer, commands []sedCommand, quiet bool) er
 		}
 
 		// Output current line if not deleted
-		if !deleteLine && printLine {
+		if !deleteLine && autoPrint {
 			fmt.Fprintln(out, line)
+		}
+		if !deleteLine {
+			for i := 0; i < explicitPrints; i++ {
+				fmt.Fprintln(out, line)
+			}
 		}
 
 		// Output append texts after current line

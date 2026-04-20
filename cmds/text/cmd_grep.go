@@ -27,6 +27,7 @@ type grepOptions struct {
 	count             bool
 	lineNumber        bool
 	recursive         bool
+	showFilename      bool
 	fixedString       bool
 	onlyMatching      bool
 	quiet             bool
@@ -131,6 +132,7 @@ func GrepCmd(args []string) error {
 		count:             *count,
 		lineNumber:        *lineNumber,
 		recursive:         *recursive,
+		showFilename:      len(files) > 1 || *recursive,
 		fixedString:       *fixedString,
 		onlyMatching:      *onlyMatching,
 		quiet:             *quiet,
@@ -279,7 +281,7 @@ func grepLines(lines []string, pattern string, regex *regexp.Regexp, opts grepOp
 		return grepResult{matches: matches, matched: matched}, nil
 	}
 	if opts.count && !opts.quiet {
-		if filename != "" {
+		if opts.showFilename && filename != "" {
 			fmt.Printf("%s:%d\n", filename, matches)
 		} else {
 			fmt.Println(matches)
@@ -296,7 +298,7 @@ func grepLines(lines []string, pattern string, regex *regexp.Regexp, opts grepOp
 				continue
 			}
 			for _, part := range grepFindMatches(line, pattern, regex, opts) {
-				printGrepLine(part, filename, i+1, opts.lineNumber)
+				printGrepLineWithOptions(part, filename, i+1, opts)
 			}
 		}
 		return grepResult{matches: matches, matched: matched}, nil
@@ -321,7 +323,7 @@ func grepLines(lines []string, pattern string, regex *regexp.Regexp, opts grepOp
 	}
 	for i, line := range lines {
 		if toPrint[i] {
-			printGrepLine(line, filename, i+1, opts.lineNumber)
+			printGrepLineWithOptions(line, filename, i+1, opts)
 		}
 	}
 	return grepResult{matches: matches, matched: matched}, nil
@@ -371,11 +373,11 @@ func grepFindMatches(line, pattern string, regex *regexp.Regexp, opts grepOption
 	return regex.FindAllString(line, -1)
 }
 
-func printGrepLine(line, filename string, lineNum int, showLineNumber bool) {
-	if filename != "" {
+func printGrepLineWithOptions(line, filename string, lineNum int, opts grepOptions) {
+	if opts.showFilename && filename != "" {
 		fmt.Fprintf(os.Stdout, "%s:", filename)
 	}
-	if showLineNumber {
+	if opts.lineNumber {
 		fmt.Fprintf(os.Stdout, "%d:", lineNum)
 	}
 	fmt.Fprintln(os.Stdout, line)

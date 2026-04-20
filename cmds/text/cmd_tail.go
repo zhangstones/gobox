@@ -350,10 +350,13 @@ func tailFollow(ctx context.Context, files []string, lines int, followByName, re
 					ino, dev, _ := getFileInode(f)
 					fi.ino = ino
 					fi.dev = dev
-					fi.offset = stat.Size()
 					if !quiet && multipleFiles {
 						fmt.Printf("==> %s <==\n", fi.name)
 					}
+					if err := tailFileReader(f, os.Stdout, lines); err != nil {
+						return err
+					}
+					fi.offset = stat.Size()
 				}
 
 				if followByName {

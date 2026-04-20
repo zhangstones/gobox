@@ -16,6 +16,10 @@ type cliErrorSilencer interface {
 	SuppressCLIError() bool
 }
 
+type cliExitCoder interface {
+	ExitCode() int
+}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -92,8 +96,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if err != nil {
-		if grepErr, ok := err.(text.ExitCodeError); ok && cmd == "grep" {
-			return int(grepErr)
+		if exitErr, ok := err.(cliExitCoder); ok {
+			if silencer, ok := err.(cliErrorSilencer); !ok || !silencer.SuppressCLIError() {
+				fmt.Fprintln(stderr, cmd+":", err)
+			}
+			return exitErr.ExitCode()
 		}
 		if silencer, ok := err.(cliErrorSilencer); !ok || !silencer.SuppressCLIError() {
 			fmt.Fprintln(stderr, cmd+":", err)

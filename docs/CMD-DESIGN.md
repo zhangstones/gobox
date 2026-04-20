@@ -199,9 +199,21 @@
 
 | gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
 |------------|---------------|------------|----------|
-| `gobox netstat -port int` | `netstat -p` | ⚠️ 部分一致 | 按端口过滤，仅支持精确匹配 |
-| `gobox netstat -sort string` | `ip -s link` (排序功能) | 🆕 gobox扩展 | 排序字段：recvq\|sendq\|local\|remote\|pid |
-| `gobox netstat -state string` | `netstat -a` | ⚠️ 部分一致 | 按连接状态过滤，支持状态列表 |
+| `gobox netstat -a, --all` | `netstat -a` | ✅ 一致 | 显示所有 socket |
+| `gobox netstat -t, --tcp` | `netstat -t` | ✅ 一致 | 仅显示 TCP socket |
+| `gobox netstat -u, --udp` | `netstat -u` | ✅ 一致 | 仅显示 UDP socket |
+| `gobox netstat -x, --unix` | `netstat -x` | ✅ 一致 | 仅显示 Unix domain socket |
+| `gobox netstat -l, --listening` | `netstat -l` | ✅ 一致 | 仅显示监听 socket |
+| `gobox netstat -n, --numeric` | `netstat -n` | ✅ 一致 | 数字地址/端口输出 |
+| `gobox netstat -p, --programs` | `netstat -p` | ✅ 一致 | 显示 PID/Program |
+| `gobox netstat -4` | `netstat -4` | ✅ 一致 | 仅显示 IPv4 socket |
+| `gobox netstat -6` | `netstat -6` | ✅ 一致 | 仅显示 IPv6 socket |
+| `gobox netstat -e, --extend` | `netstat -e` | ✅ 一致 | 显示扩展列（User/Inode） |
+| `gobox netstat -o, --timers` | `netstat -o` | ✅ 一致 | 显示 timer 信息 |
+| `gobox netstat -W, --wide` | `netstat -W` | ✅ 一致 | 宽输出（gobox 默认不截断） |
+| `gobox netstat -port int` | 端口过滤 | 🆕 gobox扩展 | 按本地或远端端口精确过滤 |
+| `gobox netstat -sort string` | 排序功能 | 🆕 gobox扩展 | 排序字段：recvq\|sendq\|local\|remote\|pid |
+| `gobox netstat -state string` | 状态过滤 | 🆕 gobox扩展 | 按连接状态过滤，支持状态列表 |
 
 ### tw (轻量级 Web 服务器)
 
@@ -273,7 +285,8 @@
 | `gobox ps -i int` | `vmstat -i` (采样间隔) | 🆕 gobox扩展 | CPU 采样间隔（毫秒，默认 500） |
 | `gobox ps -l int` | `ps -o pid,cmd` (截断) | 🆕 gobox扩展 | 最大命令长度（0=无限制，默认 40） |
 | `gobox ps -n int` | `ps --no-headers` (管道 head) | 🆕 gobox扩展 | 仅显示前 N 个进程（0=显示全部） |
-| `gobox ps -name string` | `pgrep -f` | ⚠️ 部分一致 | 按命令名/cmdline 过滤，支持模糊匹配 |
+| `gobox ps -full string` | `pgrep -f` | ✅ 一致 | 按完整命令行正则匹配 |
+| `gobox ps -comm string` | `pgrep -x` | ✅ 一致 | 按进程名精确匹配 |
 | `gobox ps -r` | `ps -r` | ✅ 一致 | 反向排序 |
 | `gobox ps -sort string` | `ps -O` (排序键) | 🆕 gobox扩展 | 排序字段：pid\|cpu\|rss\|vms\|cmd |
 
@@ -298,7 +311,7 @@
 | `gobox xargs -n int` | `xargs -n` | ✅ 一致 | 每次命令调用的最大参数数 |
 | `gobox xargs -P int` | `xargs -P` | ✅ 一致 | 最大并行进程数（默认 1） |
 | `gobox xargs -r` | `xargs -r` | ✅ 一致 | 无输入时不运行命令 |
-| `gobox xargs -v` | `xargs -v` | ✅ 一致 | 执行前打印命令 |
+| `gobox xargs -t` | `xargs -t` | ✅ 一致 | 执行前打印命令 |
 
 > 注意：默认命令是 `echo`，即 `gobox xargs` 等同于 `xargs echo`。
 
