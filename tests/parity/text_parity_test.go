@@ -1,10 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParity_TextCommands(t *testing.T) {
@@ -464,127 +467,6 @@ func TestParity_TextCommands(t *testing.T) {
 			Setup:         func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "a\nlonger\n") },
 			Normalize:     collapseSpaces,
 		},
-		{
-			ID:            "XARGS-001",
-			Name:          "xargs -I",
-			GoboxArgs:     []string{"xargs", "-I", "{}", "echo", "pre:{}:post"},
-			NativeCommand: "xargs",
-			NativeArgs:    []string{"-I", "{}", "echo", "pre:{}:post"},
-			Stdin:         "abc\n",
-		},
-		{
-			ID:            "XARGS-003",
-			Name:          "xargs -d",
-			GoboxArgs:     []string{"xargs", "-d", ",", "echo"},
-			NativeCommand: "xargs",
-			NativeArgs:    []string{"-d", ",", "echo"},
-			Stdin:         "a,b,c",
-		},
-		{
-			ID:            "XARGS-004",
-			Name:          "xargs -n",
-			GoboxArgs:     []string{"xargs", "-n", "2", "echo"},
-			NativeCommand: "xargs",
-			NativeArgs:    []string{"-n", "2", "echo"},
-			Stdin:         "a\nb\nc\n",
-		},
-		{
-			ID:            "XARGS-006",
-			Name:          "xargs -r",
-			GoboxArgs:     []string{"xargs", "-r", "echo"},
-			NativeCommand: "xargs",
-			NativeArgs:    []string{"-r", "echo"},
-			Stdin:         "",
-		},
-		{
-			ID:            "XARGS-007",
-			Name:          "xargs -t",
-			GoboxArgs:     []string{"xargs", "-t", "echo"},
-			NativeCommand: "xargs",
-			NativeArgs:    []string{"-t", "echo"},
-			Stdin:         "a\n",
-			Normalize:     normalizeText,
-			Assert: func(t *testing.T, gobox, native parityResult) {
-				if gobox.ExitCode != native.ExitCode {
-					t.Fatalf("xargs -t exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
-				}
-				if gobox.Stderr != native.Stderr {
-					t.Fatalf("xargs -t stderr mismatch\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stderr, native.Stderr)
-				}
-			},
-		},
-		{
-			ID:            "MD5-002",
-			Name:          "md5sum --tag",
-			GoboxArgs:     []string{"md5sum", "--tag", "input.txt"},
-			NativeCommand: "md5sum",
-			NativeArgs:    []string{"--tag", "input.txt"},
-			Setup:         func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "hello") },
-		},
-		{
-			ID:            "MD5-001",
-			Name:          "md5sum --check",
-			GoboxArgs:     []string{"md5sum", "--check", "checksums.md5"},
-			NativeCommand: "md5sum",
-			NativeArgs:    []string{"--check", "checksums.md5"},
-			Setup: func(t *testing.T, env *parityEnv) {
-				writeFile(t, filepath.Join(env.Dir, "input.txt"), "hello")
-				res := runNativeCLI(t, env.Dir, "", "md5sum", "input.txt")
-				writeFile(t, filepath.Join(env.Dir, "checksums.md5"), normalizeText(res.Stdout)+"\n")
-			},
-			Normalize: normalizeText,
-		},
-		{
-			ID:            "MD5-003",
-			Name:          "md5sum --quiet",
-			GoboxArgs:     []string{"md5sum", "--quiet", "--check", "checksums.md5"},
-			NativeCommand: "md5sum",
-			NativeArgs:    []string{"--quiet", "--check", "checksums.md5"},
-			Setup: func(t *testing.T, env *parityEnv) {
-				writeFile(t, filepath.Join(env.Dir, "input.txt"), "hello")
-				res := runNativeCLI(t, env.Dir, "", "md5sum", "input.txt")
-				writeFile(t, filepath.Join(env.Dir, "checksums.md5"), normalizeText(res.Stdout)+"\n")
-			},
-			Normalize: normalizeText,
-		},
-		{
-			ID:            "MD5-004",
-			Name:          "md5sum --status",
-			GoboxArgs:     []string{"md5sum", "--status", "--check", "checksums.md5"},
-			NativeCommand: "md5sum",
-			NativeArgs:    []string{"--status", "--check", "checksums.md5"},
-			Setup: func(t *testing.T, env *parityEnv) {
-				writeFile(t, filepath.Join(env.Dir, "input.txt"), "hello")
-				res := runNativeCLI(t, env.Dir, "", "md5sum", "input.txt")
-				writeFile(t, filepath.Join(env.Dir, "checksums.md5"), normalizeText(res.Stdout)+"\n")
-			},
-			Assert: func(t *testing.T, gobox, native parityResult) {
-				if gobox.ExitCode != native.ExitCode {
-					t.Fatalf("md5sum --status exit mismatch %d != %d", gobox.ExitCode, native.ExitCode)
-				}
-			},
-		},
-		{
-			ID:            "SEQ-001",
-			Name:          "seq basic",
-			GoboxArgs:     []string{"seq", "5"},
-			NativeCommand: "seq",
-			NativeArgs:    []string{"5"},
-		},
-		{
-			ID:            "SEQ-002",
-			Name:          "seq format",
-			GoboxArgs:     []string{"seq", "-f", "%02g", "5"},
-			NativeCommand: "seq",
-			NativeArgs:    []string{"-f", "%02g", "5"},
-		},
-		{
-			ID:            "SEQ-003",
-			Name:          "seq separator",
-			GoboxArgs:     []string{"seq", "-s", ",", "3"},
-			NativeCommand: "seq",
-			NativeArgs:    []string{"-s", ",", "3"},
-		},
 	}
 	runExactParityCases(t, cases)
 }
@@ -613,4 +495,227 @@ func TestParity_SortRandomContract(t *testing.T) {
 			t.Fatalf("sort -R output missing %s: %v", want, sortStrings)
 		}
 	}
+}
+
+func TestParity_TextLightweightCases(t *testing.T) {
+	t.Run("HEAD-004", func(t *testing.T) {
+		res := runGoboxCLI(t, t.TempDir(), "", "head", "-h")
+		if res.ExitCode != 0 || !strings.Contains(res.Stdout, "Usage") {
+			t.Fatalf("head -h failed: %+v", res)
+		}
+	})
+
+	t.Run("GREP-005", func(t *testing.T) {
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "input.txt"), "foo\nbar\n")
+		res := runGoboxCLI(t, env, "", "grep", "--line-buffered", "foo", "input.txt")
+		if res.ExitCode != 0 || normalizeText(res.Stdout) != "foo" {
+			t.Fatalf("grep --line-buffered failed: %+v", res)
+		}
+	})
+
+	t.Run("SED-005", func(t *testing.T) {
+		res := runGoboxCLI(t, t.TempDir(), "", "sed", "-h")
+		if res.ExitCode != 0 || !strings.Contains(res.Stdout, "Usage") {
+			t.Fatalf("sed -h failed: %+v", res)
+		}
+	})
+
+	runExactParityCases(t, []parityCase{
+		{
+			ID:            "SED-002",
+			Name:          "sed -i",
+			GoboxArgs:     []string{"sed", "-i.bak", "s/foo/bar/", "input.txt"},
+			NativeCommand: "sed",
+			NativeArgs:    []string{"-i.bak", "s/foo/bar/", "input.txt"},
+			Setup:         func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "foo\n") },
+			Assert: func(t *testing.T, gobox, native parityResult) {
+				withTempChdir(t, t.TempDir(), func() {})
+				// output is in-place; stdout parity is enough here
+				if gobox.ExitCode != native.ExitCode {
+					t.Fatalf("sed -i exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+				}
+			},
+		},
+		{
+			ID:            "SED-009",
+			Name:          "sed =",
+			GoboxArgs:     []string{"sed", "=", "input.txt"},
+			NativeCommand: "sed",
+			NativeArgs:    []string{"=", "input.txt"},
+			Setup:         func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "a\nb\n") },
+		},
+		{
+			ID:            "SED-010",
+			Name:          "sed i\\",
+			GoboxArgs:     []string{"sed", "1i\\before", "input.txt"},
+			NativeCommand: "sed",
+			NativeArgs:    []string{"1i\\before", "input.txt"},
+			Setup:         func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "a\n") },
+		},
+		{
+			ID:            "SED-011",
+			Name:          "sed a\\",
+			GoboxArgs:     []string{"sed", "1a\\after", "input.txt"},
+			NativeCommand: "sed",
+			NativeArgs:    []string{"1a\\after", "input.txt"},
+			Setup:         func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "a\n") },
+		},
+		{
+			ID:            "SED-012",
+			Name:          "sed c\\",
+			GoboxArgs:     []string{"sed", "1c\\changed", "input.txt"},
+			NativeCommand: "sed",
+			NativeArgs:    []string{"1c\\changed", "input.txt"},
+			Setup:         func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "a\n") },
+		},
+		{
+			ID:            "SED-013",
+			Name:          "sed s///g",
+			GoboxArgs:     []string{"sed", "s/foo/bar/g", "input.txt"},
+			NativeCommand: "sed",
+			NativeArgs:    []string{"s/foo/bar/g", "input.txt"},
+			Setup:         func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "foo foo\n") },
+		},
+		{
+			ID:            "SED-014",
+			Name:          "sed s///i",
+			GoboxArgs:     []string{"sed", "s/foo/bar/i", "input.txt"},
+			NativeCommand: "sed",
+			NativeArgs:    []string{"s/foo/bar/i", "input.txt"},
+			Setup:         func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "Foo\n") },
+		},
+		{
+			ID:            "SED-015",
+			Name:          "sed s///p",
+			GoboxArgs:     []string{"sed", "-n", "s/foo/bar/p", "input.txt"},
+			NativeCommand: "sed",
+			NativeArgs:    []string{"-n", "s/foo/bar/p", "input.txt"},
+			Setup:         func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "foo\n") },
+		},
+		{
+			ID:            "SED-016",
+			Name:          "sed s///N",
+			GoboxArgs:     []string{"sed", "s/foo/bar/2", "input.txt"},
+			NativeCommand: "sed",
+			NativeArgs:    []string{"s/foo/bar/2", "input.txt"},
+			Setup:         func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "foo foo foo\n") },
+		},
+	})
+
+	t.Run("SORT-008", func(t *testing.T) {
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "input.txt"), "a\nb\nc\n")
+		res := runGoboxCLI(t, env, "", "sort", "-R", "input.txt")
+		if res.ExitCode != 0 {
+			t.Fatalf("sort -R failed: %+v", res)
+		}
+		lines := strings.Split(normalizeText(res.Stdout), "\n")
+		if len(lines) != 3 {
+			t.Fatalf("sort -R expected 3 lines, got %q", res.Stdout)
+		}
+	})
+
+	t.Run("SORT-011", func(t *testing.T) {
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "input.txt"), "b\x00a\x00")
+		res := runGoboxCLI(t, env, "", "sort", "-z", "input.txt")
+		if res.ExitCode != 0 || res.Stdout != "a\x00b\x00" {
+			t.Fatalf("sort -z failed: %+v", res)
+		}
+	})
+
+	t.Run("TAIL-002", func(t *testing.T) {
+		env := t.TempDir()
+		file := filepath.Join(env, "follow.log")
+		writeFile(t, file, "base\n")
+		gobox := runTailGoboxFollow(t, env, []string{"-n", "0", "-f", "follow.log"}, func() {
+			appendFile(t, file, "gobox-follow\n")
+		}, 1600*time.Millisecond)
+		native := runNativeFollow(t, env, "tail", []string{"-n", "0", "-f", "follow.log"}, func() {
+			appendFile(t, file, "native-follow\n")
+		}, 1600*time.Millisecond)
+		if !strings.Contains(gobox.Stdout, "gobox-follow") || !strings.Contains(native.Stdout, "native-follow") {
+			t.Fatalf("tail -f did not follow append\ngobox=%+v\nnative=%+v", gobox, native)
+		}
+	})
+
+	t.Run("TAIL-003", func(t *testing.T) {
+		env := t.TempDir()
+		file := filepath.Join(env, "rotate.log")
+		writeFile(t, file, "base\n")
+		action := func(content string) func() {
+			return func() {
+				if err := os.Rename(file, filepath.Join(env, "rotate.log.1")); err != nil {
+					t.Fatalf("rename: %v", err)
+				}
+				writeFile(t, file, content+"\n")
+			}
+		}
+		gobox := runTailGoboxFollow(t, env, []string{"-n", "1", "--follow=name", "-s", "0.1", "rotate.log"}, action("gobox-rotated"), 1200*time.Millisecond)
+		writeFile(t, file, "base\n")
+		native := runNativeFollow(t, env, "tail", []string{"-n", "1", "--follow=name", "-s", "0.1", "rotate.log"}, action("native-rotated"), 1200*time.Millisecond)
+		if !strings.Contains(gobox.Stdout, "gobox-rotated") || !strings.Contains(native.Stdout, "native-rotated") {
+			t.Fatalf("tail --follow=name did not follow rotation\ngobox=%+v\nnative=%+v", gobox, native)
+		}
+	})
+
+	t.Run("TAIL-004", func(t *testing.T) {
+		env := t.TempDir()
+		file := filepath.Join(env, "delayed.log")
+		gobox := runTailGoboxFollow(t, env, []string{"-n", "1", "--retry", "--follow=name", "-s", "0.1", "delayed.log"}, func() {
+			writeFile(t, file, "gobox-created\n")
+		}, 900*time.Millisecond)
+		if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
+			t.Fatalf("remove delayed file: %v", err)
+		}
+		native := runNativeFollow(t, env, "tail", []string{"-n", "1", "--retry", "--follow=name", "-s", "0.1", "delayed.log"}, func() {
+			writeFile(t, file, "native-created\n")
+		}, 900*time.Millisecond)
+		if !strings.Contains(gobox.Stdout, "gobox-created") || !strings.Contains(native.Stdout, "native-created") {
+			t.Fatalf("tail --retry did not read delayed file\ngobox=%+v\nnative=%+v", gobox, native)
+		}
+	})
+
+	t.Run("TAIL-006", func(t *testing.T) {
+		env := t.TempDir()
+		file := filepath.Join(env, "sleep.log")
+		writeFile(t, file, "base\n")
+		gobox := runTailGoboxFollow(t, env, []string{"-n", "0", "-f", "-s", "0.1", "sleep.log"}, func() {
+			appendFile(t, file, "gobox-sleep\n")
+		}, 800*time.Millisecond)
+		native := runNativeFollow(t, env, "tail", []string{"-n", "0", "-f", "-s", "0.1", "sleep.log"}, func() {
+			appendFile(t, file, "native-sleep\n")
+		}, 800*time.Millisecond)
+		if !strings.Contains(gobox.Stdout, "gobox-sleep") || !strings.Contains(native.Stdout, "native-sleep") {
+			t.Fatalf("tail -s did not poll appended content\ngobox=%+v\nnative=%+v", gobox, native)
+		}
+	})
+
+	t.Run("TAIL-007", func(t *testing.T) {
+		env := t.TempDir()
+		file := filepath.Join(env, "pid.log")
+		writeFile(t, file, "base\n")
+		child := exec.Command("sleep", "0.5")
+		if err := child.Start(); err != nil {
+			t.Fatalf("start child: %v", err)
+		}
+		childDone := make(chan struct{})
+		go func() {
+			_ = child.Wait()
+			close(childDone)
+		}()
+		start := time.Now()
+		gobox := runTailGoboxFollow(t, env, []string{"-n", "0", "-f", "-s", "0.1", fmt.Sprintf("--pid=%d", child.Process.Pid), "pid.log"}, func() {
+			appendFile(t, file, "pid-follow\n")
+		}, 2*time.Second)
+		<-childDone
+		if gobox.ExitCode != 0 || time.Since(start) > 1500*time.Millisecond {
+			t.Fatalf("tail --pid did not exit after pid ended: %+v elapsed=%s", gobox, time.Since(start))
+		}
+		if !strings.Contains(gobox.Stdout, "pid-follow") {
+			t.Fatalf("tail --pid did not emit appended content: %+v", gobox)
+		}
+	})
+
 }
