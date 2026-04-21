@@ -197,8 +197,12 @@ func TestParity_NetLightweightCases(t *testing.T) {
 
 	t.Run("CURL-002", func(t *testing.T) {
 		res := runGoboxMainCLI(t, t.TempDir(), "", "curl", "-s", "-S", "://bad-url")
-		if res.ExitCode == 0 || !strings.Contains(strings.ToLower(res.Stderr), "curl:") {
-			t.Fatalf("curl -s -S failed: %+v", res)
+		native := runNativeCLI(t, t.TempDir(), "", "curl", "-s", "-S", "://bad-url")
+		if res.ExitCode == 0 || native.ExitCode == 0 {
+			t.Fatalf("curl -s -S expected failure gobox=%+v native=%+v", res, native)
+		}
+		if !strings.Contains(strings.ToLower(res.Stderr), "curl:") {
+			t.Fatalf("curl -s -S missing gobox error prefix: %+v", res)
 		}
 	})
 
@@ -206,13 +210,15 @@ func TestParity_NetLightweightCases(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "file-body") }))
 		defer server.Close()
 		env := t.TempDir()
-		res := runGoboxCLI(t, env, "", "curl", "-o", "out.txt", server.URL)
-		if res.ExitCode != 0 {
-			t.Fatalf("curl -o failed: %+v", res)
+		gobox := runGoboxCLI(t, env, "", "curl", "-o", "out.txt", server.URL)
+		native := runNativeCLI(t, env, "", "curl", "-o", "native.txt", server.URL)
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("curl -o exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 		}
-		body, err := os.ReadFile(filepath.Join(env, "out.txt"))
-		if err != nil || string(body) != "file-body" {
-			t.Fatalf("curl -o file mismatch body=%q err=%v", string(body), err)
+		gBody, gErr := os.ReadFile(filepath.Join(env, "out.txt"))
+		nBody, nErr := os.ReadFile(filepath.Join(env, "native.txt"))
+		if gErr != nil || nErr != nil || string(gBody) != string(nBody) {
+			t.Fatalf("curl -o file mismatch gobox=%q native=%q gErr=%v nErr=%v", string(gBody), string(nBody), gErr, nErr)
 		}
 	})
 
@@ -220,13 +226,15 @@ func TestParity_NetLightweightCases(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "remote-body") }))
 		defer server.Close()
 		env := t.TempDir()
-		res := runGoboxCLI(t, env, "", "curl", "-O", server.URL+"/artifact.txt")
-		if res.ExitCode != 0 {
-			t.Fatalf("curl -O failed: %+v", res)
+		gobox := runGoboxCLI(t, env, "", "curl", "-O", server.URL+"/artifact.txt")
+		native := runNativeCLI(t, env, "", "curl", "-O", server.URL+"/artifact-native.txt")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("curl -O exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 		}
-		body, err := os.ReadFile(filepath.Join(env, "artifact.txt"))
-		if err != nil || string(body) != "remote-body" {
-			t.Fatalf("curl -O file mismatch body=%q err=%v", string(body), err)
+		gBody, gErr := os.ReadFile(filepath.Join(env, "artifact.txt"))
+		nBody, nErr := os.ReadFile(filepath.Join(env, "artifact-native.txt"))
+		if gErr != nil || nErr != nil || string(gBody) != string(nBody) {
+			t.Fatalf("curl -O file mismatch gobox=%q native=%q gErr=%v nErr=%v", string(gBody), string(nBody), gErr, nErr)
 		}
 	})
 
@@ -236,25 +244,28 @@ func TestParity_NetLightweightCases(t *testing.T) {
 			fmt.Fprint(w, "slow")
 		}))
 		defer server.Close()
-		res := runGoboxCLI(t, t.TempDir(), "", "curl", "-m", "0.05", server.URL)
-		if res.ExitCode == 0 {
-			t.Fatalf("curl -m expected timeout failure: %+v", res)
+		gobox := runGoboxCLI(t, t.TempDir(), "", "curl", "-m", "0.05", server.URL)
+		native := runNativeCLI(t, t.TempDir(), "", "curl", "-m", "0.05", server.URL)
+		if gobox.ExitCode == 0 || native.ExitCode == 0 {
+			t.Fatalf("curl -m expected timeout failure gobox=%+v native=%+v", gobox, native)
 		}
 	})
 
 	t.Run("CURL-012", func(t *testing.T) {
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "tls-ok") }))
 		defer server.Close()
-		res := runGoboxCLI(t, t.TempDir(), "", "curl", "-k", server.URL)
-		if res.ExitCode != 0 || normalizeText(res.Stdout) != "tls-ok" {
-			t.Fatalf("curl -k failed: %+v", res)
+		gobox := runGoboxCLI(t, t.TempDir(), "", "curl", "-k", server.URL)
+		native := runNativeCLI(t, t.TempDir(), "", "curl", "-k", server.URL)
+		if gobox.ExitCode != native.ExitCode || normalizeText(gobox.Stdout) != normalizeText(native.Stdout) {
+			t.Fatalf("curl -k mismatch gobox=%+v native=%+v", gobox, native)
 		}
 	})
 
 	t.Run("CURL-013", func(t *testing.T) {
-		res := runGoboxCLI(t, t.TempDir(), "", "curl", "--connect-timeout", "0.05", "http://10.255.255.1:81")
-		if res.ExitCode == 0 {
-			t.Fatalf("curl --connect-timeout expected failure: %+v", res)
+		gobox := runGoboxCLI(t, t.TempDir(), "", "curl", "--connect-timeout", "0.05", "http://10.255.255.1:81")
+		native := runNativeCLI(t, t.TempDir(), "", "curl", "--noproxy", "*", "-s", "--connect-timeout", "0.05", "http://10.255.255.1:81")
+		if gobox.ExitCode == 0 || native.ExitCode == 0 {
+			t.Fatalf("curl --connect-timeout expected failure gobox=%+v native=%+v", gobox, native)
 		}
 	})
 
@@ -263,9 +274,10 @@ func TestParity_NetLightweightCases(t *testing.T) {
 		defer server.Close()
 		hostPort := strings.TrimPrefix(server.URL, "http://")
 		_, port, _ := strings.Cut(hostPort, ":")
-		res := runGoboxCLI(t, t.TempDir(), "", "curl", "--resolve", "example.invalid:"+port+":127.0.0.1", "http://example.invalid:"+port)
-		if res.ExitCode != 0 || !strings.Contains(res.Stdout, "resolved") {
-			t.Fatalf("curl --resolve failed: %+v", res)
+		gobox := runGoboxCLI(t, t.TempDir(), "", "curl", "--resolve", "example.invalid:"+port+":127.0.0.1", "http://example.invalid:"+port)
+		native := runNativeCLI(t, t.TempDir(), "", "curl", "--noproxy", "*", "-s", "--resolve", "example.invalid:"+port+":127.0.0.1", "http://example.invalid:"+port)
+		if gobox.ExitCode != native.ExitCode || normalizeText(gobox.Stdout) != normalizeText(native.Stdout) {
+			t.Fatalf("curl --resolve mismatch gobox=%+v native=%+v", gobox, native)
 		}
 	})
 
@@ -275,9 +287,16 @@ func TestParity_NetLightweightCases(t *testing.T) {
 			fmt.Fprint(w, "body")
 		}))
 		defer server.Close()
-		res := runGoboxCLI(t, t.TempDir(), "", "curl", "-i", server.URL)
-		if res.ExitCode != 0 || !strings.Contains(res.Stdout, "X-Test: 1") || !strings.Contains(res.Stdout, "body") {
-			t.Fatalf("curl -i failed: %+v", res)
+		gobox := runGoboxCLI(t, t.TempDir(), "", "curl", "-i", server.URL)
+		native := runNativeCLI(t, t.TempDir(), "", "curl", "-i", server.URL)
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("curl -i exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		if !strings.Contains(gobox.Stdout, "X-Test: 1") || !strings.Contains(gobox.Stdout, "body") {
+			t.Fatalf("curl -i gobox output incomplete: %+v", gobox)
+		}
+		if !strings.Contains(native.Stdout, "X-Test: 1") || !strings.Contains(native.Stdout, "body") {
+			t.Fatalf("curl -i native output incomplete: %+v", native)
 		}
 	})
 
@@ -655,20 +674,80 @@ func TestParity_NetLightweightCases(t *testing.T) {
 
 	if runtime.GOOS == "linux" {
 		for _, tc := range []struct {
-			id   string
-			args []string
+			id    string
+			args  []string
+			check func(t *testing.T, out string)
 		}{
-			{"IFSTAT-001", []string{"ifstat", "-A", "-n", "1", "-p", "1"}},
-			{"IFSTAT-002", []string{"ifstat", "-a", "-n", "1", "-p", "1"}},
-			{"IFSTAT-003", []string{"ifstat", "-d", "-n", "1", "-p", "1"}},
-			{"IFSTAT-004", []string{"ifstat", "-e", "-n", "1", "-p", "1"}},
-			{"IFSTAT-005", []string{"ifstat", "-i", "lo", "-n", "1", "-p", "1"}},
-			{"IFSTAT-007", []string{"ifstat", "-n", "1", "-p", "1"}},
+			{
+				id:   "IFSTAT-001",
+				args: []string{"ifstat", "-A", "-n", "1", "-p", "1"},
+				check: func(t *testing.T, out string) {
+					defaultOut := runGoboxCLI(t, t.TempDir(), "", "ifstat", "-n", "1", "-p", "1").Stdout
+					if len(nonEmptyLines(out)) < len(nonEmptyLines(defaultOut)) {
+						t.Fatalf("ifstat -A should not show fewer rows than default\n-A:\n%s\n--- default ---\n%s", out, defaultOut)
+					}
+				},
+			},
+			{
+				id:   "IFSTAT-002",
+				args: []string{"ifstat", "-a", "-n", "1", "-p", "1"},
+				check: func(t *testing.T, out string) {
+					if !strings.Contains(out, "Interface") {
+						t.Fatalf("ifstat -a missing header: %q", out)
+					}
+				},
+			},
+			{
+				id:   "IFSTAT-003",
+				args: []string{"ifstat", "-d", "-n", "1", "-p", "1"},
+				check: func(t *testing.T, out string) {
+					if !strings.Contains(out, "rxdrop") || !strings.Contains(out, "txdrop") {
+						t.Fatalf("ifstat -d missing drop columns: %q", out)
+					}
+				},
+			},
+			{
+				id:   "IFSTAT-004",
+				args: []string{"ifstat", "-e", "-n", "1", "-p", "1"},
+				check: func(t *testing.T, out string) {
+					if !strings.Contains(out, "rxerrs") || !strings.Contains(out, "txerrs") {
+						t.Fatalf("ifstat -e missing error columns: %q", out)
+					}
+				},
+			},
+			{
+				id:   "IFSTAT-005",
+				args: []string{"ifstat", "-i", "lo", "-n", "1", "-p", "1"},
+				check: func(t *testing.T, out string) {
+					lines := nonEmptyLines(out)
+					for _, line := range lines[1:] {
+						if !strings.HasPrefix(strings.TrimSpace(line), "lo ") && strings.TrimSpace(line) != "lo" {
+							t.Fatalf("ifstat -i lo leaked other interfaces: %q", out)
+						}
+					}
+				},
+			},
+			{
+				id:   "IFSTAT-007",
+				args: []string{"ifstat", "-n", "2", "-p", "1"},
+				check: func(t *testing.T, out string) {
+					if len(nonEmptyLines(out)) < 3 {
+						t.Fatalf("ifstat -n/-p expected header plus repeated samples: %q", out)
+					}
+				},
+			},
 		} {
 			t.Run(tc.id, func(t *testing.T) {
+				start := time.Now()
 				res := runGoboxCLI(t, t.TempDir(), "", tc.args...)
 				if res.ExitCode != 0 {
 					t.Fatalf("%s failed: %+v", tc.id, res)
+				}
+				if tc.id == "IFSTAT-007" && time.Since(start) < time.Second {
+					t.Fatalf("ifstat -p interval did not delay second sample: elapsed=%s output=%q", time.Since(start), res.Stdout)
+				}
+				if tc.check != nil {
+					tc.check(t, res.Stdout)
 				}
 			})
 		}
@@ -841,9 +920,12 @@ func TestParity_NetContracts(t *testing.T) {
 		if runtime.GOOS != "linux" {
 			t.Skip("linux only")
 		}
-		res := runGoboxCLI(t, t.TempDir(), "", "ifstat", "-n", "1", "-p", "1")
+		res := runGoboxCLI(t, t.TempDir(), "", "ifstat", "-n", "2", "-p", "1")
 		if res.ExitCode != 0 {
 			t.Fatalf("ifstat failed: %+v", res)
+		}
+		if len(nonEmptyLines(res.Stdout)) < 3 {
+			t.Fatalf("ifstat -n expected multiple samples: %q", res.Stdout)
 		}
 	})
 

@@ -138,7 +138,8 @@ func FindCmd(args []string) error {
 			// size filter
 			if matched && *size != "" {
 				if d.IsDir() {
-					// Skip size filtering for directories
+					// Match GNU find semantics: size filtering applies to files here, so directories do not match.
+					matched = false
 				} else {
 					info, err := d.Info()
 					if err != nil {

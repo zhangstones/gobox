@@ -71,9 +71,16 @@ func TestParity_DiskLightweightCases(t *testing.T) {
 	t.Run("MD5-005", func(t *testing.T) {
 		env := t.TempDir()
 		writeFile(t, filepath.Join(env, "checksums.md5"), "bad line\n")
-		res := runGoboxCLI(t, env, "", "md5sum", "--warn", "--check", "checksums.md5")
-		if res.ExitCode == 0 || !strings.Contains(strings.ToLower(res.Stdout+res.Stderr), "improperly formatted") {
-			t.Fatalf("md5sum --warn failed: %+v", res)
+		gobox := runGoboxCLI(t, env, "", "md5sum", "--warn", "--check", "checksums.md5")
+		native := runNativeCLI(t, env, "", "md5sum", "--warn", "--check", "checksums.md5")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("md5sum --warn exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		if !strings.Contains(strings.ToLower(gobox.Stdout+gobox.Stderr), "improperly formatted") {
+			t.Fatalf("md5sum --warn missing gobox warning: %+v", gobox)
+		}
+		if !strings.Contains(strings.ToLower(native.Stdout+native.Stderr), "improperly formatted") {
+			t.Fatalf("md5sum --warn missing native warning: %+v", native)
 		}
 	})
 

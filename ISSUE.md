@@ -1,82 +1,23 @@
-# CMD-DESIGN Alignment Status
+# Parity Audit Issues
 
-目标：修改实现代码，使 `docs/CMD-DESIGN.md` 中列出的命令参数与实际行为一致。
+## Resolved
 
-当前结论：
-- 已完成本轮对齐修复与文档收口。
-- 已执行 `go test ./...` 全量回归，结果通过。
-- 当前仅剩文档中明确标注为 `⚠️ 部分一致` 的已知差异项，无新增未记录偏差。
+- [x] `FIND-003` / `FIND-004` / `FIND-005` / `FIND-006` / `FIND-008` / `FIND-009`
+  - Problem: `TEST-CASES.md` 标记为 `exact`，但 `tests/parity/fs_parity_test.go` 里只做了 gobox 单边断言，没有和 native `find` 做严格对比。
+  - Fix: 改为统一走 `runExactParityCases`，并对 `find` 输出做路径归一化；同时把 `FIND-005` 调整为 native `find` 可稳定支持的 `-mtime +1` 夹具。
 
-## 已修复
+- [x] `DU-001` / `DU-002`
+  - Problem: `TEST-CASES.md` 标记为 `structured`，但实现只检查 gobox 输出是否包含路径，没有与 native `du` 做结构对照。
+  - Fix: 增加 gobox/native 双边执行，按路径集合做 structured 对比。
 
-1. `find`
-   - 已修正 `-atime` / `-mtime` 的 `+N`、`-N`、`N` 语义。
-   - 已限制 `-type` 只能是 `f` 或 `d`。
+- [x] `MD5-005`
+  - Problem: `TEST-CASES.md` 标记为 `exact`，但实现只校验 gobox 报错，不校验 native `md5sum --warn --check` 的退出码和警告行为。
+  - Fix: 增加 native 对照，校验双方均失败且都输出 malformed warning。
 
-2. `tail`
-   - 已让 `--retry` 在普通模式下也会重试打开文件。
+- [x] `CURL-002` / `CURL-003` / `CURL-004` / `CURL-008` / `CURL-012` / `CURL-013` / `CURL-014` / `CURL-016`
+  - Problem: `TEST-CASES.md` 标记为 `behavior` 且给了 native baseline，但实现仍偏向 gobox-only contract，缺少 native 侧语义对照。
+  - Fix: 增加 native `curl` 对照，分别校验失败语义、文件输出、TLS 忽略证书、连接超时、`--resolve`、`-i` 等行为。
 
-3. `grep`
-   - 已修正 `-q` 的 grep 风格退出码。
-   - 已修正 `-o` + `-i` 在正则模式下丢失忽略大小写的问题。
-
-4. `sed`
-   - 已支持裸命令 `i\text` / `a\text` / `c\text`。
-
-5. `wc`
-   - 已修正 `-m` 为字符计数而不是字节计数。
-
-6. `curl`
-   - 已修正 `-S` 的错误输出行为。
-   - 已让 `--resolve` 真正参与连接拨号。
-
-7. `nc`
-   - 已拆分 `-n` 的 numeric-only / requests 语义冲突。
-   - 已让 numeric-only 拒绝主机名解析。
-   - 相关测试已改为直接调用函数接口，不再构建临时 `gobox` 二进制。
-
-8. `tw`
-   - 已真正启用 `SO_REUSEADDR`。
-
-9. `nslookup` / `dig`
-   - 已让 `@DNS_SERVER` 与 `+tcp` 进入实际 DNS 查询路径。
-
-10. `np`
-   - 已让 `-I`、`-s` 进入拨号器配置。
-   - 已让 `-l` 真正等待连接关闭/超时，而不是只 sleep。
-   - 已修复进度 goroutine 的收尾问题。
-
-11. `netstat`
-   - 已补齐常用过滤/显示参数：`-a`、`-t`、`-u`、`-x`、`-p`、`-4`、`-6`、`-e`、`-o`、`-W`。
-   - 已保留并验证 `-l` / `-n`，并支持 Unix domain socket 过滤。
-   - 已修正 `-sort pid` 为按 PID 排序。
-
-12. `iostat`
-   - 已修正 `-H` 的默认值。
-
-13. `ioperf`
-   - 已让 `-iodepth` 影响执行循环。
-   - 已让 `-group_reporting` 影响输出聚合方式。
-
-14. `md5sum`
-   - 已补齐 `--check` / `--quiet` / `--status` / `--warn` 长选项。
-
-15. `ps` / `top`
-   - 已让 `ps -f` 的全格式输出显示 `PPID` 和可执行文件列，和文档描述对齐。
-   - 已让 `ps -l` 在非 TTY 输出下也生效，不再只在终端里截断命令长度。
-   - 已让 `top` 在非 TTY 输出时不再插入清屏转义序列，便于脚本/测试消费。
-
-## 已知保留差异
-
-1. `np`
-   - `-i` 仍按微秒解释，和标准 `ping -i` 的秒级语义不同；文档继续保留为“部分一致”。
-
-
-## 验证结果
-
-- 已完成定向回归：
-  - `go test ./cmds/net/...`
-  - `go test ./cmds/proc/...`
-  - `go test .`
-- 已完成全量回归：
-  - `go test ./...`
+- [x] `IFSTAT-001` / `IFSTAT-002` / `IFSTAT-005` / `IFSTAT-006` / `IFSTAT-007`
+  - Problem: `TEST-CASES.md` 原先把这些 case 标成 `structured/behavior + native ifstat baseline`，但常见 native `ifstat` 变体并不支持 gobox 的这些参数语义，Mode 与当前测试方式不一致。
+  - Fix: 将这些 case 调整为 `contract + gobox-only`，并把测试断言收紧到接口集合、单接口过滤、样本数、采样间隔等 gobox 可稳定保证的契约。

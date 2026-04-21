@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"gobox/cmds/utils"
 )
@@ -47,26 +48,33 @@ func DuCmd(args []string) error {
 			}
 			continue
 		}
-		// walk and print per-file
-		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		dirs := []string{}
+		_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 			if err != nil {
 				return nil
 			}
 			if d.IsDir() {
-				return nil
-			}
-			fi, err := d.Info()
-			if err != nil {
-				return nil
-			}
-			size := fi.Size()
-			if *human {
-				fmt.Printf("%s\t%s\n", utils.HumanSize(size), p)
-			} else {
-				fmt.Printf("%d\t%s\n", size, p)
+				dirs = append(dirs, p)
 			}
 			return nil
 		})
+		sort.Slice(dirs, func(i, j int) bool {
+			if len(dirs[i]) == len(dirs[j]) {
+				return dirs[i] > dirs[j]
+			}
+			return len(dirs[i]) > len(dirs[j])
+		})
+		for _, dir := range dirs {
+			size, err := diskUsage(dir)
+			if err != nil {
+				return err
+			}
+			if *human {
+				fmt.Printf("%s\t%s\n", utils.HumanSize(size), dir)
+			} else {
+				fmt.Printf("%d\t%s\n", size, dir)
+			}
+		}
 	}
 	return nil
 }

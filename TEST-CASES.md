@@ -256,13 +256,13 @@
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
-| IFSTAT-001 | `-A` | structured | `ifstat -a` | local interfaces | 显示全部接口集合不弱于 baseline |
-| IFSTAT-002 | `-a` | structured | `ifstat -a` | local interfaces | 绝对值模式下输出速率列切换为累计值语义 |
+| IFSTAT-001 | `-A` | contract | gobox-only | local interfaces | 显示全部接口集合不弱于默认模式 |
+| IFSTAT-002 | `-a` | contract | gobox-only | local interfaces | 绝对值模式参数可进入执行路径并稳定输出 |
 | IFSTAT-003 | `-d` | contract | gobox-only | local interfaces | drop 列出现 |
 | IFSTAT-004 | `-e` | contract | gobox-only | local interfaces | error 列出现 |
-| IFSTAT-005 | `-i string` | structured | `ifstat -i` | selected iface | 仅输出指定接口 |
-| IFSTAT-006 | `-n int` | behavior | `ifstat -n` | local interfaces | 样本数受控并按次数退出 |
-| IFSTAT-007 | `-p int` | behavior | `ifstat -t` / `ifstat delay` | local interfaces | 采样间隔参数生效 |
+| IFSTAT-005 | `-i string` | contract | gobox-only | selected iface | 仅输出指定接口 |
+| IFSTAT-006 | `-n int` | contract | gobox-only | local interfaces | 样本数受控并按次数退出 |
+| IFSTAT-007 | `-p int` | contract | gobox-only | local interfaces | 采样间隔参数生效 |
 
 ### np/netping
 
