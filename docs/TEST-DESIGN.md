@@ -65,7 +65,7 @@
 
 ### 2.4 Case-first 实施
 
-先写 `TEST-CASES.md`，再写测试代码，最后修实现；避免“已经写了很多测试，但不知道覆盖了哪些文档条目”。
+先写 `docs/TEST-CASES.md`，再写测试代码，最后修实现；避免“已经写了很多测试，但不知道覆盖了哪些文档条目”。
 
 ### 2.5 可跳过但不可沉默缺失
 
@@ -368,7 +368,7 @@ type GoboxNativeResult struct {
 
 ## 11. `CMD-DESIGN` 驱动策略
 
-`TEST-CASES.md` 作为 `docs/CMD-DESIGN.md` 的测试映射表，要求：
+`docs/TEST-CASES.md` 作为 `docs/CMD-DESIGN.md` 的测试映射表，要求：
 
 1. 每个命令每个参数至少 1 个案例
 2. 每个案例必须标注：
@@ -379,7 +379,7 @@ type GoboxNativeResult struct {
 3. `✅ 一致` 条目优先进入 native parity automation
 4. `⚠️ 部分一致` 条目必须有“差异边界案例”
 5. `🆕 gobox扩展` 条目必须有 contract case
-6. 测试代码中的 `Case ID` 必须能直接追溯到 `TEST-CASES.md`
+6. 测试代码中的 `Case ID` 必须能直接追溯到 `docs/TEST-CASES.md`
 
 ## 12. 落地阶段与提交节奏
 
@@ -387,8 +387,8 @@ type GoboxNativeResult struct {
 
 产出：
 
-- `TEST-DESIGN.md`
-- `TEST-CASES.md`
+- `docs/TEST-DESIGN.md`
+- `docs/TEST-CASES.md`
 
 提交建议：
 
@@ -466,15 +466,15 @@ Parity 测试失败时，必须尽量输出：
 1. 使用函数接口直接调用命令实现，不构建临时 `gobox` 二进制
 2. 将 parity helpers 与 case 文件集中到 `tests/parity/`
 3. 允许保留少量 root 级 parity 测试作为迁移过渡，但最终以 `tests/parity/` 为主
-4. 优先让 `docs/CMD-DESIGN.md` 中所有命令参数都能在 `TEST-CASES.md` 找到映射
+4. 优先让 `docs/CMD-DESIGN.md` 中所有命令参数都能在 `docs/TEST-CASES.md` 找到映射
 5. 所有 parity 测试最终都纳入 `go test ./...` 可执行范围
 
 ## 16. 完成标准
 
 认为 parity 测试体系“完成首版落地”，至少需要满足：
 
-1. `TEST-DESIGN.md` 明确说明四类测试模型、执行器、skip 策略与目录结构
-2. `TEST-CASES.md` 覆盖 `docs/CMD-DESIGN.md` 当前所有命令参数
+1. `docs/TEST-DESIGN.md` 明确说明四类测试模型、执行器、skip 策略与目录结构
+2. `docs/TEST-CASES.md` 覆盖 `docs/CMD-DESIGN.md` 当前所有命令参数
 3. 自动化测试代码中已落地全部 `Case ID`，或对环境依赖项显式 `Skip`
 4. `go test ./...` 通过
 5. 若发现实现与文档不符，优先修实现；只有用户明确要求保留差异时才改文档

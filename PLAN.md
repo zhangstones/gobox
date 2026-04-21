@@ -8,8 +8,8 @@
 - `go test ./...`
 
 已完成 parity 基线首版落地：
-- `TEST-DESIGN.md` 设计已补齐
-- `TEST-CASES.md` 已覆盖 `docs/CMD-DESIGN.md` 当前条目
+- `docs/TEST-DESIGN.md` 设计已补齐
+- `docs/TEST-CASES.md` 已覆盖 `docs/CMD-DESIGN.md` 当前条目
 - `go test ./...` 已纳入 parity 测试与显式 skip 案例
 
 ## 当前实现
