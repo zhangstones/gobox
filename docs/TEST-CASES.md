@@ -19,19 +19,20 @@
 
 ## 覆盖清单
 
-以下命令已按 `docs/CMD-DESIGN.md` 当前条目建立参数级 case：
+以下命令已按 `docs/CMD-DESIGN.md` 当前条目建立参数级 case；`📝 计划支持` 命令先建立 case 基线，待实现后映射到自动化 parity 测试。
 
-- 文件系统：`find`、`du`
-- 文本处理：`head`、`tail`、`grep`、`sed`、`sort`、`uniq`、`wc`
-- 网络：`curl`、`nc`、`netstat`、`tw`、`nslookup/dig`、`ifstat`、`np`
-- 进程：`ps`、`top`、`xargs`
-- 磁盘：`iostat`、`ioperf`、`md5sum`
+- 文件系统：`find`、`du`、`df`、`readpath`、`stat`、`truncate`
+- 文本处理：`head`、`tail`、`grep`、`sed`、`sort`、`uniq`、`wc`、`hex`、`base64`、`strings`、`cmp`
+- 网络：`curl`、`nc`、`netstat`、`tw`、`nslookup/dig`、`ifstat`、`ip`、`np`
+- 进程：`ps`、`top`、`free`、`xargs`、`kill`、`lsof`、`watch`、`timeout`
+- 磁盘：`iostat`、`ioperf`、`md5sum`、`sha256sum`
 
 约束：
 
 1. `✅ 一致` 条目优先写成 parity 或 behavior case；确实受环境限制时，需在自动化中显式 `Skip`。
 2. `⚠️ 部分一致` 条目必须验证“差异边界”，而不是只测成功路径。
 3. `🆕 gobox扩展` 条目必须验证参数是否真正进入执行路径，而不是仅测试 flag 可解析。
+4. `📝 计划支持` 条目必须在实现前保留 case 编号，实现后补齐自动化并重新确认 Mode。
 
 ---
 
@@ -57,6 +58,49 @@
 |---|---|---|---|---|---|
 | DU-001 | `-h` | structured | `du -h` | 小文件树 | 输出包含同等目录项与可读大小语义 |
 | DU-002 | `-s` | structured | `du -s` | 多目录 | 仅输出汇总项 |
+
+### df
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| DF-001 | default filesystem usage | structured | `df` | local filesystems | 关键挂载点、容量字段和退出码语义一致 |
+| DF-002 | `-h` | structured | `df -h` | local filesystems | 人类可读容量字段存在且单位语义一致 |
+| DF-003 | `-T` | structured | `df -T` | local filesystems | 文件系统类型列存在且关键挂载点一致 |
+| DF-004 | `-i` | structured | `df -i` | local filesystems | inode 字段存在且关键挂载点一致 |
+| DF-005 | `PATH...` | structured | `df PATH...` | temp dir path | 仅输出指定路径所在文件系统 |
+
+### readpath
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| READPATH-001 | default canonical path | exact | `realpath` | temp dir + relative path | 输出规范化绝对路径一致 |
+| READPATH-002 | `-f, --canonicalize` | exact | `readlink -f` | symlink chain | 符号链接解析结果一致 |
+| READPATH-003 | `-e, --canonicalize-existing` | exact | `realpath -e` | missing path component | 不存在路径的错误与退出码一致 |
+| READPATH-004 | `-m, --canonicalize-missing` | exact | `realpath -m` | missing path component | 允许不存在组件时输出一致 |
+| READPATH-005 | `-l, --readlink` | exact | `readlink` | symlink file | 输出 symlink 目标一致 |
+| READPATH-006 | `-n, --no-newline` | exact | `readlink -n` | symlink file | 输出末尾换行行为一致 |
+| READPATH-007 | `-q, --quiet` | behavior | `realpath -q` | missing path | 错误输出抑制与退出码一致 |
+| READPATH-008 | `-z, --zero` | exact | `realpath -z` / `readlink -z` | multiple paths | NUL 分隔输出一致 |
+
+### stat
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| STAT-001 | default file metadata | structured | `stat` | temp file | 类型、大小、权限、时间字段语义一致 |
+| STAT-002 | `-L, --dereference` | structured | `stat -L` | symlink file | 显示目标文件而非 symlink 本身 |
+| STAT-003 | `-f, --file-system` | structured | `stat -f` | temp dir | 文件系统字段语义一致 |
+| STAT-004 | `-c, --format` | exact | `stat -c` | temp file | 指定格式输出完全一致 |
+| STAT-005 | `-t, --terse` | structured | `stat -t` | temp file | 简洁字段数量与关键字段一致 |
+
+### truncate
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| TRUNCATE-001 | `-s SIZE` | behavior | `truncate -s` | temp file | 文件最终大小一致 |
+| TRUNCATE-002 | `-c, --no-create` | behavior | `truncate -c` | missing file | 不创建文件且退出行为一致 |
+| TRUNCATE-003 | `-r RFILE` | behavior | `truncate -r` | reference file + target file | 目标大小等于参考文件 |
+| TRUNCATE-004 | size suffix `K/M/G` | behavior | `truncate -s K/M/G` | temp file | 单位后缀换算后的大小一致 |
+| TRUNCATE-005 | relative `+SIZE/-SIZE` | behavior | `truncate -s +SIZE/-SIZE` | temp file | 相对扩展/收缩后的大小一致 |
 
 ---
 
@@ -163,6 +207,49 @@
 | WC-004 | `-m` | exact | `wc -m` | UTF-8 文本 | 字符数一致 |
 | WC-005 | `-L` | exact | `wc -L` | 不同长度行 | 最长行长度一致 |
 
+### hex
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| HEX-001 | `--dump -C` | exact | `hexdump -C` | binary fixture | canonical 十六进制输出一致 |
+| HEX-002 | `--dump -n LEN` | exact | `hexdump -n` | binary fixture | 读取长度限制一致 |
+| HEX-003 | `--dump -s OFFSET` | exact | `hexdump -s` | binary fixture | 起始偏移一致 |
+| HEX-004 | `--dump -v` | exact | `hexdump -v` | repeated binary fixture | 重复行不折叠语义一致 |
+| HEX-005 | `--dump -e FORMAT` | behavior | `hexdump -e` | binary fixture | 常用格式子集输出语义一致 |
+| HEX-006 | `--encode` | contract | gobox-only | binary fixture + stdin | 输出连续 lowercase hex 且可被 decode 还原 |
+| HEX-007 | `--decode` | contract | gobox-only | hex text fixture + stdin | 解码后字节与原始输入一致 |
+| HEX-008 | `--decode -o FILE` | contract | gobox-only | hex text fixture | 解码结果写入指定文件且 stdout 不混入二进制 |
+
+### base64
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| BASE64-001 | default encode | exact | `base64` | binary fixture + stdin | 编码输出与退出码一致 |
+| BASE64-002 | `-d, --decode` | exact | `base64 -d` | base64 fixture + stdin | 解码字节与退出码一致 |
+| BASE64-003 | `-w COLS, --wrap COLS` | exact | `base64 -w` | binary fixture | 换行宽度一致，`0` 时不换行 |
+| BASE64-004 | `-i, --ignore-garbage` | exact | `base64 -i` | dirty base64 fixture | decode 时忽略非 base64 字符一致 |
+| BASE64-005 | `-o FILE` | contract | gobox-only | binary/base64 fixture | 输出写入指定文件且 stdout 为空 |
+
+### strings
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| STRINGS-001 | default printable strings | exact | `strings` | binary fixture | 可打印字符串集合与顺序一致 |
+| STRINGS-002 | `-n LEN` | exact | `strings -n` | binary fixture | 最短长度过滤一致 |
+| STRINGS-003 | `-f` | exact | `strings -f` | multiple files | 文件名前缀输出一致 |
+| STRINGS-004 | `-t o|d|x` | exact | `strings -t` | binary fixture | 偏移进制与位置一致 |
+| STRINGS-005 | `-a` | exact | `strings -a` | binary fixture | 全文件扫描行为一致 |
+
+### cmp
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| CMP-001 | default compare | exact | `cmp` | equal/different files | 首个差异输出与退出码一致 |
+| CMP-002 | `-s` | exact | `cmp -s` | equal/different files | 静默输出与退出码一致 |
+| CMP-003 | `-l` | exact | `cmp -l` | binary files with multiple diffs | 所有差异位置和值一致 |
+| CMP-004 | `-n NUM` | exact | `cmp -n` | files differing after NUM | 仅比较前 NUM 字节 |
+| CMP-005 | stdin side `-` | exact | `cmp FILE -` | file + stdin | stdin 输入比较结果一致 |
+
 ---
 
 ## 网络命令
@@ -264,6 +351,17 @@
 | IFSTAT-006 | `-n int` | contract | gobox-only | local interfaces | 样本数受控并按次数退出 |
 | IFSTAT-007 | `-p int` | contract | gobox-only | local interfaces | 采样间隔参数生效 |
 
+### ip
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| IP-001 | `addr` / `a` | structured | `ip addr` | local interfaces | 接口名、地址和状态集合不弱于 native |
+| IP-002 | `-o addr` | structured | `ip -o addr` | local interfaces | 单行输出中接口与地址字段可解析 |
+| IP-003 | `link` / `l` | structured | `ip link` | local interfaces | 接口名、MTU、MAC、flags 语义一致 |
+| IP-004 | `-s link` | structured | `ip -s link` | local interfaces | RX/TX 统计字段存在且为非负数 |
+| IP-005 | `route` / `r` | structured | `ip route` | local route table | IPv4 路由和默认路由字段可解析 |
+| IP-006 | `neigh` / `n` | structured | `ip neigh` | local ARP/neigh table | 邻居 IP、设备和状态字段可解析 |
+
 ### np/netping
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
@@ -314,6 +412,16 @@
 | TOP-003 | `-r` | structured | `top -r` | single iteration | 排序方向切换且关键排序方向符合预期 |
 | TOP-004 | `-sort string` | contract | gobox-only | single iteration | 排序字段生效 |
 
+### free
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| FREE-001 | default memory summary | structured | `free` | local Linux host | total/used/free/buff-cache/available 语义一致 |
+| FREE-002 | `-h` | structured | `free -h` | local Linux host | 人类可读单位输出且字段集合一致 |
+| FREE-003 | `-m` | structured | `free -m` | local Linux host | MiB 单位换算语义一致 |
+| FREE-004 | `-g` | structured | `free -g` | local Linux host | GiB 单位换算语义一致 |
+| FREE-005 | `-s SEC -c COUNT` | behavior | `free -s -c` | local Linux host | 按指定次数采样并退出 |
+
 ### xargs
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
@@ -325,6 +433,55 @@
 | XARGS-005 | `-P int` | behavior | `xargs -P` | 多 token stdin | 并发行为稳定 |
 | XARGS-006 | `-r` | exact | `xargs -r` | 空 stdin | 无输入时不执行 |
 | XARGS-007 | `-t` | exact | `xargs -t` | stdin tokens | 执行前打印命令一致 |
+
+### kill
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| KILL-001 | PID default signal | behavior | `kill` | controlled child process | 默认 `TERM` 信号使目标进程退出 |
+| KILL-002 | `-l, --list` | exact | `kill -l` | none | 信号列表或解析结果一致 |
+| KILL-003 | `-s SIGNAL` | behavior | `kill -s` | controlled child process | 指定信号发送语义一致 |
+| KILL-004 | `-SIGNAL` | behavior | `kill -SIGNAL` | controlled child process | 短信号格式语义一致 |
+| KILL-005 | `-f PATTERN` | behavior | `pkill -f` | controlled named process | 完整命令行匹配集合一致 |
+| KILL-006 | `-x PATTERN` | behavior | `pkill -x` | controlled named process | 精确进程名匹配集合一致 |
+| KILL-007 | `-P PPID` | behavior | `pkill -P` | parent + child process | 父进程过滤集合一致 |
+| KILL-008 | `-n` | behavior | `pkill -n` | multiple controlled processes | 最新进程选择一致 |
+| KILL-009 | `-o` | behavior | `pkill -o` | multiple controlled processes | 最早进程选择一致 |
+| KILL-010 | `--dry-run` | contract | gobox-only | controlled named process | 输出将匹配进程且不发送信号 |
+
+### lsof
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| LSOF-001 | default open files | structured | `lsof` | current process | 输出包含当前进程可见打开文件 |
+| LSOF-002 | `-p PID` | structured | `lsof -p` | current process | 仅输出指定 PID 的打开文件 |
+| LSOF-003 | `-c NAME` | structured | `lsof -c` | controlled named process | 命令名过滤集合一致 |
+| LSOF-004 | `-i` | structured | `lsof -i` | local socket | 仅输出网络文件 |
+| LSOF-005 | `-iTCP` | structured | `lsof -iTCP` | local TCP socket | TCP 协议过滤集合一致 |
+| LSOF-006 | `-iUDP` | structured | `lsof -iUDP` | local UDP socket | UDP 协议过滤集合一致 |
+| LSOF-007 | `-i :PORT` | structured | `lsof -i :PORT` | local listener | 端口过滤命中目标 socket |
+| LSOF-008 | `-n` | structured | `lsof -n` | local socket | 不出现主机名解析结果 |
+| LSOF-009 | `-P` | structured | `lsof -P` | local socket | 不出现服务名解析结果 |
+| LSOF-010 | `-t` | exact | `lsof -t` | controlled process | 仅输出 PID 列表 |
+| LSOF-011 | `FILE...` | structured | `lsof FILE...` | opened temp file | 能定位打开指定文件的进程 |
+
+### watch
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| WATCH-001 | `COMMAND...` | behavior | `watch` | short-lived command + timeout harness | 命令会被周期性执行并输出结果 |
+| WATCH-002 | `-n SEC` | behavior | `watch -n` | short-lived command + timeout harness | 执行间隔参数影响刷新节奏 |
+| WATCH-003 | `-t` | behavior | `watch -t` | short-lived command + timeout harness | 标题行隐藏行为一致 |
+
+### timeout
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| TIMEOUT-001 | `DURATION COMMAND...` | behavior | `timeout` | sleep command | 超时后终止命令且退出码语义一致 |
+| TIMEOUT-002 | `-s SIGNAL` | behavior | `timeout -s` | signal-trapping command | 超时信号类型一致 |
+| TIMEOUT-003 | `-k DURATION` | behavior | `timeout -k` | signal-ignoring command | grace period 后强制结束 |
+| TIMEOUT-004 | `--preserve-status` | behavior | `timeout --preserve-status` | command with known status | 保留子命令退出状态语义一致 |
+| TIMEOUT-005 | duration suffix | behavior | `timeout 1s/1m/1h` | sleep command | 常用时间后缀解析一致 |
 
 ---
 
@@ -370,18 +527,29 @@
 | MD5-004 | `-s, --status` | exact | `md5sum --status` | checksum file | 仅退出码一致 |
 | MD5-005 | `-w, --warn` | exact | `md5sum --warn` | malformed checksum file | 警告行为一致 |
 
+### sha256sum
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| SHA256-001 | default checksum | exact | `sha256sum` | file + stdin | 校验和、文件名和退出码一致 |
+| SHA256-002 | `-c, --check` | exact | `sha256sum -c` | checksum file | 校验结果与退出码一致 |
+| SHA256-003 | `--tag` | exact | `sha256sum --tag` | file | BSD 风格输出一致 |
+| SHA256-004 | `-q, --quiet` | exact | `sha256sum --quiet` | checksum file | 安静模式一致 |
+| SHA256-005 | `-s, --status` | exact | `sha256sum --status` | checksum file | 仅退出码一致 |
+| SHA256-006 | `-w, --warn` | exact | `sha256sum --warn` | malformed checksum file | 警告行为一致 |
+
 ---
 
 ## 实施优先级
 
 ### 第一批（高稳定、强 parity）
-- `grep`, `sed`, `head`, `tail`, `sort`, `uniq`, `wc`, `md5sum`, `xargs`, `find`
+- `grep`, `sed`, `head`, `tail`, `sort`, `uniq`, `wc`, `md5sum`, `sha256sum`, `xargs`, `find`, `readpath`, `hex`, `base64`, `strings`, `cmp`
 
 ### 第二批（结构化 parity）
-- `ps`, `netstat`, `du`, `iostat`, `ifstat`
+- `ps`, `netstat`, `du`, `df`, `iostat`, `ifstat`, `ip`, `free`, `stat`, `lsof`
 
 ### 第三批（行为/contract）
-- `curl`, `nc`, `nslookup/dig`, `np`, `tw`, `ioperf`, `top`
+- `curl`, `nc`, `nslookup/dig`, `np`, `tw`, `ioperf`, `top`, `truncate`, `kill`, `watch`, `timeout`
 
 ---
 

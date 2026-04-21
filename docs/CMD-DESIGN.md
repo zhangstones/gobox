@@ -4,6 +4,25 @@
 
 ---
 
+## 设计原则
+
+gobox 的目标不是完整替代 BusyBox 或 coreutils，而是在容器、精简镜像、临时排障环境中补齐常见缺失命令，提供足够实用的诊断和处置能力。
+
+命令选择遵循三个约束：
+
+1. 精简镜像通常缺失：优先补充 slim/distroless/debug 场景里经常不可用，但排障时很需要的工具。
+2. 容器排障价值高：优先覆盖网络、进程、文件、文本、磁盘 I/O 等常见定位路径。
+3. 最常用 + 不膨胀 + 精简：只实现高频参数和核心语义，避免引入完整系统管理套件或低频高级参数。
+
+排除范围同样明确：
+
+1. 不纳入系统管理命令：不实现用户管理、init/service、内核模块、文件系统修复、设备管理、网络配置变更等宿主机/系统级管理能力。
+2. 不重复镜像里通常已有的基础命令：如 `cat`、`ls`、`cp`、`mv`、`rm`、`mkdir`、`echo`、`printf`、`test`、`true`、`false`、`sleep` 等基础 shell/coreutils 能力，除非后续证明它们在目标环境中经常缺失且排障价值显著。
+
+因此，本文档中的设计重点是“够用且可验证”的常用能力，而不是追求对所有原生命令参数的完整复刻。
+
+---
+
 ## 目录
 
 - [文件系统命令](#文件系统命令)
@@ -36,6 +55,51 @@
 |------------|---------------|------------|----------|
 | `gobox du -h` | `du -h` | ✅ 一致 | 以人类可读格式显示文件大小（KB、MB、GB） |
 | `gobox du -s` | `du -s` | ✅ 一致 | 汇总显示，只显示每个参数目录的总大小 |
+
+### df
+
+| gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox df` | `df` | 📝 计划支持 | 显示文件系统容量、已用、可用和挂载点 |
+| `gobox df -h` | `df -h` | 📝 计划支持 | 以人类可读格式显示容量 |
+| `gobox df -T` | `df -T` | 📝 计划支持 | 显示文件系统类型 |
+| `gobox df -i` | `df -i` | 📝 计划支持 | 显示 inode 使用情况 |
+| `gobox df PATH...` | `df PATH...` | 📝 计划支持 | 只显示指定路径所在文件系统 |
+
+### readpath
+
+`readpath` 合并 `realpath` 与 `readlink` 的常用能力，用于在精简环境中解析路径、规范化路径或读取符号链接目标。
+
+| gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox readpath FILE...` | `realpath FILE...` | 📝 计划支持 | 输出规范化绝对路径 |
+| `gobox readpath -f, --canonicalize FILE...` | `readlink -f` | 📝 计划支持 | 跟随路径中的符号链接并规范化 |
+| `gobox readpath -e, --canonicalize-existing FILE...` | `realpath -e` | 📝 计划支持 | 要求路径所有组件必须存在 |
+| `gobox readpath -m, --canonicalize-missing FILE...` | `realpath -m` | 📝 计划支持 | 允许路径组件不存在并做词法规范化 |
+| `gobox readpath -l, --readlink FILE...` | `readlink FILE...` | 📝 计划支持 | 按 `readlink` 语义读取符号链接目标 |
+| `gobox readpath -n, --no-newline FILE...` | `readlink -n` | 📝 计划支持 | 输出末尾不追加换行 |
+| `gobox readpath -q, --quiet FILE...` | `realpath -q` | 📝 计划支持 | 抑制大多数错误信息 |
+| `gobox readpath -z, --zero FILE...` | `realpath -z` / `readlink -z` | 📝 计划支持 | 使用 NUL 分隔输出 |
+
+### stat
+
+| gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox stat FILE...` | `stat FILE...` | 📝 计划支持 | 输出文件类型、大小、权限、时间等元信息 |
+| `gobox stat -L, --dereference FILE...` | `stat -L` | 📝 计划支持 | 跟随符号链接，显示目标文件信息 |
+| `gobox stat -f, --file-system FILE...` | `stat -f` | 📝 计划支持 | 输出文件系统信息 |
+| `gobox stat -c, --format FORMAT FILE...` | `stat -c` | 📝 计划支持 | 使用指定格式输出字段 |
+| `gobox stat -t, --terse FILE...` | `stat -t` | 📝 计划支持 | 使用简洁单行格式输出 |
+
+### truncate
+
+| gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox truncate -s SIZE FILE...` | `truncate -s` | 📝 计划支持 | 设置文件大小 |
+| `gobox truncate -c, --no-create -s SIZE FILE...` | `truncate -c` | 📝 计划支持 | 文件不存在时不创建 |
+| `gobox truncate -r RFILE FILE...` | `truncate -r` | 📝 计划支持 | 以参考文件大小设置目标文件 |
+| `gobox truncate -s K/M/G FILE...` | `truncate -s K/M/G` | 📝 计划支持 | 支持常用大小单位后缀 |
+| `gobox truncate -s +SIZE/-SIZE FILE...` | `truncate -s +SIZE/-SIZE` | 📝 计划支持 | 相对当前大小扩展或收缩 |
 
 ---
 
@@ -147,6 +211,51 @@
 | `gobox wc -m` | `wc -m` | ✅ 一致 | 打印字符数 |
 | `gobox wc -L` | `wc -L` | ✅ 一致 | 打印最长行长度 |
 
+### hex
+
+`hex` 面向容器排障中的十六进制查看与编解码场景。`--dump` 对齐 `hexdump` 常用查看能力，`--encode` / `--decode` 是 gobox 扩展，用于轻量替代 `xxd -p` / `xxd -r -p` 场景。
+
+| gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox hex --dump -C FILE...` | `hexdump -C` | 📝 计划支持 | canonical 十六进制与 ASCII 对照输出 |
+| `gobox hex --dump -n LEN FILE...` | `hexdump -n` | 📝 计划支持 | 只读取前 LEN 字节 |
+| `gobox hex --dump -s OFFSET FILE...` | `hexdump -s` | 📝 计划支持 | 从指定偏移开始读取 |
+| `gobox hex --dump -v FILE...` | `hexdump -v` | 📝 计划支持 | 不折叠重复输出行 |
+| `gobox hex --dump -e FORMAT FILE...` | `hexdump -e` | 📝 计划支持 | 自定义 dump 输出格式，先支持常用格式子集 |
+| `gobox hex --encode FILE...` | `xxd -p` / `od -An -tx1` | 🆕 gobox扩展 | 将输入编码为连续 lowercase hex 文本 |
+| `gobox hex --decode FILE...` | `xxd -r -p` | 🆕 gobox扩展 | 将 hex 文本解码为原始字节 |
+| `gobox hex --decode -o FILE INPUT` | `xxd -r -p > FILE` | 🆕 gobox扩展 | 将解码结果写入指定文件 |
+
+### base64
+
+| gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox base64 FILE...` | `base64 FILE...` | 📝 计划支持 | 默认编码为 base64 文本 |
+| `gobox base64 -d, --decode FILE...` | `base64 -d` | 📝 计划支持 | 将 base64 文本解码为原始字节 |
+| `gobox base64 -w COLS, --wrap COLS FILE...` | `base64 -w` | 📝 计划支持 | 每 COLS 字符换行，`0` 表示不换行 |
+| `gobox base64 -i, --ignore-garbage FILE...` | `base64 -i` | 📝 计划支持 | 解码时忽略非 base64 字符 |
+| `gobox base64 -o FILE INPUT` | `base64 > FILE` | 🆕 gobox扩展 | 将编码或解码结果写入指定文件 |
+
+### strings
+
+| gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox strings FILE...` | `strings FILE...` | 📝 计划支持 | 从文件或 stdin 提取可打印字符串 |
+| `gobox strings -n LEN FILE...` | `strings -n` | 📝 计划支持 | 设置最短字符串长度 |
+| `gobox strings -f FILE...` | `strings -f` | 📝 计划支持 | 输出前带文件名 |
+| `gobox strings -t o|d|x FILE...` | `strings -t` | 📝 计划支持 | 输出字符串所在偏移，支持八进制、十进制、十六进制 |
+| `gobox strings -a FILE...` | `strings -a` | 📝 计划支持 | 扫描整个文件 |
+
+### cmp
+
+| gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox cmp FILE1 FILE2` | `cmp FILE1 FILE2` | 📝 计划支持 | 比较两个文件，报告首个差异 |
+| `gobox cmp -s FILE1 FILE2` | `cmp -s` | 📝 计划支持 | 静默模式，仅返回退出码 |
+| `gobox cmp -l FILE1 FILE2` | `cmp -l` | 📝 计划支持 | 输出所有不同字节位置和值 |
+| `gobox cmp -n NUM FILE1 FILE2` | `cmp -n` | 📝 计划支持 | 只比较前 NUM 字节 |
+| `gobox cmp FILE -` | `cmp FILE -` | 📝 计划支持 | 支持从 stdin 读取一侧输入 |
+
 ---
 
 ## 网络命令
@@ -251,6 +360,19 @@
 | `gobox ifstat -n int` | `ifstat -n` | ✅ 一致 | 采样次数（0=连续） |
 | `gobox ifstat -p int` | `ifstat -i` | ✅ 一致 | 采样间隔秒数（默认 1） |
 
+### ip
+
+`ip` 仅设计为容器排障所需的只读子集，不实现完整 iproute2，也不支持修改网络配置的 add/del/set 等操作。
+
+| gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox ip addr` / `gobox ip a` | `ip addr` | 📝 计划支持 | 显示接口地址、作用域和状态 |
+| `gobox ip -o addr` | `ip -o addr` | 📝 计划支持 | 单行显示接口地址，便于脚本处理 |
+| `gobox ip link` / `gobox ip l` | `ip link` | 📝 计划支持 | 显示接口状态、MTU、MAC 和 flags |
+| `gobox ip -s link` | `ip -s link` | 📝 计划支持 | 显示接口收发包和字节统计 |
+| `gobox ip route` / `gobox ip r` | `ip route` | 📝 计划支持 | 显示 IPv4 路由表和默认路由 |
+| `gobox ip neigh` / `gobox ip n` | `ip neigh` | 📝 计划支持 | 显示邻居/ARP 表 |
+
 ### np/netping
 
 | gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
@@ -301,6 +423,16 @@
 
 > 注意：gobox top 是 top 命令的简化版本，实时调用 psCmd 显示进程信息。
 
+### free
+
+| gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox free` | `free` | 📝 计划支持 | 显示内存总量、已用、可用、buffer/cache 和 swap |
+| `gobox free -h` | `free -h` | 📝 计划支持 | 以人类可读格式显示内存 |
+| `gobox free -m` | `free -m` | 📝 计划支持 | 以 MiB 显示内存 |
+| `gobox free -g` | `free -g` | 📝 计划支持 | 以 GiB 显示内存 |
+| `gobox free -s SEC -c COUNT` | `free -s -c` | 📝 计划支持 | 按间隔重复采样指定次数 |
+
 ### xargs
 
 | gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
@@ -314,6 +446,57 @@
 | `gobox xargs -t` | `xargs -t` | ✅ 一致 | 执行前打印命令 |
 
 > 注意：默认命令是 `echo`，即 `gobox xargs` 等同于 `xargs echo`。
+
+### kill
+
+`kill` 合并 `kill` 与 `pkill` 的常用能力：PID 模式对齐 `kill`，匹配模式对齐 `pkill`。
+
+| gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox kill PID...` | `kill PID...` | 📝 计划支持 | 向指定 PID 发送默认 `TERM` 信号 |
+| `gobox kill -l, --list [SIGNAL]` | `kill -l` | 📝 计划支持 | 列出信号或解析信号编号/名称 |
+| `gobox kill -s SIGNAL PID...` | `kill -s` | 📝 计划支持 | 指定要发送的信号 |
+| `gobox kill -SIGNAL PID...` | `kill -SIGNAL` | 📝 计划支持 | 使用短格式指定信号 |
+| `gobox kill -f PATTERN` | `pkill -f` | 📝 计划支持 | 按完整命令行匹配进程 |
+| `gobox kill -x PATTERN` | `pkill -x` | 📝 计划支持 | 按进程名精确匹配 |
+| `gobox kill -P PPID` | `pkill -P` | 📝 计划支持 | 匹配指定父进程下的子进程 |
+| `gobox kill -n [-f\|-x] PATTERN` | `pkill -n` | 📝 计划支持 | 只匹配最新启动的进程 |
+| `gobox kill -o [-f\|-x] PATTERN` | `pkill -o` | 📝 计划支持 | 只匹配最早启动的进程 |
+| `gobox kill --dry-run PATTERN` | gobox-only | 🆕 gobox扩展 | 只打印将要匹配的进程，不发送信号 |
+
+### lsof
+
+| gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox lsof` | `lsof` | 📝 计划支持 | 列出当前可见的打开文件 |
+| `gobox lsof -p PID` | `lsof -p` | 📝 计划支持 | 按进程 ID 过滤 |
+| `gobox lsof -c NAME` | `lsof -c` | 📝 计划支持 | 按命令名前缀过滤 |
+| `gobox lsof -i` | `lsof -i` | 📝 计划支持 | 仅列出网络文件 |
+| `gobox lsof -iTCP` | `lsof -iTCP` | 📝 计划支持 | 仅列出 TCP 网络连接 |
+| `gobox lsof -iUDP` | `lsof -iUDP` | 📝 计划支持 | 仅列出 UDP 网络连接 |
+| `gobox lsof -i :PORT` | `lsof -i :PORT` | 📝 计划支持 | 按端口过滤网络连接 |
+| `gobox lsof -n` | `lsof -n` | 📝 计划支持 | 不解析主机名 |
+| `gobox lsof -P` | `lsof -P` | 📝 计划支持 | 不解析端口服务名 |
+| `gobox lsof -t` | `lsof -t` | 📝 计划支持 | 仅输出 PID |
+| `gobox lsof FILE...` | `lsof FILE...` | 📝 计划支持 | 查找打开指定文件的进程 |
+
+### watch
+
+| gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox watch COMMAND...` | `watch COMMAND...` | 📝 计划支持 | 周期性执行命令并刷新输出 |
+| `gobox watch -n SEC COMMAND...` | `watch -n` | 📝 计划支持 | 设置执行间隔秒数 |
+| `gobox watch -t COMMAND...` | `watch -t` | 📝 计划支持 | 不显示标题行 |
+
+### timeout
+
+| gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox timeout DURATION COMMAND...` | `timeout DURATION COMMAND...` | 📝 计划支持 | 限制命令最大运行时间 |
+| `gobox timeout -s SIGNAL DURATION COMMAND...` | `timeout -s` | 📝 计划支持 | 超时后发送指定信号 |
+| `gobox timeout -k KILL_AFTER DURATION COMMAND...` | `timeout -k` | 📝 计划支持 | 首次信号后仍未退出则强制 kill |
+| `gobox timeout --preserve-status DURATION COMMAND...` | `timeout --preserve-status` | 📝 计划支持 | 超时时保留子命令退出码语义 |
+| `gobox timeout 1s/1m/1h COMMAND...` | `timeout 1s/1m/1h` | 📝 计划支持 | 支持常用 duration 后缀 |
 
 ---
 
@@ -359,6 +542,17 @@
 | `gobox md5sum -s, --status` | `md5sum -s` | ✅ 一致 | 仅返回状态码 |
 | `gobox md5sum -w, --warn` | `md5sum -w` | ✅ 一致 | 警告格式错误的行 |
 
+### sha256sum
+
+| gobox 参数 | 对应原命今参数 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox sha256sum FILE...` | `sha256sum FILE...` | 📝 计划支持 | 计算文件或 stdin 的 SHA-256 校验和 |
+| `gobox sha256sum -c, --check` | `sha256sum -c` | 📝 计划支持 | 从文件验证 SHA-256 校验和 |
+| `gobox sha256sum --tag` | `sha256sum --tag` | 📝 计划支持 | BSD 风格输出 |
+| `gobox sha256sum -q, --quiet` | `sha256sum -q` | 📝 计划支持 | 安静模式，只显示校验和 |
+| `gobox sha256sum -s, --status` | `sha256sum -s` | 📝 计划支持 | 仅返回状态码 |
+| `gobox sha256sum -w, --warn` | `sha256sum -w` | 📝 计划支持 | 警告格式错误的行 |
+
 ---
 
 ## 实现一致性说明
@@ -368,6 +562,7 @@
 | ✅ 一致 | 与原生命令功能完全一致 |
 | ⚠️ 部分一致 | 功能相似但有细微差异或限制 |
 | 🆕 gobox扩展 | 原生命令无此参数，为 gobox 新增功能 |
+| 📝 计划支持 | 已纳入设计，尚未实现或尚未完成 parity 对齐 |
 
 ---
 
@@ -377,6 +572,10 @@
 |------|------|------|
 | find | 文件系统 | 文件搜索 |
 | du | 文件系统 | 磁盘使用统计 |
+| df | 文件系统 | 文件系统容量 |
+| readpath | 文件系统 | 路径解析 |
+| stat | 文件系统 | 文件元信息 |
+| truncate | 文件系统 | 文件大小调整 |
 | head | 文本处理 | 显示文件头部 |
 | tail | 文本处理 | 显示文件尾部 |
 | grep | 文本处理 | 文本搜索 |
@@ -384,16 +583,27 @@
 | sort | 文本处理 | 排序 |
 | uniq | 文本处理 | 去重 |
 | wc | 文本处理 | 计数 |
+| hex | 文本处理 | 十六进制查看与编解码 |
+| base64 | 文本处理 | base64 编解码 |
+| strings | 文本处理 | 可打印字符串提取 |
+| cmp | 文本处理 | 文件比较 |
 | curl | 网络 | HTTP 客户端 |
 | nc | 网络 | 网络工具 |
 | netstat | 网络 | 网络连接统计 |
 | tw | 网络 | Web 服务器 |
 | nslookup/dig | 网络 | DNS 查询 |
 | ifstat | 网络 | 网络接口统计 |
+| ip | 网络 | 网络配置只读查看 |
 | np | 网络 | 网络 ping |
 | ps | 进程 | 进程列表 |
 | top | 进程 | 进程监控 |
+| free | 进程 | 内存使用统计 |
 | xargs | 进程 | 命令参数构建 |
+| kill | 进程 | 发送信号/按模式结束进程 |
+| lsof | 进程 | 打开文件查看 |
+| watch | 进程 | 周期性执行命令 |
+| timeout | 进程 | 限时执行命令 |
 | iostat | 磁盘 | I/O 统计 |
 | ioperf | 磁盘 | I/O 性能测试 |
 | md5sum | 磁盘 | 校验和计算 |
+| sha256sum | 磁盘 | SHA-256 校验和计算 |
