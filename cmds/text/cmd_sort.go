@@ -16,16 +16,16 @@ import (
 )
 
 type sortConfig struct {
-	numeric       bool
-	reverse       bool
-	key           int      // 1-based column number, 0 = whole line
-	sep           string   // field separator
-	unique        bool
-	month         bool
-	human         bool
-	random        bool
-	check         bool
-	output        string
+	numeric        bool
+	reverse        bool
+	key            int    // 1-based column number, 0 = whole line
+	sep            string // field separator
+	unique         bool
+	month          bool
+	human          bool
+	random         bool
+	check          bool
+	output         string
 	zeroTerminated bool
 }
 
@@ -307,8 +307,8 @@ func parseHumanNumber(s string) float64 {
 }
 
 type sortEntry struct {
-	line   string
-	value  interface{}
+	line     string
+	value    interface{}
 	original int
 }
 
@@ -328,8 +328,8 @@ func sortLines(lines []string, cfg sortConfig) ([]string, error) {
 	for i, line := range lines {
 		field := getField(line, cfg.key, cfg.sep)
 		entries[i] = sortEntry{
-			line:    line,
-			value:   parseValue(field, cfg),
+			line:     line,
+			value:    parseValue(field, cfg),
 			original: i,
 		}
 	}
@@ -402,8 +402,8 @@ func checkSorted(lines []string, cfg sortConfig) error {
 	for i, line := range lines {
 		field := getField(line, cfg.key, cfg.sep)
 		entries[i] = sortEntry{
-			line:   line,
-			value:  parseValue(field, cfg),
+			line:     line,
+			value:    parseValue(field, cfg),
 			original: i,
 		}
 	}

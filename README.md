@@ -22,11 +22,11 @@
 
 ## 当前命令分类
 
-- 文件系统：`find`、`du`
-- 文本处理：`head`、`tail`、`grep`、`sed`、`sort`、`uniq`、`wc`、`seq`、`rand`
-- 网络：`curl`、`nc`、`netstat`、`tw`、`nslookup/dig`、`ifstat`、`np`
-- 进程：`ps`、`top`、`xargs`
-- 磁盘：`iostat`、`ioperf`、`md5sum`
+- 文件系统：`find`、`du`、`df`、`readpath`、`stat`、`truncate`
+- 文本处理：`head`、`tail`、`grep`、`sed`、`sort`、`uniq`、`wc`、`seq`、`rand`、`hex`、`base64`、`strings`、`cmp`
+- 网络：`curl`、`nc`、`netstat`、`tw`、`nslookup/dig`、`ifstat`、`ip`、`np`
+- 进程：`ps`、`top`、`free`、`xargs`、`kill`、`lsof`、`watch`、`timeout`
+- 磁盘：`iostat`、`ioperf`、`md5sum`、`sha256sum`
 
 这只是命令概览，不展开逐项参数说明。详细能力说明见文末“文档”部分。
 
@@ -72,8 +72,14 @@ gobox <command> [args...]
 # 查看目录汇总大小
 ./gobox du -s -h .
 
+# 查看文件系统容量
+./gobox df -h .
+
 # 递归搜索文本
 ./gobox grep -r "TODO" .
+
+# 查看二进制内容
+./gobox hex --dump -C data.bin
 
 # 替换文本并输出结果
 ./gobox sed 's/foo/bar/g' input.txt
@@ -81,8 +87,14 @@ gobox <command> [args...]
 # 查看占用较高的进程
 ./gobox ps -sort cpu -r -n 10
 
+# 查看内存概况
+./gobox free -h
+
 # 查看监听中的网络连接
 ./gobox netstat -l -n
+
+# 查看容器内接口地址
+./gobox ip addr
 
 # 启动一个静态文件服务器
 ./gobox tw -p 8080 -d .

@@ -14,7 +14,7 @@
 
 ## 当前实现
 
-`find`, `du`, `ps`, `top`, `iostat`, `ioperf`, `md5sum`, `netstat`, `xargs`, `grep`, `sed`, `head`, `tail`, `curl`, `sort`, `uniq`, `wc`, `nslookup`, `dig`, `nc`, `tw`, `ifstat`, `np`, `rand`, `seq`
+`find`, `du`, `df`, `readpath`, `stat`, `truncate`, `ps`, `top`, `free`, `xargs`, `kill`, `lsof`, `watch`, `timeout`, `iostat`, `ioperf`, `md5sum`, `sha256sum`, `netstat`, `grep`, `sed`, `head`, `tail`, `curl`, `sort`, `uniq`, `wc`, `nslookup`, `dig`, `nc`, `tw`, `ifstat`, `ip`, `np`, `rand`, `seq`, `hex`, `base64`, `strings`, `cmp`
 
 ---
 
@@ -96,6 +96,13 @@
 - 通用参数：`-c`, `-i`, `-p`, `-s`, `-I`, `-W`, `--flood`, `-w`
 - 长连接模式：`-l`
 - 输出参数：`-q`, `-v`
+
+### 15. 新规划排障命令 ✅ 已完成
+- 文件系统：`df`, `readpath`, `stat`, `truncate`
+- 文本处理：`hex`, `base64`, `strings`, `cmp`
+- 网络：`ip`
+- 进程：`free`, `kill`, `lsof`, `watch`, `timeout`
+- 磁盘：`sha256sum`
 
 ---
 

@@ -692,4 +692,3 @@ func TestNpCmdPingOutputFormat(t *testing.T) {
 	// Should have some output format
 	_ = result
 }
-

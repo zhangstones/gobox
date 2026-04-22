@@ -214,20 +214,42 @@ func invokeGobox(args []string) error {
 		return fs.FindCmd(argv)
 	case "du":
 		return fs.DuCmd(argv)
+	case "df":
+		return fs.DfCmd(argv)
+	case "readpath":
+		return fs.ReadpathCmd(argv)
+	case "stat":
+		return fs.StatCmd(argv)
+	case "truncate":
+		return fs.TruncateCmd(argv)
 	case "ps":
 		return proc.PsCmd(argv)
 	case "top":
 		return proc.TopCmd(argv)
+	case "free":
+		return proc.FreeCmd(argv)
 	case "iostat":
 		return disk.IostatCmd(argv)
 	case "ioperf":
 		return disk.IoperfCmd(argv)
 	case "md5sum":
 		return disk.Md5sumCmd(argv)
+	case "sha256sum":
+		return disk.Sha256sumCmd(argv)
 	case "netstat":
 		return netcmd.NetstatCmd(argv)
+	case "ip":
+		return netcmd.IpCmd(argv)
 	case "xargs":
 		return proc.XargsCmd(argv)
+	case "kill":
+		return proc.KillCmd(argv)
+	case "lsof":
+		return proc.LsofCmd(argv)
+	case "watch":
+		return proc.WatchCmd(argv)
+	case "timeout":
+		return proc.TimeoutCmd(argv)
 	case "grep":
 		return textcmd.GrepCmd(argv)
 	case "sed":
@@ -246,6 +268,14 @@ func invokeGobox(args []string) error {
 		return netcmd.CurlCmd(argv)
 	case "wc":
 		return textcmd.WcCmd(argv)
+	case "hex":
+		return textcmd.HexCmd(argv)
+	case "base64":
+		return textcmd.Base64Cmd(argv)
+	case "strings":
+		return textcmd.StringsCmd(argv)
+	case "cmp":
+		return textcmd.CmpCmd(argv)
 	case "uniq":
 		return textcmd.UniqCmd(argv)
 	case "nc":

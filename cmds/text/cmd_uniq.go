@@ -12,13 +12,13 @@ import (
 // uniqCmd implements the uniq command for filtering adjacent duplicate lines
 func UniqCmd(args []string) error {
 	var (
-		showCount     bool
-		showRepeated  bool
-		showUnique    bool
-		ignoreCase    bool
-		checkChars    int
-		skipFields    int
-		showHelp      bool
+		showCount    bool
+		showRepeated bool
+		showUnique   bool
+		ignoreCase   bool
+		checkChars   int
+		skipFields   int
+		showHelp     bool
 	)
 
 	// Parse flags

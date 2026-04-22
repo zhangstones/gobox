@@ -174,4 +174,3 @@ func headFile(filename string, w io.Writer, lines int, bytes int) error {
 
 	return headReader(file, w, lines, bytes)
 }
-

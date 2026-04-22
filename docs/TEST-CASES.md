@@ -19,7 +19,7 @@
 
 ## 覆盖清单
 
-以下命令已按 `docs/CMD-DESIGN.md` 当前条目建立参数级 case；`📝 计划支持` 命令先建立 case 基线，待实现后映射到自动化 parity 测试。
+以下命令已按 `docs/CMD-DESIGN.md` 当前条目建立参数级 case；自动化测试按 exact、structured、behavior、contract 四类分别落地，无法稳定自动化的环境依赖项需在测试中显式说明或跳过。
 
 - 文件系统：`find`、`du`、`df`、`readpath`、`stat`、`truncate`
 - 文本处理：`head`、`tail`、`grep`、`sed`、`sort`、`uniq`、`wc`、`hex`、`base64`、`strings`、`cmp`
@@ -32,7 +32,7 @@
 1. `✅ 一致` 条目优先写成 parity 或 behavior case；确实受环境限制时，需在自动化中显式 `Skip`。
 2. `⚠️ 部分一致` 条目必须验证“差异边界”，而不是只测成功路径。
 3. `🆕 gobox扩展` 条目必须验证参数是否真正进入执行路径，而不是仅测试 flag 可解析。
-4. `📝 计划支持` 条目必须在实现前保留 case 编号，实现后补齐自动化并重新确认 Mode。
+4. 新增或增强命令时必须先补齐 case 编号，再根据实际实现方式确认 Mode。
 
 ---
 
@@ -211,10 +211,10 @@
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
-| HEX-001 | `--dump -C` | exact | `hexdump -C` | binary fixture | canonical 十六进制输出一致 |
-| HEX-002 | `--dump -n LEN` | exact | `hexdump -n` | binary fixture | 读取长度限制一致 |
-| HEX-003 | `--dump -s OFFSET` | exact | `hexdump -s` | binary fixture | 起始偏移一致 |
-| HEX-004 | `--dump -v` | exact | `hexdump -v` | repeated binary fixture | 重复行不折叠语义一致 |
+| HEX-001 | `--dump -C` | structured | `hexdump -C` | binary fixture | canonical 十六进制输出字段语义一致 |
+| HEX-002 | `--dump -n LEN` | structured | `hexdump -n` | binary fixture | 读取长度限制一致 |
+| HEX-003 | `--dump -s OFFSET` | structured | `hexdump -s` | binary fixture | 起始偏移一致 |
+| HEX-004 | `--dump -v` | structured | `hexdump -v` | repeated binary fixture | 重复行不折叠语义一致 |
 | HEX-005 | `--dump -e FORMAT` | behavior | `hexdump -e` | binary fixture | 常用格式子集输出语义一致 |
 | HEX-006 | `--encode` | contract | gobox-only | binary fixture + stdin | 输出连续 lowercase hex 且可被 decode 还原 |
 | HEX-007 | `--decode` | contract | gobox-only | hex text fixture + stdin | 解码后字节与原始输入一致 |
@@ -439,7 +439,7 @@
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
 | KILL-001 | PID default signal | behavior | `kill` | controlled child process | 默认 `TERM` 信号使目标进程退出 |
-| KILL-002 | `-l, --list` | exact | `kill -l` | none | 信号列表或解析结果一致 |
+| KILL-002 | `-l, --list` | structured | `kill -l` | none | 常用信号列表可解析，允许信号全集和格式差异 |
 | KILL-003 | `-s SIGNAL` | behavior | `kill -s` | controlled child process | 指定信号发送语义一致 |
 | KILL-004 | `-SIGNAL` | behavior | `kill -SIGNAL` | controlled child process | 短信号格式语义一致 |
 | KILL-005 | `-f PATTERN` | behavior | `pkill -f` | controlled named process | 完整命令行匹配集合一致 |

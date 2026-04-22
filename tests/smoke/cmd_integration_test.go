@@ -746,3 +746,79 @@ func TestSeqCmdWithSeparator(t *testing.T) {
 		t.Fatalf("SeqCmd -s expected comma-separated output, got %q", stdout)
 	}
 }
+
+func TestNewPlannedTextCommandsBasic(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "data.bin")
+	if err := os.WriteFile(file, []byte("hello\x00world"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		return text.Base64Cmd([]string{"-w", "0", file})
+	})
+	if err != nil || strings.TrimSpace(stdout) == "" {
+		t.Fatalf("Base64Cmd failed stdout=%q err=%v", stdout, err)
+	}
+	stdout, _, err = captureOutput(t, func() error {
+		return text.HexCmd([]string{"--encode", file})
+	})
+	if err != nil || !strings.Contains(stdout, "68656c6c6f") {
+		t.Fatalf("HexCmd --encode failed stdout=%q err=%v", stdout, err)
+	}
+	stdout, _, err = captureOutput(t, func() error {
+		return text.StringsCmd([]string{"-n", "5", file})
+	})
+	if err != nil || !strings.Contains(stdout, "hello") {
+		t.Fatalf("StringsCmd failed stdout=%q err=%v", stdout, err)
+	}
+	_, _, err = captureOutput(t, func() error {
+		return text.CmpCmd([]string{"-s", file, file})
+	})
+	if err != nil {
+		t.Fatalf("CmpCmd equal files returned error: %v", err)
+	}
+}
+
+func TestNewPlannedFsProcNetDiskCommandsBasic(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("new planned command smoke tests require Linux")
+	}
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, []byte("hello"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		return fs.StatCmd([]string{"-c", "%s", file})
+	})
+	if err != nil || strings.TrimSpace(stdout) != "5" {
+		t.Fatalf("StatCmd failed stdout=%q err=%v", stdout, err)
+	}
+	if err := fs.TruncateCmd([]string{"-s", "2", file}); err != nil {
+		t.Fatalf("TruncateCmd returned error: %v", err)
+	}
+	stdout, _, err = captureOutput(t, func() error {
+		return fs.DfCmd([]string{dir})
+	})
+	if err != nil || !strings.Contains(stdout, "Filesystem") {
+		t.Fatalf("DfCmd failed stdout=%q err=%v", stdout, err)
+	}
+	stdout, _, err = captureOutput(t, func() error {
+		return proc.FreeCmd([]string{"-m"})
+	})
+	if err != nil || !strings.Contains(stdout, "Mem:") {
+		t.Fatalf("FreeCmd failed stdout=%q err=%v", stdout, err)
+	}
+	stdout, _, err = captureOutput(t, func() error {
+		return net.IpCmd([]string{"addr"})
+	})
+	if err != nil || !strings.Contains(stdout, "lo") {
+		t.Fatalf("IpCmd failed stdout=%q err=%v", stdout, err)
+	}
+	stdout, _, err = captureOutput(t, func() error {
+		return disk.Sha256sumCmd([]string{file})
+	})
+	if err != nil || !strings.Contains(stdout, "372f7e2f") {
+		t.Fatalf("Sha256sumCmd failed stdout=%q err=%v", stdout, err)
+	}
+}
