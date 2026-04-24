@@ -7,14 +7,52 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+	"syscall"
 
 	"gobox/cmds/utils"
 )
 
+type duExcludePatterns []string
+
+func (p *duExcludePatterns) String() string {
+	return strings.Join(*p, ",")
+}
+
+func (p *duExcludePatterns) Set(value string) error {
+	*p = append(*p, value)
+	return nil
+}
+
+type duOptions struct {
+	human        bool
+	summary      bool
+	all          bool
+	total        bool
+	maxDepth     int
+	excludes     []string
+	oneFS        bool
+	apparentSize bool
+}
+
+type duRow struct {
+	path string
+	size int64
+}
+
 func DuCmd(args []string) error {
 	fsFlags := flag.NewFlagSet("du", flag.ContinueOnError)
-	human := fsFlags.Bool("h", false, "human readable sizes")
-	summary := fsFlags.Bool("s", false, "summarize")
+	var opts duOptions
+	var excludes duExcludePatterns
+	fsFlags.BoolVar(&opts.human, "h", false, "human readable sizes")
+	fsFlags.BoolVar(&opts.summary, "s", false, "summarize")
+	fsFlags.BoolVar(&opts.all, "a", false, "write counts for all files")
+	fsFlags.BoolVar(&opts.total, "c", false, "produce a grand total")
+	fsFlags.IntVar(&opts.maxDepth, "d", -1, "print directories at most N levels deep")
+	fsFlags.IntVar(&opts.maxDepth, "max-depth", -1, "print directories at most N levels deep")
+	fsFlags.Var(&excludes, "exclude", "exclude files matching PATTERN")
+	fsFlags.BoolVar(&opts.oneFS, "x", false, "skip directories on different filesystems")
+	fsFlags.BoolVar(&opts.apparentSize, "apparent-size", false, "print apparent sizes instead of disk usage")
 
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox du [OPTIONS] [PATH...]")
@@ -34,66 +72,119 @@ func DuCmd(args []string) error {
 	if len(paths) == 0 {
 		paths = []string{"."}
 	}
+	opts.excludes = excludes
 
+	var grandTotal int64
 	for _, root := range paths {
-		total, err := diskUsage(root)
+		rows, total, err := collectDiskUsage(root, opts)
 		if err != nil {
 			return err
 		}
-		if *summary {
-			if *human {
-				fmt.Printf("%s\t%s\n", utils.HumanSize(total), root)
-			} else {
-				fmt.Printf("%d\t%s\n", total, root)
-			}
+		grandTotal += total
+		if opts.summary {
+			printDuRow(total, root, opts.human)
 			continue
 		}
-		dirs := []string{}
-		_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			if d.IsDir() {
-				dirs = append(dirs, p)
-			}
-			return nil
-		})
-		sort.Slice(dirs, func(i, j int) bool {
-			if len(dirs[i]) == len(dirs[j]) {
-				return dirs[i] > dirs[j]
-			}
-			return len(dirs[i]) > len(dirs[j])
-		})
-		for _, dir := range dirs {
-			size, err := diskUsage(dir)
-			if err != nil {
-				return err
-			}
-			if *human {
-				fmt.Printf("%s\t%s\n", utils.HumanSize(size), dir)
-			} else {
-				fmt.Printf("%d\t%s\n", size, dir)
-			}
+		for _, row := range rows {
+			printDuRow(row.size, row.path, opts.human)
 		}
+	}
+	if opts.total {
+		printDuRow(grandTotal, "total", opts.human)
 	}
 	return nil
 }
 
 func diskUsage(root string) (int64, error) {
-	var total int64
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			return nil
-		}
-		fi, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		total += fi.Size()
-		return nil
-	})
+	_, total, err := collectDiskUsage(root, duOptions{})
 	return total, err
+}
+
+func collectDiskUsage(root string, opts duOptions) ([]duRow, int64, error) {
+	info, err := os.Lstat(root)
+	if err != nil {
+		return nil, 0, err
+	}
+	var rootDev uint64
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		rootDev = uint64(st.Dev)
+	}
+	rows := []duRow{}
+	total := walkDu(root, info, 0, root, rootDev, opts, &rows)
+	return rows, total, nil
+}
+
+func walkDu(path string, info fs.FileInfo, depth int, root string, rootDev uint64, opts duOptions, rows *[]duRow) int64 {
+	if excludedDuPath(root, path, opts.excludes) {
+		return 0
+	}
+	if opts.oneFS && depth > 0 {
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && uint64(st.Dev) != rootDev {
+			return 0
+		}
+	}
+
+	total := duFileSize(info, opts.apparentSize)
+	if info.IsDir() {
+		entries, err := os.ReadDir(path)
+		if err == nil {
+			sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+			for _, entry := range entries {
+				child := filepath.Join(path, entry.Name())
+				childInfo, err := os.Lstat(child)
+				if err != nil {
+					continue
+				}
+				total += walkDu(child, childInfo, depth+1, root, rootDev, opts, rows)
+			}
+		}
+		if opts.maxDepth < 0 || depth <= opts.maxDepth {
+			*rows = append(*rows, duRow{path: path, size: total})
+		}
+		return total
+	}
+
+	if (opts.all || depth == 0) && (opts.maxDepth < 0 || depth <= opts.maxDepth) {
+		*rows = append(*rows, duRow{path: path, size: total})
+	}
+	return total
+}
+
+func excludedDuPath(root, path string, patterns []string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	base := filepath.Base(path)
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		rel = path
+	}
+	rel = filepath.ToSlash(rel)
+	for _, pattern := range patterns {
+		if ok, _ := filepath.Match(pattern, base); ok {
+			return true
+		}
+		if ok, _ := filepath.Match(filepath.ToSlash(pattern), rel); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func duFileSize(info fs.FileInfo, apparent bool) int64 {
+	if apparent {
+		return info.Size()
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Blocks > 0 {
+		return st.Blocks * 512
+	}
+	return info.Size()
+}
+
+func printDuRow(size int64, path string, human bool) {
+	if human {
+		fmt.Printf("%s\t%s\n", utils.HumanSize(size), path)
+		return
+	}
+	fmt.Printf("%d\t%s\n", size, path)
 }

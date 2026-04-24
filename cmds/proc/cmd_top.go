@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"gobox/cmds/utils"
@@ -11,8 +13,15 @@ import (
 
 func TopCmd(args []string) error {
 	fsFlags := flag.NewFlagSet("top", flag.ContinueOnError)
-	interval := fsFlags.Int("d", 2, "delay in seconds between updates")
+	interval := fsFlags.String("d", "2", "delay in seconds between updates")
 	count := fsFlags.Int("n", 5, "number of iterations (0 = infinite)")
+	batch := fsFlags.Bool("b", false, "batch mode")
+	pids := fsFlags.String("p", "", "show only comma-separated process IDs")
+	users := fsFlags.String("u", "", "show only processes for comma-separated users or UIDs")
+	threads := fsFlags.Bool("H", false, "thread display mode (accepted; process-level output)")
+	hideIdle := fsFlags.Bool("i", false, "hide processes with zero sampled CPU")
+	fullCmd := fsFlags.Bool("c", false, "show full command lines")
+	orderBy := fsFlags.String("o", "", "sort by field")
 	// sorting options (keep consistent with cmd_ps.go)
 	sortBy := fsFlags.String("sort", "pid", "sort by: pid|cpu|rss|vms|cmd")
 	rev := fsFlags.Bool("r", true, "reverse sort order")
@@ -31,6 +40,14 @@ func TopCmd(args []string) error {
 		}
 		return err
 	}
+	_ = threads
+	delay, err := parseTopDelay(*interval)
+	if err != nil {
+		return err
+	}
+	if *orderBy != "" {
+		*sortBy = *orderBy
+	}
 
 	iterations := *count
 	if iterations < 0 {
@@ -39,7 +56,7 @@ func TopCmd(args []string) error {
 
 	i := 0
 	for {
-		if utils.IsTerminal(os.Stdout) {
+		if !*batch && utils.IsTerminal(os.Stdout) {
 			fmt.Print("\033[H\033[2J")
 		}
 		// forward selected sorting flags to psCmd so behavior matches cmd_ps.go
@@ -47,12 +64,40 @@ func TopCmd(args []string) error {
 		if *rev {
 			psArgs = append(psArgs, "-r")
 		}
-		_ = PsCmd(psArgs)
+		if *pids != "" {
+			psArgs = append(psArgs, "-p", *pids)
+		}
+		if *users != "" {
+			psArgs = append(psArgs, "-u", *users)
+		}
+		if *hideIdle {
+			psArgs = append(psArgs, "-hide-idle")
+		}
+		if *fullCmd {
+			psArgs = append(psArgs, "-ww")
+		}
+		if err := PsCmd(psArgs); err != nil {
+			return err
+		}
 		i++
 		if iterations != 0 && i >= iterations {
 			break
 		}
-		time.Sleep(time.Duration(*interval) * time.Second)
+		if delay > 0 {
+			time.Sleep(delay)
+		}
 	}
 	return nil
+}
+
+func parseTopDelay(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, fmt.Errorf("invalid delay %q", value)
+	}
+	seconds, err := strconv.ParseFloat(value, 64)
+	if err != nil || seconds < 0 {
+		return 0, fmt.Errorf("invalid delay %q", value)
+	}
+	return time.Duration(seconds * float64(time.Second)), nil
 }

@@ -772,10 +772,10 @@ func TestNewPlannedTextCommandsBasic(t *testing.T) {
 		t.Fatalf("StringsCmd failed stdout=%q err=%v", stdout, err)
 	}
 	_, _, err = captureOutput(t, func() error {
-		return text.CmpCmd([]string{"-s", file, file})
+		return text.DiffCmd([]string{file, file})
 	})
 	if err != nil {
-		t.Fatalf("CmpCmd equal files returned error: %v", err)
+		t.Fatalf("DiffCmd equal files returned error: %v", err)
 	}
 }
 

@@ -194,7 +194,7 @@ func TestNetstatCmdSortByPID(t *testing.T) {
 	}
 
 	output, err := captureNetOutput(t, func() error {
-		return NetstatCmd([]string{"-sort", "pid"})
+		return NetstatCmd([]string{"-sort", "pid", "-p"})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd failed: %v", err)
@@ -224,6 +224,174 @@ func TestNetstatCmdSortByPID(t *testing.T) {
 			t.Fatalf("expected pid-sorted output, saw %d before %d in %q", prev, pid, output)
 		}
 		prev = pid
+	}
+}
+
+func TestNetstatCmdProgramsFlagControlsPIDColumn(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("netstat is only supported on Linux")
+	}
+
+	withoutPrograms, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"-n"})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd -n failed: %v", err)
+	}
+	if strings.Contains(withoutPrograms, "PID/Program") {
+		t.Fatalf("expected PID/Program to be hidden without -p, got %q", withoutPrograms)
+	}
+
+	withPrograms, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"-p"})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd -p failed: %v", err)
+	}
+	if !strings.Contains(withPrograms, "PID/Program") {
+		t.Fatalf("expected PID/Program with -p, got %q", withPrograms)
+	}
+}
+
+func TestNetstatCmdCombinedShortFlags(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("netstat is only supported on Linux")
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	output, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"-tnlp", "-port", strconv.Itoa(port)})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd combined flags failed: %v", err)
+	}
+	if !strings.Contains(output, "TCP") || !strings.Contains(output, "LISTEN") || !strings.Contains(output, "PID/Program") {
+		t.Fatalf("expected combined -tnlp output for listener, got %q", output)
+	}
+}
+
+func TestParseProcNetRoute(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "route")
+	content := "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n" +
+		"eth0\t00000000\t010012AC\t0003\t0\t0\t100\t00000000\t0\t0\t0\n" +
+		"eth0\t000012AC\t00000000\t0001\t0\t0\t100\t0000FFFF\t0\t0\t0\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write route: %v", err)
+	}
+	routes, err := parseProcNetRoute(path)
+	if err != nil {
+		t.Fatalf("parseProcNetRoute: %v", err)
+	}
+	if len(routes) != 2 {
+		t.Fatalf("expected 2 routes, got %d", len(routes))
+	}
+	if routes[0].Gateway != "172.18.0.1" || routes[0].Flags != "UG" {
+		t.Fatalf("unexpected default route: %+v", routes[0])
+	}
+	if routes[1].Destination != "172.18.0.0" || routes[1].Genmask != "255.255.0.0" {
+		t.Fatalf("unexpected network route: %+v", routes[1])
+	}
+}
+
+func TestParseProcNetDev(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dev")
+	content := "Inter-|   Receive                                                |  Transmit\n" +
+		" face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n" +
+		"  test0: 1000 10 1 2 0 0 0 0 2000 20 3 4 0 0 0 0\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write dev: %v", err)
+	}
+	ifaces, err := parseProcNetDev(path)
+	if err != nil {
+		t.Fatalf("parseProcNetDev: %v", err)
+	}
+	if len(ifaces) != 1 {
+		t.Fatalf("expected 1 interface, got %d", len(ifaces))
+	}
+	if ifaces[0].Name != "test0" || ifaces[0].RXOK != 10 || ifaces[0].TXDrop != 4 {
+		t.Fatalf("unexpected interface stats: %+v", ifaces[0])
+	}
+}
+
+func TestParseNetstatStatsFiles(t *testing.T) {
+	dir := t.TempDir()
+	snmp := filepath.Join(dir, "snmp")
+	netstat := filepath.Join(dir, "netstat")
+	snmp6 := filepath.Join(dir, "snmp6")
+	if err := os.WriteFile(snmp, []byte("Tcp: RtoAlgorithm ActiveOpens\nTcp: 1 2\n"), 0o644); err != nil {
+		t.Fatalf("write snmp: %v", err)
+	}
+	if err := os.WriteFile(netstat, []byte("TcpExt: SyncookiesSent SyncookiesRecv\nTcpExt: 3 4\n"), 0o644); err != nil {
+		t.Fatalf("write netstat: %v", err)
+	}
+	if err := os.WriteFile(snmp6, []byte("Ip6InReceives 5\nUdp6InDatagrams 6\n"), 0o644); err != nil {
+		t.Fatalf("write snmp6: %v", err)
+	}
+	sections, err := parseNetstatStatsFiles([]string{snmp, netstat, snmp6})
+	if err != nil {
+		t.Fatalf("parseNetstatStatsFiles: %v", err)
+	}
+	values := map[string]map[string]string{}
+	for _, section := range sections {
+		values[section.Name] = section.Stats
+	}
+	if values["Tcp"]["ActiveOpens"] != "2" || values["TcpExt"]["SyncookiesRecv"] != "4" || values["Ip6"]["InReceives"] != "5" || values["Udp6"]["InDatagrams"] != "6" {
+		t.Fatalf("unexpected stats sections: %+v", sections)
+	}
+}
+
+func TestNetstatCmdRouteInterfaceAndStatsModes(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("netstat is only supported on Linux")
+	}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"-r"}, "Kernel IP routing table"},
+		{[]string{"-i"}, "Iface"},
+		{[]string{"-s"}, ":"},
+	} {
+		output, err := captureNetOutput(t, func() error {
+			return NetstatCmd(tc.args)
+		})
+		if err != nil {
+			t.Fatalf("NetstatCmd %v failed: %v", tc.args, err)
+		}
+		if !strings.Contains(output, tc.want) {
+			t.Fatalf("NetstatCmd %v missing %q in %q", tc.args, tc.want, output)
+		}
+	}
+}
+
+func TestRunNetstatContinuousStopsOnInterrupt(t *testing.T) {
+	count := 0
+	err := runNetstatContinuous(func() error {
+		count++
+		if count == 1 {
+			p, err := os.FindProcess(os.Getpid())
+			if err != nil {
+				t.Fatalf("find process: %v", err)
+			}
+			if err := p.Signal(os.Interrupt); err != nil {
+				t.Fatalf("signal interrupt: %v", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("runNetstatContinuous returned error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected one render before interrupt, got %d", count)
 	}
 }
 

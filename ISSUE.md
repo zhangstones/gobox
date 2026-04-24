@@ -1,23 +1,99 @@
-# Parity Audit Issues
+# Parity Skip Audit TODO
 
-## Resolved
+## High priority: can remove skip with test work only
 
-- [x] `FIND-003` / `FIND-004` / `FIND-005` / `FIND-006` / `FIND-008` / `FIND-009`
-  - Problem: `TEST-CASES.md` 标记为 `exact`，但 `tests/parity/fs_parity_test.go` 里只做了 gobox 单边断言，没有和 native `find` 做严格对比。
-  - Fix: 改为统一走 `runExactParityCases`，并对 `find` 输出做路径归一化；同时把 `FIND-005` 调整为 native `find` 可稳定支持的 `-mtime +1` 夹具。
+- `tests/parity/net_parity_test.go:1092` `NP-012`
+  - Current state: skipped with `linux only`.
+  - Problem: `np -scan` parity case is a local TCP connect contract test and does not inherently depend on Linux-only `/proc` behavior.
+  - Action: remove the Linux guard and make the case run wherever local TCP listen/dial is available.
 
-- [x] `DU-001` / `DU-002`
-  - Problem: `TEST-CASES.md` 标记为 `structured`，但实现只检查 gobox 输出是否包含路径，没有与 native `du` 做结构对照。
-  - Fix: 增加 gobox/native 双边执行，按路径集合做 structured 对比。
+- `tests/parity/planned_parity_test.go:438` `WATCH-002`
+  - Current state: skipped because interval assertions may be flaky.
+  - Problem: the case can be made stable with bounded-count or relative-count assertions instead of exact timing.
+  - Action: add a watch cadence harness that compares refresh counts for different `-n` values within a bounded runtime window.
 
-- [x] `MD5-005`
-  - Problem: `TEST-CASES.md` 标记为 `exact`，但实现只校验 gobox 报错，不校验 native `md5sum --warn --check` 的退出码和警告行为。
-  - Fix: 增加 native 对照，校验双方均失败且都输出 malformed warning。
+- `tests/parity/net_parity_test.go:265` `NETSTAT-020`
+  - Current state: skipped because `netstat -c` is continuous.
+  - Problem: current implementation already has a dedicated continuous loop path in `cmds/net/cmd_netstat.go`; parity is not covered.
+  - Action: add a bounded subprocess/self-exec parity case that starts `netstat -c`, captures output for a short interval, then terminates and verifies multiple render cycles.
 
-- [x] `CURL-002` / `CURL-003` / `CURL-004` / `CURL-008` / `CURL-012` / `CURL-013` / `CURL-014` / `CURL-016`
-  - Problem: `TEST-CASES.md` 标记为 `behavior` 且给了 native baseline，但实现仍偏向 gobox-only contract，缺少 native 侧语义对照。
-  - Fix: 增加 native `curl` 对照，分别校验失败语义、文件输出、TLS 忽略证书、连接超时、`--resolve`、`-i` 等行为。
+- `tests/parity/planned_parity_test.go:477` `KILL-002`
+  - Current state: grouped under generic kill skips.
+  - Problem: `kill -l` does not need a child-process fixture and can be tested now.
+  - Action: add a structured parity case that validates common signals such as `HUP`, `INT`, `KILL`, `TERM`, plus `kill -l TERM` / `kill -l 15` parseability.
 
-- [x] `IFSTAT-001` / `IFSTAT-002` / `IFSTAT-005` / `IFSTAT-006` / `IFSTAT-007`
-  - Problem: `TEST-CASES.md` 原先把这些 case 标成 `structured/behavior + native ifstat baseline`，但常见 native `ifstat` 变体并不支持 gobox 的这些参数语义，Mode 与当前测试方式不一致。
-  - Fix: 将这些 case 调整为 `contract + gobox-only`，并把测试断言收紧到接口集合、单接口过滤、样本数、采样间隔等 gobox 可稳定保证的契约。
+## Medium priority: remove skip after adding dedicated test fixtures
+
+- `tests/parity/planned_parity_test.go:477` `KILL-001`
+  - Current state: skipped due to missing controlled lifecycle fixture.
+  - Action: add a controlled child process and verify default `TERM` behavior by observing process exit.
+
+- `tests/parity/planned_parity_test.go:479` `KILL-003`
+  - Current state: skipped due to missing controlled lifecycle fixture.
+  - Action: add a signal-specific child fixture and verify `kill -s SIGNAL` behavior.
+
+- `tests/parity/planned_parity_test.go:480` `KILL-004`
+  - Current state: skipped due to missing controlled lifecycle fixture.
+  - Action: reuse the same fixture to verify `kill -SIGNAL` short syntax.
+
+- `tests/parity/planned_parity_test.go:481` `KILL-005`
+  - Current state: skipped due to missing named-process fixture.
+  - Action: add a deterministic `exec -a ... sleep` or symlinked executable fixture and verify `pkill -f`.
+
+- `tests/parity/planned_parity_test.go:482` `KILL-006`
+  - Current state: skipped due to missing named-process fixture.
+  - Action: add the same fixture family and verify exact-name selection for `pkill -x`.
+
+- `tests/parity/planned_parity_test.go:483` `KILL-007`
+  - Current state: skipped due to missing parent-child tree fixture.
+  - Action: build a parent process that spawns a child process and verify `pkill -P`.
+
+- `tests/parity/planned_parity_test.go:484` `KILL-008`
+  - Current state: skipped due to missing age-order fixture.
+  - Action: create multiple same-pattern processes with controlled startup spacing and verify `pkill -n`.
+
+- `tests/parity/planned_parity_test.go:485` `KILL-009`
+  - Current state: skipped due to missing age-order fixture.
+  - Action: reuse the same fixture and verify `pkill -o`.
+
+## Implementation defects masked by current skips
+
+- `tests/parity/planned_parity_test.go:323` `READPATH-007`
+  - Current state: skipped as if this were only a distro-specific stderr normalization issue.
+  - Actual problem: `cmds/fs/cmd_readpath.go` quiet mode suppresses stderr text but still returns a generic error, so gobox parity exit semantics are not yet aligned with `realpath -q`.
+  - Action: align quiet-mode exit semantics first, then re-enable the parity case with normalized stderr assertions.
+
+- `tests/parity/planned_parity_test.go:403` `TIMEOUT-003`
+  - Current state: skipped for missing signal-ignoring fixture.
+  - Actual problem: `cmds/proc/cmd_timeout.go` currently returns `124` even after the post-grace `KILL` path, which does not match native timeout kill-after semantics.
+  - Action: fix `-k` exit behavior first, then add a signal-ignoring child fixture and parity case.
+
+- `tests/parity/planned_parity_test.go:406` `TIMEOUT-004`
+  - Current state: skipped for missing fixed-exit child fixture.
+  - Actual problem: `cmds/proc/cmd_timeout.go` does not actually preserve child status when `--preserve-status` is set.
+  - Action: fix preserve-status behavior first, then add a known-exit child fixture and parity case.
+
+- `tests/parity/planned_parity_test.go:400` `TIMEOUT-002`
+  - Current state: skipped for missing signal-trapping fixture.
+  - Risk: after the timeout implementation fixes above, `-s SIGNAL` still needs explicit parity verification against a signal-trapping child.
+  - Action: add a child process that traps `TERM`/custom signal and verify delivered-signal semantics.
+
+## Reasonable environment-protection skips to keep
+
+- Keep environment guards such as:
+  - `linux only` on Linux-specific `/proc` and mountinfo cases
+  - unix-like environment guard in `tests/parity/helpers_parity_test.go`
+  - network precondition guards such as default IPv4 gateway unavailable and IPv6 loopback unavailable
+
+## Environment baseline policy cleanup
+
+- Native baseline commands in parity tests should be treated as required environment prerequisites, not as normal skip conditions.
+  - Current code still contains native-missing skip paths for `curl`, `du`, `fio`, `lsof`, `md5sum`, `nc`, `ps`, plus generic helpers.
+  - New policy: assume native commands exist; if missing, that indicates a broken parity environment.
+  - Follow-up action: convert native-missing handling from "reasonable skip" to explicit environment precondition failure or centralized suite gating.
+
+## Optional cleanup
+
+- `tests/parity/net_parity_test.go:665` `NP-001`
+  - Current state: skips if interface `lo` is not available by name.
+  - Improvement: detect a loopback interface dynamically instead of hard-coding `lo`, to reduce unnecessary environment skips.

@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 )
 
 func NetstatCmd(args []string) error {
@@ -34,6 +37,14 @@ func NetstatCmd(args []string) error {
 	numericOnlyLong := fsFlags.Bool("numeric", false, "show numeric addresses and ports")
 	programs := fsFlags.Bool("p", false, "show PID/Program name for sockets")
 	programsLong := fsFlags.Bool("programs", false, "show PID/Program name for sockets")
+	routeTable := fsFlags.Bool("r", false, "show routing table")
+	routeTableLong := fsFlags.Bool("route", false, "show routing table")
+	interfaces := fsFlags.Bool("i", false, "show network interfaces")
+	interfacesLong := fsFlags.Bool("interfaces", false, "show network interfaces")
+	statistics := fsFlags.Bool("s", false, "show protocol statistics")
+	statisticsLong := fsFlags.Bool("statistics", false, "show protocol statistics")
+	continuous := fsFlags.Bool("c", false, "show output continuously")
+	continuousLong := fsFlags.Bool("continuous", false, "show output continuously")
 	ipv4Only := fsFlags.Bool("4", false, "show IPv4 sockets")
 	ipv6Only := fsFlags.Bool("6", false, "show IPv6 sockets")
 	extended := fsFlags.Bool("e", false, "show extended socket information")
@@ -48,7 +59,7 @@ func NetstatCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fsFlags.PrintDefaults()
 	}
-	if err := fsFlags.Parse(args); err != nil {
+	if err := fsFlags.Parse(normalizeNetstatArgs(args)); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}
@@ -56,7 +67,6 @@ func NetstatCmd(args []string) error {
 	}
 	_ = *allSockets || *allSocketsLong
 	_ = *numericOnly || *numericOnlyLong
-	_ = *programs || *programsLong
 	_ = *wide || *wideLong
 	if *listeningOnlyLong {
 		*listeningOnly = true
@@ -73,6 +83,21 @@ func NetstatCmd(args []string) error {
 	if *extendedLong {
 		*extended = true
 	}
+	if *programsLong {
+		*programs = true
+	}
+	if *routeTableLong {
+		*routeTable = true
+	}
+	if *interfacesLong {
+		*interfaces = true
+	}
+	if *statisticsLong {
+		*statistics = true
+	}
+	if *continuousLong {
+		*continuous = true
+	}
 	if *timersLong {
 		*timers = true
 	}
@@ -84,44 +109,82 @@ func NetstatCmd(args []string) error {
 		return errors.New("netstat: supported only on Linux in this implementation")
 	}
 
+	render := func() error {
+		if *routeTable || *interfaces || *statistics {
+			first := true
+			if *routeTable {
+				if err := printNetstatRoutes(); err != nil {
+					return err
+				}
+				first = false
+			}
+			if *interfaces {
+				if !first {
+					fmt.Println()
+				}
+				if err := printNetstatInterfaces(*extended); err != nil {
+					return err
+				}
+				first = false
+			}
+			if *statistics {
+				if !first {
+					fmt.Println()
+				}
+				if err := printNetstatStats(); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		return printNetstatSockets(*tcpOnly, *udpOnly, *unixOnly, *listeningOnly, *ipv4Only, *ipv6Only, *extended, *timers, *programs, *stateFilter, *portFilter, *sortBy)
+	}
+
+	if *continuous {
+		return runNetstatContinuous(render)
+	}
+	return render()
+}
+
+func printNetstatSockets(tcpOnly, udpOnly, unixOnly, listeningOnly, ipv4Only, ipv6Only, extended, timers, programs bool, stateFilter string, portFilter int, sortBy string) error {
 	// Parse tcp/udp tables
 	conns := make([]tcpConn, 0)
-	if !*unixOnly && !*ipv6Only {
+	if !unixOnly && !ipv6Only {
 		if cs, err := parseProcNetTCP("/proc/net/tcp", "TCP"); err == nil {
 			conns = append(conns, cs...)
 		}
 	}
-	if !*unixOnly && !*ipv4Only {
+	if !unixOnly && !ipv4Only {
 		if cs, err := parseProcNetTCP("/proc/net/tcp6", "TCP6"); err == nil {
 			conns = append(conns, cs...)
 		}
 	}
-	if !*unixOnly && !*ipv6Only {
+	if !unixOnly && !ipv6Only {
 		if cs, err := parseProcNetUDP("/proc/net/udp", "UDP"); err == nil {
 			conns = append(conns, cs...)
 		}
 	}
-	if !*unixOnly && !*ipv4Only {
+	if !unixOnly && !ipv4Only {
 		if cs, err := parseProcNetUDP("/proc/net/udp6", "UDP6"); err == nil {
 			conns = append(conns, cs...)
 		}
 	}
-	if *unixOnly || (!*tcpOnly && !*udpOnly && !*ipv4Only && !*ipv6Only) {
+	if unixOnly || (!tcpOnly && !udpOnly && !ipv4Only && !ipv6Only) {
 		if cs, err := parseProcNetUnix("/proc/net/unix"); err == nil {
 			conns = append(conns, cs...)
 		}
 	}
 
-	if *tcpOnly || *udpOnly || *unixOnly {
+	if tcpOnly || udpOnly || unixOnly {
 		filtered := conns[:0]
 		for _, c := range conns {
-			if *tcpOnly && strings.HasPrefix(c.Proto, "TCP") {
+			if tcpOnly && strings.HasPrefix(c.Proto, "TCP") {
 				filtered = append(filtered, c)
 			}
-			if *udpOnly && strings.HasPrefix(c.Proto, "UDP") {
+			if udpOnly && strings.HasPrefix(c.Proto, "UDP") {
 				filtered = append(filtered, c)
 			}
-			if *unixOnly && c.Proto == "UNIX" {
+			if unixOnly && c.Proto == "UNIX" {
 				filtered = append(filtered, c)
 			}
 		}
@@ -131,9 +194,9 @@ func NetstatCmd(args []string) error {
 	inodeToPid, pidName := buildInodePidMap()
 
 	// Apply filtering by state and port
-	if *stateFilter != "" {
+	if stateFilter != "" {
 		wanted := make(map[string]bool)
-		for _, s := range strings.Split(*stateFilter, ",") {
+		for _, s := range strings.Split(stateFilter, ",") {
 			wanted[strings.ToUpper(strings.TrimSpace(s))] = true
 		}
 		filtered := conns[:0]
@@ -144,8 +207,8 @@ func NetstatCmd(args []string) error {
 		}
 		conns = filtered
 	}
-	if *portFilter != 0 {
-		pf := *portFilter
+	if portFilter != 0 {
+		pf := portFilter
 		filtered := conns[:0]
 		for _, c := range conns {
 			if c.LocalPort == pf || c.RemotePort == pf {
@@ -154,7 +217,7 @@ func NetstatCmd(args []string) error {
 		}
 		conns = filtered
 	}
-	if *listeningOnly {
+	if listeningOnly {
 		filtered := conns[:0]
 		for _, c := range conns {
 			if isListeningConn(c) {
@@ -165,7 +228,7 @@ func NetstatCmd(args []string) error {
 	}
 
 	// Sorting
-	switch strings.ToLower(*sortBy) {
+	switch strings.ToLower(sortBy) {
 	case "recvq":
 		sort.Slice(conns, func(i, j int) bool { return conns[i].RxQueue > conns[j].RxQueue })
 	case "sendq":
@@ -185,7 +248,7 @@ func NetstatCmd(args []string) error {
 		})
 	}
 
-	printNetstatHeader(*extended, *timers)
+	printNetstatHeader(extended, timers, programs)
 	for _, c := range conns {
 		pid := "-"
 		pname := "-"
@@ -201,13 +264,68 @@ func NetstatCmd(args []string) error {
 		if proto == "" {
 			proto = "TCP"
 		}
-		printNetstatRow(c, proto, local, remote, pid+"/"+pname, *extended, *timers)
+		printNetstatRow(c, proto, local, remote, pid+"/"+pname, extended, timers, programs)
 	}
 	return nil
 }
 
-func printNetstatHeader(extended, timers bool) {
-	fmt.Printf("%-7s %-7s %-6s %-25s %-25s %-12s %s", "Recv-Q", "Send-Q", "Proto", "LocalAddress", "RemoteAddress", "State", "PID/Program")
+func normalizeNetstatArgs(args []string) []string {
+	knownWordFlags := map[string]bool{
+		"state": true, "port": true, "sort": true,
+		"all": true, "tcp": true, "udp": true, "unix": true, "listening": true,
+		"numeric": true, "programs": true, "route": true, "interfaces": true,
+		"statistics": true, "continuous": true, "extend": true, "timers": true,
+		"wide": true,
+	}
+	boolShort := "atulnpriscexoW46"
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		name := strings.TrimPrefix(arg, "-")
+		if strings.HasPrefix(arg, "--") || !strings.HasPrefix(arg, "-") || len(arg) <= 2 || strings.Contains(arg, "=") || knownWordFlags[name] {
+			out = append(out, arg)
+			continue
+		}
+		combined := true
+		for _, r := range name {
+			if !strings.ContainsRune(boolShort, r) {
+				combined = false
+				break
+			}
+		}
+		if !combined {
+			out = append(out, arg)
+			continue
+		}
+		for _, r := range name {
+			out = append(out, "-"+string(r))
+		}
+	}
+	return out
+}
+
+func runNetstatContinuous(render func() error) error {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	for {
+		if err := render(); err != nil {
+			return err
+		}
+		select {
+		case <-sigCh:
+			return nil
+		case <-time.After(time.Second):
+			fmt.Println()
+		}
+	}
+}
+
+func printNetstatHeader(extended, timers, programs bool) {
+	fmt.Printf("%-7s %-7s %-6s %-25s %-25s %-12s", "Recv-Q", "Send-Q", "Proto", "LocalAddress", "RemoteAddress", "State")
+	if programs {
+		fmt.Printf(" %s", "PID/Program")
+	}
 	if extended {
 		fmt.Printf(" %-8s %s", "User", "Inode")
 	}
@@ -217,8 +335,11 @@ func printNetstatHeader(extended, timers bool) {
 	fmt.Println()
 }
 
-func printNetstatRow(c tcpConn, proto, local, remote, pidProgram string, extended, timers bool) {
-	fmt.Printf("%-7d %-7d %-6s %-25s %-25s %-12s %s", c.RxQueue, c.TxQueue, proto, local, remote, c.State, pidProgram)
+func printNetstatRow(c tcpConn, proto, local, remote, pidProgram string, extended, timers, programs bool) {
+	fmt.Printf("%-7d %-7d %-6s %-25s %-25s %-12s", c.RxQueue, c.TxQueue, proto, local, remote, c.State)
+	if programs {
+		fmt.Printf(" %s", pidProgram)
+	}
 	if extended {
 		fmt.Printf(" %-8s %s", c.UID, c.Inode)
 	}
@@ -246,6 +367,381 @@ func isListeningConn(c tcpConn) bool {
 		return true
 	}
 	return strings.HasPrefix(c.Proto, "UDP") && c.RemotePort == 0
+}
+
+type netstatIPv4Route struct {
+	Iface       string
+	Destination string
+	Gateway     string
+	Genmask     string
+	Flags       string
+	Metric      string
+}
+
+type netstatIPv6Route struct {
+	Iface       string
+	Destination string
+	Gateway     string
+	Flags       string
+	Metric      string
+}
+
+type netstatInterface struct {
+	Name    string
+	MTU     int
+	Flags   string
+	HWAddr  string
+	RXBytes uint64
+	RXOK    uint64
+	RXErr   uint64
+	RXDrop  uint64
+	TXBytes uint64
+	TXOK    uint64
+	TXErr   uint64
+	TXDrop  uint64
+}
+
+type netstatStatSection struct {
+	Name   string
+	Stats  map[string]string
+	Fields []string
+}
+
+func printNetstatRoutes() error {
+	ipv4, err4 := parseProcNetRoute("/proc/net/route")
+	ipv6, err6 := parseProcNetIPv6Route("/proc/net/ipv6_route")
+	if err4 != nil && err6 != nil {
+		return err4
+	}
+	fmt.Println("Kernel IP routing table")
+	fmt.Printf("%-15s %-15s %-15s %-6s %-6s %s\n", "Destination", "Gateway", "Genmask", "Flags", "Metric", "Iface")
+	for _, r := range ipv4 {
+		fmt.Printf("%-15s %-15s %-15s %-6s %-6s %s\n", r.Destination, r.Gateway, r.Genmask, r.Flags, r.Metric, r.Iface)
+	}
+	if len(ipv6) > 0 {
+		fmt.Println()
+		fmt.Println("Kernel IPv6 routing table")
+		fmt.Printf("%-39s %-39s %-6s %-6s %s\n", "Destination", "Gateway", "Flags", "Metric", "Iface")
+		for _, r := range ipv6 {
+			fmt.Printf("%-39s %-39s %-6s %-6s %s\n", r.Destination, r.Gateway, r.Flags, r.Metric, r.Iface)
+		}
+	}
+	return nil
+}
+
+func parseProcNetRoute(path string) ([]netstatIPv4Route, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var routes []netstatIPv4Route
+	scanner := bufio.NewScanner(f)
+	first := true
+	for scanner.Scan() {
+		if first {
+			first = false
+			continue
+		}
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 8 {
+			continue
+		}
+		routes = append(routes, netstatIPv4Route{
+			Iface:       fields[0],
+			Destination: parseIPv4RouteHex(fields[1]),
+			Gateway:     parseIPv4RouteHex(fields[2]),
+			Flags:       routeFlagsName(fields[3]),
+			Metric:      fields[6],
+			Genmask:     parseIPv4RouteHex(fields[7]),
+		})
+	}
+	return routes, scanner.Err()
+}
+
+func parseProcNetIPv6Route(path string) ([]netstatIPv6Route, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var routes []netstatIPv6Route
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 10 {
+			continue
+		}
+		destPrefix := parseHexInt(fields[1], 64)
+		destination := parseIPv6RouteHex(fields[0])
+		if destPrefix >= 0 {
+			destination = fmt.Sprintf("%s/%d", destination, destPrefix)
+		}
+		routes = append(routes, netstatIPv6Route{
+			Destination: destination,
+			Gateway:     parseIPv6RouteHex(fields[4]),
+			Metric:      fmt.Sprintf("%d", parseHexInt(fields[5], 64)),
+			Flags:       routeFlagsName(fields[8]),
+			Iface:       fields[9],
+		})
+	}
+	return routes, scanner.Err()
+}
+
+func parseIPv4RouteHex(s string) string {
+	if len(s) != 8 {
+		return s
+	}
+	var bytes [4]byte
+	for i := 0; i < 4; i++ {
+		v, err := strconv.ParseUint(s[i*2:i*2+2], 16, 8)
+		if err != nil {
+			return s
+		}
+		bytes[3-i] = byte(v)
+	}
+	return fmt.Sprintf("%d.%d.%d.%d", bytes[0], bytes[1], bytes[2], bytes[3])
+}
+
+func parseIPv6RouteHex(s string) string {
+	if len(s) != 32 {
+		return s
+	}
+	b, err := hex.DecodeString(s)
+	if err != nil || len(b) != 16 {
+		return s
+	}
+	return net.IP(b).String()
+}
+
+func routeFlagsName(s string) string {
+	flags := parseHexInt(s, 64)
+	if flags < 0 {
+		return s
+	}
+	var out strings.Builder
+	if flags&0x1 != 0 {
+		out.WriteByte('U')
+	}
+	if flags&0x2 != 0 {
+		out.WriteByte('G')
+	}
+	if flags&0x4 != 0 {
+		out.WriteByte('H')
+	}
+	if flags&0x10 != 0 {
+		out.WriteByte('D')
+	}
+	if flags&0x20 != 0 {
+		out.WriteByte('M')
+	}
+	if out.Len() == 0 {
+		return "-"
+	}
+	return out.String()
+}
+
+func printNetstatInterfaces(extended bool) error {
+	ifaces, err := parseProcNetDev("/proc/net/dev")
+	if err != nil {
+		return err
+	}
+	if extended {
+		fmt.Printf("%-10s %6s %12s %10s %7s %7s %12s %10s %7s %7s %-18s %s\n", "Iface", "MTU", "RX-Bytes", "RX-OK", "RX-ERR", "RX-DRP", "TX-Bytes", "TX-OK", "TX-ERR", "TX-DRP", "HWaddr", "Flg")
+		for _, iface := range ifaces {
+			fmt.Printf("%-10s %6d %12d %10d %7d %7d %12d %10d %7d %7d %-18s %s\n", iface.Name, iface.MTU, iface.RXBytes, iface.RXOK, iface.RXErr, iface.RXDrop, iface.TXBytes, iface.TXOK, iface.TXErr, iface.TXDrop, iface.HWAddr, iface.Flags)
+		}
+		return nil
+	}
+	fmt.Printf("%-10s %6s %10s %7s %7s %10s %7s %7s %s\n", "Iface", "MTU", "RX-OK", "RX-ERR", "RX-DRP", "TX-OK", "TX-ERR", "TX-DRP", "Flg")
+	for _, iface := range ifaces {
+		fmt.Printf("%-10s %6d %10d %7d %7d %10d %7d %7d %s\n", iface.Name, iface.MTU, iface.RXOK, iface.RXErr, iface.RXDrop, iface.TXOK, iface.TXErr, iface.TXDrop, iface.Flags)
+	}
+	return nil
+}
+
+func parseProcNetDev(path string) ([]netstatInterface, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var ifaces []netstatInterface
+	scanner := bufio.NewScanner(f)
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		if lineNo <= 2 {
+			continue
+		}
+		line := scanner.Text()
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		name := strings.TrimSpace(parts[0])
+		fields := strings.Fields(parts[1])
+		if len(fields) < 16 {
+			continue
+		}
+		iface := netstatInterface{
+			Name:    name,
+			RXBytes: parseUintField(fields[0]),
+			RXOK:    parseUintField(fields[1]),
+			RXErr:   parseUintField(fields[2]),
+			RXDrop:  parseUintField(fields[3]),
+			TXBytes: parseUintField(fields[8]),
+			TXOK:    parseUintField(fields[9]),
+			TXErr:   parseUintField(fields[10]),
+			TXDrop:  parseUintField(fields[11]),
+			MTU:     -1,
+			Flags:   "-",
+			HWAddr:  "-",
+		}
+		if ni, err := net.InterfaceByName(name); err == nil {
+			iface.MTU = ni.MTU
+			if ni.Flags.String() != "" {
+				iface.Flags = ni.Flags.String()
+			}
+			if ni.HardwareAddr.String() != "" {
+				iface.HWAddr = ni.HardwareAddr.String()
+			}
+		}
+		ifaces = append(ifaces, iface)
+	}
+	return ifaces, scanner.Err()
+}
+
+func printNetstatStats() error {
+	sections, err := parseNetstatStatsFiles([]string{"/proc/net/snmp", "/proc/net/netstat", "/proc/net/snmp6"})
+	if err != nil {
+		return err
+	}
+	for i, section := range sections {
+		if i > 0 {
+			fmt.Println()
+		}
+		fmt.Printf("%s:\n", section.Name)
+		for _, field := range section.Fields {
+			fmt.Printf("    %-32s %s\n", field, section.Stats[field])
+		}
+	}
+	return nil
+}
+
+func parseNetstatStatsFiles(paths []string) ([]netstatStatSection, error) {
+	sectionsByName := make(map[string]*netstatStatSection)
+	var order []string
+	var firstErr error
+	for _, path := range paths {
+		if strings.HasSuffix(path, "snmp6") {
+			if err := parseProcNetSingleStats(path, sectionsByName, &order); err != nil && firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if err := parseProcNetPairedStats(path, sectionsByName, &order); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if len(order) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	sections := make([]netstatStatSection, 0, len(order))
+	for _, name := range order {
+		sections = append(sections, *sectionsByName[name])
+	}
+	return sections, nil
+}
+
+func parseProcNetPairedStats(path string, sections map[string]*netstatStatSection, order *[]string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	var headers []string
+	var sectionName string
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 2 {
+			continue
+		}
+		name := strings.TrimSuffix(fields[0], ":")
+		if len(headers) == 0 || name != sectionName {
+			sectionName = name
+			headers = fields[1:]
+			continue
+		}
+		section := ensureNetstatStatSection(name, sections, order)
+		for i, header := range headers {
+			if i+1 >= len(fields) {
+				break
+			}
+			if _, exists := section.Stats[header]; !exists {
+				section.Fields = append(section.Fields, header)
+			}
+			section.Stats[header] = fields[i+1]
+		}
+		headers = nil
+		sectionName = ""
+	}
+	return scanner.Err()
+}
+
+func parseProcNetSingleStats(path string, sections map[string]*netstatStatSection, order *[]string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) != 2 {
+			continue
+		}
+		name, field := splitSNMP6Field(fields[0])
+		section := ensureNetstatStatSection(name, sections, order)
+		if _, exists := section.Stats[field]; !exists {
+			section.Fields = append(section.Fields, field)
+		}
+		section.Stats[field] = fields[1]
+	}
+	return scanner.Err()
+}
+
+func ensureNetstatStatSection(name string, sections map[string]*netstatStatSection, order *[]string) *netstatStatSection {
+	if section, ok := sections[name]; ok {
+		return section
+	}
+	section := &netstatStatSection{Name: name, Stats: make(map[string]string)}
+	sections[name] = section
+	*order = append(*order, name)
+	return section
+}
+
+func splitSNMP6Field(field string) (string, string) {
+	for _, prefix := range []string{"Ip6", "Icmp6", "Udp6", "Tcp6", "UdpLite6"} {
+		if strings.HasPrefix(field, prefix) {
+			return prefix, strings.TrimPrefix(field, prefix)
+		}
+	}
+	return "Snmp6", field
+}
+
+func parseUintField(s string) uint64 {
+	v, _ := strconv.ParseUint(s, 10, 64)
+	return v
+}
+
+func parseHexInt(s string, bitSize int) int64 {
+	v, err := strconv.ParseInt(s, 16, bitSize)
+	if err != nil {
+		return -1
+	}
+	return v
 }
 
 type tcpConn struct {

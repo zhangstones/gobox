@@ -274,8 +274,8 @@ func invokeGobox(args []string) error {
 		return textcmd.Base64Cmd(argv)
 	case "strings":
 		return textcmd.StringsCmd(argv)
-	case "cmp":
-		return textcmd.CmpCmd(argv)
+	case "diff":
+		return textcmd.DiffCmd(argv)
 	case "uniq":
 		return textcmd.UniqCmd(argv)
 	case "nc":
@@ -298,10 +298,7 @@ func runNativeCLI(t *testing.T, dir string, stdin string, command string, args .
 	if runtime.GOOS == "windows" {
 		t.Skip("native parity tests require unix-like environment")
 	}
-	path, err := exec.LookPath(command)
-	if err != nil {
-		t.Skipf("native command %s not found", command)
-	}
+	path := requireNativeCommand(t, command)
 	cmd := exec.Command(path, args...)
 	cmd.Dir = dir
 	if stdin != "" {
@@ -310,16 +307,25 @@ func runNativeCLI(t *testing.T, dir string, stdin string, command string, args .
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf
-	err = cmd.Run()
+	err := cmd.Run()
 	exitCode := 0
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
-			t.Skipf("native command %s could not run: %v", command, err)
+			t.Fatalf("native command %s could not run: %v", command, err)
 		}
 	}
 	return parityResult{Stdout: stdoutBuf.String(), Stderr: stderrBuf.String(), ExitCode: exitCode}
+}
+
+func requireNativeCommand(t *testing.T, command string) string {
+	t.Helper()
+	path, err := exec.LookPath(command)
+	if err != nil {
+		t.Fatalf("parity environment invalid: native command %s not found", command)
+	}
+	return path
 }
 
 func runExactParityCases(t *testing.T, cases []parityCase) {
@@ -627,10 +633,7 @@ func runGoboxNCListen(t *testing.T, port, serverStdin, clientInput string, timeo
 
 func runNativeNCListen(t *testing.T, port, serverStdin, clientInput string, timeout time.Duration) ncListenResult {
 	t.Helper()
-	path, err := exec.LookPath("nc")
-	if err != nil {
-		t.Skip("native nc not found")
-	}
+	path := requireNativeCommand(t, "nc")
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "-l", port)
@@ -643,7 +646,7 @@ func runNativeNCListen(t *testing.T, port, serverStdin, clientInput string, time
 	}
 	time.Sleep(150 * time.Millisecond)
 	clientOutput, clientErr := exchangeWithNCListener(port, clientInput, serverStdin)
-	err = cmd.Wait()
+	err := cmd.Wait()
 
 	exitCode := 0
 	if err != nil && ctx.Err() == nil {
@@ -709,10 +712,7 @@ func defaultIPv4Gateway(t *testing.T) string {
 
 func runNativeFollow(t *testing.T, dir, command string, args []string, action func(), timeout time.Duration) parityResult {
 	t.Helper()
-	path, err := exec.LookPath(command)
-	if err != nil {
-		t.Skipf("native command %s not found", command)
-	}
+	path := requireNativeCommand(t, command)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, args...)
@@ -727,7 +727,7 @@ func runNativeFollow(t *testing.T, dir, command string, args []string, action fu
 	if action != nil {
 		action()
 	}
-	err = cmd.Wait()
+	err := cmd.Wait()
 	exitCode := 0
 	if err != nil && ctx.Err() == nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {

@@ -99,8 +99,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = text.Base64Cmd(args)
 	case "strings":
 		err = text.StringsCmd(args)
-	case "cmp":
-		err = text.CmpCmd(args)
+	case "diff":
+		err = text.DiffCmd(args)
 	case "uniq":
 		err = text.UniqCmd(args)
 	case "nc":
@@ -180,7 +180,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  hex      Hex dump and encode/decode")
 	fmt.Fprintln(w, "  base64   Base64 encode/decode")
 	fmt.Fprintln(w, "  strings  Extract printable strings")
-	fmt.Fprintln(w, "  cmp      Compare files byte by byte")
+	fmt.Fprintln(w, "  diff     Compare files line by line")
 	fmt.Fprintln(w, "  nc       Netcat - arbitrary TCP/UDP connections and listening")
 	fmt.Fprintln(w, "  tw       Tiny web server for static files or benchmark")
 	fmt.Fprintln(w, "  ifstat   Network interface statistics monitoring")

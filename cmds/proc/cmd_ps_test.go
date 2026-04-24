@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -140,6 +141,21 @@ func TestPsCmdNameFilterMatchesPgrepStyleRegex(t *testing.T) {
 	}
 }
 
+func TestTruncateString(t *testing.T) {
+	if got := truncateString("hello", 0); got != "hello" {
+		t.Fatalf("expected no truncation, got %q", got)
+	}
+	if got := truncateString("hello", 3); got != "hel" {
+		t.Fatalf("expected hard truncation to 3, got %q", got)
+	}
+	if got := truncateString("hello", 4); got != "h..." {
+		t.Fatalf("expected ellipsis truncation, got %q", got)
+	}
+	if got := truncateString("hi", 5); got != "hi" {
+		t.Fatalf("expected no truncation, got %q", got)
+	}
+}
+
 func TestPsCmdWideWideDisablesTruncation(t *testing.T) {
 	exePath, err := os.Executable()
 	if err != nil {
@@ -174,5 +190,52 @@ func TestPsCmdCustomOutputFields(t *testing.T) {
 		if !strings.Contains(header, field) {
 			t.Fatalf("expected custom header to contain %s, got %q", field, header)
 		}
+	}
+}
+
+func TestPsCmdGNUCompatibilityFiltersAndFields(t *testing.T) {
+	pid := os.Getpid()
+	output, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"-A", "-p", strconv.Itoa(pid), "-o", "pid,ppid,stat,etime,time,rss,vsz,args", "--sort", "-pid", "-ww", "-i", "1"})
+	})
+	if err != nil {
+		t.Fatalf("PsCmd failed: %v", err)
+	}
+	if !strings.Contains(output, strconv.Itoa(pid)) {
+		t.Fatalf("expected filtered output to contain pid %d, got %q", pid, output)
+	}
+	for _, field := range []string{"PID", "PPID", "STAT", "ELAPSED", "TIME", "RSS", "VSZ", "CMD"} {
+		if !strings.Contains(output, field) {
+			t.Fatalf("expected custom header to contain %s, got %q", field, output)
+		}
+	}
+}
+
+func TestPsCmdBSDStyleAux(t *testing.T) {
+	output, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"aux", "-n", "1", "-i", "1"})
+	})
+	if err != nil {
+		t.Fatalf("PsCmd failed: %v", err)
+	}
+	for _, field := range []string{"USER", "PID", "%CPU", "%MEM", "VSZ", "RSS", "TTY", "STAT", "START", "TIME", "CMD"} {
+		if !strings.Contains(output, field) {
+			t.Fatalf("expected aux header to contain %s, got %q", field, output)
+		}
+	}
+}
+
+func TestTopCmdBatchFiltersAndSorts(t *testing.T) {
+	output, err := captureProcOutput(t, func() error {
+		return TopCmd([]string{"-b", "-H", "-n", "1", "-d", "0", "-p", strconv.Itoa(os.Getpid()), "-o", "%cpu", "-c"})
+	})
+	if err != nil {
+		t.Fatalf("TopCmd failed: %v", err)
+	}
+	if strings.Contains(output, "\x1b[H\x1b[2J") {
+		t.Fatalf("expected batch output without clear-screen escape, got %q", output)
+	}
+	if !strings.Contains(output, strconv.Itoa(os.Getpid())) {
+		t.Fatalf("expected top output to include current pid, got %q", output)
 	}
 }

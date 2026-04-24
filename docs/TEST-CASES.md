@@ -22,7 +22,7 @@
 以下命令已按 `docs/CMD-DESIGN.md` 当前条目建立参数级 case；自动化测试按 exact、structured、behavior、contract 四类分别落地，无法稳定自动化的环境依赖项需在测试中显式说明或跳过。
 
 - 文件系统：`find`、`du`、`df`、`readpath`、`stat`、`truncate`
-- 文本处理：`head`、`tail`、`grep`、`sed`、`sort`、`uniq`、`wc`、`hex`、`base64`、`strings`、`cmp`
+- 文本处理：`head`、`tail`、`grep`、`sed`、`sort`、`uniq`、`wc`、`hex`、`base64`、`strings`、`diff`
 - 网络：`curl`、`nc`、`netstat`、`tw`、`nslookup/dig`、`ifstat`、`ip`、`np`
 - 进程：`ps`、`top`、`free`、`xargs`、`kill`、`lsof`、`watch`、`timeout`
 - 磁盘：`iostat`、`ioperf`、`md5sum`、`sha256sum`
@@ -58,6 +58,12 @@
 |---|---|---|---|---|---|
 | DU-001 | `-h` | structured | `du -h` | 小文件树 | 输出包含同等目录项与可读大小语义 |
 | DU-002 | `-s` | structured | `du -s` | 多目录 | 仅输出汇总项 |
+| DU-003 | `-a` | structured | `du -a` | file tree | 文件与目录项均输出 |
+| DU-004 | `-c` | structured | `du -c` | multiple paths | 输出 total 汇总行 |
+| DU-005 | `-d`, `--max-depth` | structured | `du -d` | nested tree | 最大深度限制生效 |
+| DU-006 | `--exclude` | structured | `du --exclude` | mixed file names | 排除模式过滤生效 |
+| DU-007 | `-x` | contract | `du -x` | local tree | 参数可解析并保持单文件系统遍历语义 |
+| DU-008 | `--apparent-size` | structured | `du --apparent-size` | sparse/small files | 使用表观大小统计 |
 
 ### df
 
@@ -68,6 +74,13 @@
 | DF-003 | `-T` | structured | `df -T` | local filesystems | 文件系统类型列存在且关键挂载点一致 |
 | DF-004 | `-i` | structured | `df -i` | local filesystems | inode 字段存在且关键挂载点一致 |
 | DF-005 | `PATH...` | structured | `df PATH...` | temp dir path | 仅输出指定路径所在文件系统 |
+| DF-006 | `-H` | structured | `df -H` | controlled statfs fixture | SI 单位格式生效 |
+| DF-007 | `-a` | structured | `df -a` | duplicate/zero mount fixture | all 模式包含默认隐藏项 |
+| DF-008 | `-l` | structured | `df -l` | local/remote mount fixture | 仅保留本地文件系统 |
+| DF-009 | `-t TYPE` | structured | `df -t` | mixed fs type fixture | 类型包含过滤生效 |
+| DF-010 | `-x TYPE` | structured | `df -x` | mixed fs type fixture | 类型排除过滤生效 |
+| DF-011 | `--total` | structured | `df --total` | controlled statfs fixture | total 汇总行生效 |
+| DF-012 | `-P` | structured | `df -P` | controlled statfs fixture | POSIX 表头和单行格式生效 |
 
 ### readpath
 
@@ -240,15 +253,19 @@
 | STRINGS-004 | `-t o|d|x` | exact | `strings -t` | binary fixture | 偏移进制与位置一致 |
 | STRINGS-005 | `-a` | exact | `strings -a` | binary fixture | 全文件扫描行为一致 |
 
-### cmp
+### diff
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
-| CMP-001 | default compare | exact | `cmp` | equal/different files | 首个差异输出与退出码一致 |
-| CMP-002 | `-s` | exact | `cmp -s` | equal/different files | 静默输出与退出码一致 |
-| CMP-003 | `-l` | exact | `cmp -l` | binary files with multiple diffs | 所有差异位置和值一致 |
-| CMP-004 | `-n NUM` | exact | `cmp -n` | files differing after NUM | 仅比较前 NUM 字节 |
-| CMP-005 | stdin side `-` | exact | `cmp FILE -` | file + stdin | stdin 输入比较结果一致 |
+| DIFF-001 | default compare | exact | `diff` | changed/added/deleted text files | normal diff 范围与退出码一致 |
+| DIFF-002 | `-u`, `--unified` | exact | `diff -u` | changed text files | unified diff 头与 hunk 内容一致 |
+| DIFF-003 | `-q`, `--brief` | exact | `diff -q` | equal/different files | 简要输出与退出码一致 |
+| DIFF-004 | `-r`, `--recursive` | behavior | `diff -r` | directory trees | 递归遍历稳定有序 |
+| DIFF-005 | `-N`, `--new-file` | behavior | `diff -N` | missing file | 缺失文件按空文件比较 |
+| DIFF-006 | `--strip-trailing-cr` | exact | `diff --strip-trailing-cr` | CRLF/LF files | 行尾 CR 被忽略 |
+| DIFF-007 | stdin side `-` | behavior | `diff FILE -` | file + stdin | stdin 输入比较结果一致 |
+| DIFF-008 | binary files | behavior | `diff` | binary files | 仅报告二进制差异，不转储内容 |
+| DIFF-009 | equal files | exact | `diff` | equal files | 无输出且退出码为 0 |
 
 ---
 
@@ -319,6 +336,11 @@
 | NETSTAT-013 | `-e, --extend` | structured | `netstat -e` | local sockets | 扩展列可用 |
 | NETSTAT-014 | `-o, --timers` | structured | `netstat -o` | local sockets | Timer 列可用 |
 | NETSTAT-015 | `-W, --wide` | structured | `netstat -W` | local sockets | 参数可用且不截断地址 |
+| NETSTAT-016 | combined short flags, e.g. `-tnlp` | structured | `netstat -tnlp` | local TCP listener | 合并短参数展开并命中监听项 |
+| NETSTAT-017 | `-r` | structured | `netstat -r` | local route table | 路由表输出包含关键表头 |
+| NETSTAT-018 | `-i` | structured | `netstat -i` | local interfaces | 接口表输出包含关键表头 |
+| NETSTAT-019 | `-s` | structured | `netstat -s` | local protocol stats | 协议统计输出包含关键段落 |
+| NETSTAT-020 | `-c` | contract | `netstat -c` | bounded command execution | continuous 模式可进入刷新路径 |
 
 ### tw
 
@@ -402,6 +424,13 @@
 | PS-009 | `-ww` | contract | `ps -ww` | long cmdline process | 不截断宽度 |
 | PS-010 | `-o FIELD1,FIELD2` | structured | `ps -o` | current process | 自定义列输出正确 |
 | PS-011 | `-comm string` | structured | `pgrep -x` | current process | 进程名精确匹配符合 `pgrep -x` |
+| PS-012 | `-A` | structured | `ps -A` | current process | all-process alias 可看到当前进程 |
+| PS-013 | `-F` | structured | `ps -F` | current process | extra full 格式包含关键列 |
+| PS-014 | `-u USER` | structured | `ps -u` | current user | 用户过滤命中当前进程集合 |
+| PS-015 | `-p PID` | structured | `ps -p` | current process | PID 过滤只保留目标进程 |
+| PS-016 | `-C NAME` | structured | `ps -C` | current process name | 命令名过滤命中目标进程 |
+| PS-017 | `--sort FIELD` | structured | `ps --sort` | current processes | GNU 风格排序参数生效 |
+| PS-018 | `aux` | structured | `ps aux` | current process | BSD 风格输出包含 USER/PID/CMD 等列 |
 
 ### top
 
@@ -411,6 +440,13 @@
 | TOP-002 | `-n int` | behavior | `top -n` | single iteration | 指定迭代次数后退出 |
 | TOP-003 | `-r` | structured | `top -r` | single iteration | 排序方向切换且关键排序方向符合预期 |
 | TOP-004 | `-sort string` | contract | gobox-only | single iteration | 排序字段生效 |
+| TOP-005 | `-b` | contract | `top -b` | single iteration | batch 模式不输出清屏控制符 |
+| TOP-006 | `-p PID` | structured | `top -p` | current process | PID 过滤命中当前进程 |
+| TOP-007 | `-u USER` | structured | `top -u` | current user | 用户过滤可执行并输出进程表 |
+| TOP-008 | `-H` | contract | `top -H` | single iteration | 线程模式参数被接受 |
+| TOP-009 | `-i` | contract | `top -i` | single iteration | idle 过滤参数被接受 |
+| TOP-010 | `-c` | contract | `top -c` | single iteration | 完整命令行模式被接受 |
+| TOP-011 | `-o FIELD` | contract | `top -o` | single iteration | 排序字段参数被接受 |
 
 ### free
 
@@ -543,7 +579,7 @@
 ## 实施优先级
 
 ### 第一批（高稳定、强 parity）
-- `grep`, `sed`, `head`, `tail`, `sort`, `uniq`, `wc`, `md5sum`, `sha256sum`, `xargs`, `find`, `readpath`, `hex`, `base64`, `strings`, `cmp`
+- `grep`, `sed`, `head`, `tail`, `sort`, `uniq`, `wc`, `md5sum`, `sha256sum`, `xargs`, `find`, `readpath`, `hex`, `base64`, `strings`, `diff`
 
 ### 第二批（结构化 parity）
 - `ps`, `netstat`, `du`, `df`, `iostat`, `ifstat`, `ip`, `free`, `stat`, `lsof`

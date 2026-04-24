@@ -23,7 +23,7 @@
 ## 当前命令分类
 
 - 文件系统：`find`、`du`、`df`、`readpath`、`stat`、`truncate`
-- 文本处理：`head`、`tail`、`grep`、`sed`、`sort`、`uniq`、`wc`、`seq`、`rand`、`hex`、`base64`、`strings`、`cmp`
+- 文本处理：`head`、`tail`、`grep`、`sed`、`sort`、`uniq`、`wc`、`seq`、`rand`、`hex`、`base64`、`strings`、`diff`
 - 网络：`curl`、`nc`、`netstat`、`tw`、`nslookup/dig`、`ifstat`、`ip`、`np`
 - 进程：`ps`、`top`、`free`、`xargs`、`kill`、`lsof`、`watch`、`timeout`
 - 磁盘：`iostat`、`ioperf`、`md5sum`、`sha256sum`

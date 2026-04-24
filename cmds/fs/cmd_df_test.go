@@ -57,6 +57,17 @@ func TestDfHuman(t *testing.T) {
 	}
 }
 
+func TestDfSIHuman(t *testing.T) {
+	dir := setupDfFixture(t)
+	out, err := captureFsCmd(t, func() error { return DfCmd([]string{"-H", dir}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "15.4K") {
+		t.Fatalf("expected SI formatted used size in df output %q", out)
+	}
+}
+
 func TestDfType(t *testing.T) {
 	dir := setupDfFixture(t)
 	out, err := captureFsCmd(t, func() error { return DfCmd([]string{"-T", dir}) })
@@ -189,6 +200,98 @@ func TestDfDefaultDeduplicatesMountTargets(t *testing.T) {
 	}
 	if strings.Count(out, "/mnt/a") != 1 {
 		t.Fatalf("expected duplicate mount target once, got %q", out)
+	}
+}
+
+func TestDfAllIncludesDuplicateMountTargets(t *testing.T) {
+	oldGOOS, oldReadMounts, oldStatPath, oldStatfs := dfGOOS, readMounts, statDfPath, statfsDfPath
+	dfGOOS = "linux"
+	readMounts = func() ([]mountInfo, error) {
+		return []mountInfo{
+			{Source: "dev-a", Target: "/mnt/a", FSType: "tmpfs"},
+			{Source: "dev-b", Target: "/mnt/a", FSType: "tmpfs"},
+		}, nil
+	}
+	statfsDfPath = func(_ string, st *syscall.Statfs_t) error {
+		st.Bsize = 1024
+		st.Blocks = 10
+		st.Bavail = 5
+		return nil
+	}
+	t.Cleanup(func() {
+		dfGOOS, readMounts, statDfPath, statfsDfPath = oldGOOS, oldReadMounts, oldStatPath, oldStatfs
+	})
+	out, err := captureFsCmd(t, func() error { return DfCmd([]string{"-a"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(out, "/mnt/a") != 2 {
+		t.Fatalf("expected duplicate mount target twice with -a, got %q", out)
+	}
+}
+
+func TestDfTypeFiltersAndLocal(t *testing.T) {
+	oldGOOS, oldReadMounts, oldStatPath, oldStatfs := dfGOOS, readMounts, statDfPath, statfsDfPath
+	dfGOOS = "linux"
+	readMounts = func() ([]mountInfo, error) {
+		return []mountInfo{
+			{Source: "local-dev", Target: "/local", FSType: "ext4"},
+			{Source: "server:/share", Target: "/remote", FSType: "nfs"},
+			{Source: "tmp", Target: "/tmpfs", FSType: "tmpfs"},
+		}, nil
+	}
+	statfsDfPath = func(_ string, st *syscall.Statfs_t) error {
+		st.Bsize = 1024
+		st.Blocks = 10
+		st.Bavail = 5
+		return nil
+	}
+	t.Cleanup(func() {
+		dfGOOS, readMounts, statDfPath, statfsDfPath = oldGOOS, oldReadMounts, oldStatPath, oldStatfs
+	})
+	out, err := captureFsCmd(t, func() error { return DfCmd([]string{"-l", "-x", "tmpfs"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "/local") || strings.Contains(out, "/remote") || strings.Contains(out, "/tmpfs") {
+		t.Fatalf("unexpected local/exclude output %q", out)
+	}
+
+	out, err = captureFsCmd(t, func() error { return DfCmd([]string{"-t", "tmpfs"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "/local") || !strings.Contains(out, "/tmpfs") {
+		t.Fatalf("unexpected include type output %q", out)
+	}
+}
+
+func TestDfTotalAndPosix(t *testing.T) {
+	oldGOOS, oldReadMounts, oldStatPath, oldStatfs := dfGOOS, readMounts, statDfPath, statfsDfPath
+	dfGOOS = "linux"
+	readMounts = func() ([]mountInfo, error) {
+		return []mountInfo{
+			{Source: "dev-a", Target: "/a", FSType: "ext4"},
+			{Source: "dev-b", Target: "/b", FSType: "ext4"},
+		}, nil
+	}
+	statfsDfPath = func(_ string, st *syscall.Statfs_t) error {
+		st.Bsize = 1024
+		st.Blocks = 10
+		st.Bavail = 4
+		return nil
+	}
+	t.Cleanup(func() {
+		dfGOOS, readMounts, statDfPath, statfsDfPath = oldGOOS, oldReadMounts, oldStatPath, oldStatfs
+	})
+	out, err := captureFsCmd(t, func() error { return DfCmd([]string{"-P", "--total"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"1024-blocks", "total"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in df output %q", want, out)
+		}
 	}
 }
 

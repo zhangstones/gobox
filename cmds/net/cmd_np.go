@@ -363,14 +363,41 @@ func npUDP(opts *npOptions) error {
 
 // ICMP ping using raw socket
 func npICMP(opts *npOptions) error {
+	// Prefer the system ping binary when present; it usually carries the
+	// capabilities needed for ICMP echo without requiring a privileged gobox process.
+	if path, err := exec.LookPath("ping"); err == nil {
+		args := []string{}
+		if opts.flood {
+			args = append(args, "-f")
+		}
+		if opts.quiet {
+			args = append(args, "-q")
+		}
+		if opts.iface != "" {
+			args = append(args, "-I", opts.iface)
+		}
+		if opts.interval > 0 {
+			args = append(args, "-i", strconv.FormatFloat(opts.interval.Seconds(), 'f', -1, 64))
+		}
+		if opts.count > 0 {
+			args = append(args, "-c", strconv.Itoa(opts.count))
+		}
+		args = append(args, "-W", strconv.Itoa(npWaitSeconds(opts)), opts.host)
+		cmd := exec.Command(path, args...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+		return nil
+	}
+
 	// Try to resolve hostname first
 	ipAddr, err := net.ResolveIPAddr("ip", opts.host)
 	if err != nil {
 		return fmt.Errorf("cannot resolve %s: %w", opts.host, err)
 	}
 
-	// For ICMP, we use the system's ping utility if available
-	// or create a raw socket (requires root)
 	fmt.Printf("PING %s (%s): 56 data bytes\n", opts.host, ipAddr.String())
 
 	var sent, received, errors int64

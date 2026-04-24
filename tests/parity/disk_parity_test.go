@@ -4,14 +4,13 @@ import (
 	"crypto/md5"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
 
-func TestParity_DiskCommands(t *testing.T) {
+func TestParity_Md5sumCases(t *testing.T) {
 	runExactParityCases(t, []parityCase{
 		{
 			ID:            "MD5-002",
@@ -65,9 +64,7 @@ func TestParity_DiskCommands(t *testing.T) {
 			},
 		},
 	})
-}
 
-func TestParity_DiskLightweightCases(t *testing.T) {
 	t.Run("MD5-005", func(t *testing.T) {
 		env := t.TempDir()
 		writeFile(t, filepath.Join(env, "checksums.md5"), "bad line\n")
@@ -83,7 +80,9 @@ func TestParity_DiskLightweightCases(t *testing.T) {
 			t.Fatalf("md5sum --warn missing native warning: %+v", native)
 		}
 	})
+}
 
+func TestParity_IostatCases(t *testing.T) {
 	if runtime.GOOS == "linux" {
 		for _, tc := range []struct {
 			id   string
@@ -100,7 +99,11 @@ func TestParity_DiskLightweightCases(t *testing.T) {
 				}
 			})
 		}
+	}
+}
 
+func TestParity_IoperfCases(t *testing.T) {
+	if runtime.GOOS == "linux" {
 		for _, tc := range []struct {
 			id   string
 			args []string
@@ -141,13 +144,11 @@ func TestParity_DiskLightweightCases(t *testing.T) {
 	}
 }
 
-func TestParity_IoperfAgainstFio(t *testing.T) {
+func TestParity_IoperfFioCases(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("linux only")
 	}
-	if _, err := exec.LookPath("fio"); err != nil {
-		t.Skip("native fio not found")
-	}
+	requireNativeCommand(t, "fio")
 
 	type ioperfParityCase struct {
 		id        string
@@ -437,9 +438,7 @@ func TestParity_IoperfAgainstFio(t *testing.T) {
 			tc.assert(t, env, goboxFile, nativeFile, gobox, native)
 		})
 	}
-}
 
-func TestParity_DiskContracts(t *testing.T) {
 	t.Run("IOSTAT-002", func(t *testing.T) {
 		if runtime.GOOS != "linux" {
 			t.Skip("linux only")
@@ -462,27 +461,19 @@ func TestParity_DiskContracts(t *testing.T) {
 	})
 }
 
-func TestParity_Md5BasicMatchesNative(t *testing.T) {
-	if _, err := exec.LookPath("md5sum"); err != nil {
-		t.Skip("native md5sum not found")
-	}
-	env := t.TempDir()
-	writeFile(t, filepath.Join(env, "file.txt"), "hello world")
-	gobox := runGoboxCLI(t, env, "", "md5sum", "file.txt")
-	native := runNativeCLI(t, env, "", "md5sum", "file.txt")
-	if normalizeText(gobox.Stdout) != normalizeText(native.Stdout) {
-		t.Fatalf("md5sum basic mismatch\n%s\n%s", gobox.Stdout, native.Stdout)
-	}
-}
-
-func TestParity_Md5WarnContract(t *testing.T) {
-	env := t.TempDir()
-	writeFile(t, filepath.Join(env, "checksums.md5"), "bad line\n")
-	res := runGoboxCLI(t, env, "", "md5sum", "--warn", "--check", "checksums.md5")
-	out := strings.ToLower(res.Stdout + res.Stderr)
-	if res.ExitCode == 0 || !strings.Contains(out, "improperly formatted") {
-		t.Fatalf("expected md5sum --warn to emit warning, got %+v", res)
-	}
+func TestParity_Sha256sumCases(t *testing.T) {
+	runExactParityCases(t, []parityCase{
+		{
+			ID:            "SHA256-001",
+			Name:          "sha256sum default",
+			GoboxArgs:     []string{"sha256sum", "data"},
+			NativeCommand: "sha256sum",
+			NativeArgs:    []string{"data"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "data"), "hello")
+			},
+		},
+	})
 }
 
 func TestParity_Md5InternalSanity(t *testing.T) {
