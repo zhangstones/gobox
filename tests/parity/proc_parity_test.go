@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -588,13 +589,53 @@ func TestParity_TimeoutCases(t *testing.T) {
 		}
 	})
 	t.Run("TIMEOUT-002", func(t *testing.T) {
-		t.Skip("timeout -s parity needs signal-trapping child fixture to validate delivered signal semantics")
+		env := t.TempDir()
+		goboxMarker := filepath.Join(env, "gobox-int")
+		nativeMarker := filepath.Join(env, "native-int")
+		script := "trap 'echo INT > \"$1\"; exit 0' INT; while true; do sleep 1; done"
+		gobox := runGoboxCLI(t, env, "", "timeout", "-s", "INT", "0.1s", "sh", "-c", script, "sh", goboxMarker)
+		native := runNativeCLI(t, env, "", "timeout", "-s", "INT", "0.1s", "sh", "-c", script, "sh", nativeMarker)
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("timeout -s exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		goboxData, err := os.ReadFile(goboxMarker)
+		if err != nil {
+			t.Fatalf("read gobox marker: %v", err)
+		}
+		nativeData, err := os.ReadFile(nativeMarker)
+		if err != nil {
+			t.Fatalf("read native marker: %v", err)
+		}
+		if strings.TrimSpace(string(goboxData)) != "INT" || strings.TrimSpace(string(nativeData)) != "INT" {
+			t.Fatalf("timeout -s marker mismatch gobox=%q native=%q", string(goboxData), string(nativeData))
+		}
 	})
 	t.Run("TIMEOUT-003", func(t *testing.T) {
-		t.Skip("timeout -k parity needs signal-ignoring child fixture to validate grace-period kill semantics")
+		env := t.TempDir()
+		start := time.Now()
+		gobox := runGoboxCLI(t, env, "", "timeout", "-k", "0.1s", "0.1s", "sh", "-c", "trap '' TERM; while true; do sleep 1; done")
+		goboxElapsed := time.Since(start)
+		start = time.Now()
+		native := runNativeCLI(t, env, "", "sh", "-c", "timeout -k 0.1s 0.1s sh -c 'trap \"\" TERM; while true; do sleep 1; done'; exit $?")
+		nativeElapsed := time.Since(start)
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("timeout -k exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		if goboxElapsed < 180*time.Millisecond || nativeElapsed < 180*time.Millisecond {
+			t.Fatalf("timeout -k should honor grace period gobox=%s native=%s", goboxElapsed, nativeElapsed)
+		}
 	})
 	t.Run("TIMEOUT-004", func(t *testing.T) {
-		t.Skip("timeout --preserve-status parity needs dedicated child exit-code fixture")
+		env := t.TempDir()
+		script := "trap 'exit 7' TERM; while true; do sleep 1; done"
+		gobox := runGoboxCLI(t, env, "", "timeout", "--preserve-status", "0.1s", "sh", "-c", script)
+		native := runNativeCLI(t, env, "", "timeout", "--preserve-status", "0.1s", "sh", "-c", script)
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("timeout --preserve-status exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		if gobox.ExitCode != 7 {
+			t.Fatalf("timeout --preserve-status should keep child exit 7, got %+v", gobox)
+		}
 	})
 	t.Run("TIMEOUT-005", func(t *testing.T) {
 		env := t.TempDir()
@@ -629,7 +670,33 @@ func TestParity_WatchCases(t *testing.T) {
 		}
 	})
 	t.Run("WATCH-002", func(t *testing.T) {
-		t.Skip("watch -n parity needs bounded timing assertions to avoid flaky interval measurements")
+		runWatch := func(interval string, timeout time.Duration) int {
+			var out strings.Builder
+			old := os.Stdout
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			os.Stdout = w
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			err = proc.WatchCmdWithContext(ctx, []string{"-n", interval, "-t", "echo", "tick"})
+			_ = w.Close()
+			os.Stdout = old
+			_, _ = io.Copy(&out, r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return strings.Count(out.String(), "tick")
+		}
+		fast := runWatch("0.03", 220*time.Millisecond)
+		slow := runWatch("0.09", 220*time.Millisecond)
+		if fast <= slow {
+			t.Fatalf("watch -n cadence mismatch fast=%d slow=%d", fast, slow)
+		}
+		if fast < 4 || slow < 2 {
+			t.Fatalf("watch -n produced too few refreshes fast=%d slow=%d", fast, slow)
+		}
 	})
 	t.Run("WATCH-003", func(t *testing.T) {
 		var out strings.Builder
@@ -666,18 +733,147 @@ func TestParity_KillCases(t *testing.T) {
 		id     string
 		reason string
 	}{
-		{"KILL-001", "kill parity needs controlled child lifecycle fixture with deterministic exit observation"},
-		{"KILL-002", "kill -l parity needs normalized signal-list comparison across distros"},
-		{"KILL-003", "kill -s parity needs controlled child lifecycle fixture with deterministic exit observation"},
-		{"KILL-004", "kill -SIGNAL parity needs controlled child lifecycle fixture with deterministic exit observation"},
-		{"KILL-005", "pkill -f parity needs controlled named-process fixture and cleanup coordination"},
-		{"KILL-006", "pkill -x parity needs controlled named-process fixture and cleanup coordination"},
-		{"KILL-007", "pkill -P parity needs parent-child process tree fixture"},
-		{"KILL-008", "pkill -n parity needs multiple controlled processes with deterministic age ordering"},
-		{"KILL-009", "pkill -o parity needs multiple controlled processes with deterministic age ordering"},
+		{"KILL-001", ""},
+		{"KILL-002", ""},
+		{"KILL-003", ""},
+		{"KILL-004", ""},
+		{"KILL-005", ""},
+		{"KILL-006", ""},
+		{"KILL-007", ""},
+		{"KILL-008", ""},
+		{"KILL-009", ""},
 	} {
 		t.Run(tc.id, func(t *testing.T) {
-			t.Skip(tc.reason)
+			switch tc.id {
+			case "KILL-001":
+				cmd := exec.Command("sleep", "30")
+				if err := cmd.Start(); err != nil {
+					t.Fatal(err)
+				}
+				if res := runGoboxCLI(t, t.TempDir(), "", "kill", strconv.Itoa(cmd.Process.Pid)); res.ExitCode != 0 {
+					t.Fatalf("kill default TERM failed: %+v", res)
+				}
+				if err := waitForExit(t, cmd, time.Second); err != nil {
+					_ = cmd.Process.Kill()
+					t.Fatal(err)
+				}
+			case "KILL-002":
+				gobox := runGoboxCLI(t, t.TempDir(), "", "kill", "-l")
+				native := runNativeCLI(t, t.TempDir(), "", "kill", "-l")
+				for _, want := range []string{"HUP", "INT", "KILL", "TERM"} {
+					if !strings.Contains(gobox.Stdout, want) || !strings.Contains(native.Stdout, want) {
+						t.Fatalf("kill -l missing %q\ngobox=%q\nnative=%q", want, gobox.Stdout, native.Stdout)
+					}
+				}
+				if out := normalizeText(runGoboxCLI(t, t.TempDir(), "", "kill", "-l", "TERM").Stdout); out != "15" {
+					t.Fatalf("kill -l TERM mismatch: %q", out)
+				}
+				if out := normalizeText(runGoboxCLI(t, t.TempDir(), "", "kill", "-l", "15").Stdout); out != "TERM" {
+					t.Fatalf("kill -l 15 mismatch: %q", out)
+				}
+			case "KILL-003":
+				cmd := exec.Command("sleep", "30")
+				if err := cmd.Start(); err != nil {
+					t.Fatal(err)
+				}
+				if res := runGoboxCLI(t, t.TempDir(), "", "kill", "-s", "TERM", strconv.Itoa(cmd.Process.Pid)); res.ExitCode != 0 {
+					t.Fatalf("kill -s TERM failed: %+v", res)
+				}
+				if err := waitForExit(t, cmd, time.Second); err != nil {
+					_ = cmd.Process.Kill()
+					t.Fatal(err)
+				}
+			case "KILL-004":
+				cmd := exec.Command("sleep", "30")
+				if err := cmd.Start(); err != nil {
+					t.Fatal(err)
+				}
+				if res := runGoboxCLI(t, t.TempDir(), "", "kill", "-KILL", strconv.Itoa(cmd.Process.Pid)); res.ExitCode != 0 {
+					t.Fatalf("kill -KILL failed: %+v", res)
+				}
+				if err := waitForExit(t, cmd, time.Second); err != nil {
+					_ = cmd.Process.Kill()
+					t.Fatal(err)
+				}
+			case "KILL-005":
+				marker := "pkfull-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+				cmd := exec.Command("sh", "-c", "sleep 30 & wait", marker)
+				if err := cmd.Start(); err != nil {
+					t.Fatal(err)
+				}
+				time.Sleep(100 * time.Millisecond)
+				if res := runGoboxCLI(t, t.TempDir(), "", "kill", "-f", marker); res.ExitCode != 0 {
+					stopCmd(cmd)
+					t.Fatalf("kill -f failed: %+v", res)
+				}
+				if err := waitForExit(t, cmd, time.Second); err != nil {
+					stopCmd(cmd)
+					t.Fatal(err)
+				}
+			case "KILL-006":
+				name := "pkx" + strconv.FormatInt(time.Now().UnixNano()%100000000, 10)
+				cmd := startExactNameProcess(t, name)
+				if res := runGoboxCLI(t, t.TempDir(), "", "kill", "-x", name); res.ExitCode != 0 {
+					stopCmd(cmd)
+					t.Fatalf("kill -x failed: %+v", res)
+				}
+				if err := waitForExit(t, cmd, time.Second); err != nil {
+					stopCmd(cmd)
+					t.Fatal(err)
+				}
+			case "KILL-007":
+				parent := exec.Command("sh", "-c", "sleep 30 & wait")
+				if err := parent.Start(); err != nil {
+					t.Fatal(err)
+				}
+				defer stopCmd(parent)
+				time.Sleep(100 * time.Millisecond)
+				if res := runGoboxCLI(t, t.TempDir(), "", "kill", "-P", strconv.Itoa(parent.Process.Pid)); res.ExitCode != 0 {
+					t.Fatalf("kill -P failed: %+v", res)
+				}
+			case "KILL-008":
+				marker := "pknew-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+				oldest := exec.Command("sh", "-c", "sleep 30 & wait", marker+"-1")
+				if err := oldest.Start(); err != nil {
+					t.Fatal(err)
+				}
+				defer stopCmd(oldest)
+				time.Sleep(1200 * time.Millisecond)
+				newest := exec.Command("sh", "-c", "sleep 30 & wait", marker+"-2")
+				if err := newest.Start(); err != nil {
+					t.Fatal(err)
+				}
+				defer stopCmd(newest)
+				if res := runGoboxCLI(t, t.TempDir(), "", "kill", "-n", "-f", marker); res.ExitCode != 0 {
+					t.Fatalf("kill -n failed: %+v", res)
+				}
+				if err := waitForExit(t, newest, time.Second); err != nil {
+					t.Fatal(err)
+				}
+				requireAlive(t, oldest)
+			case "KILL-009":
+				marker := "pkold-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+				oldest := exec.Command("sh", "-c", "sleep 30 & wait", marker+"-1")
+				if err := oldest.Start(); err != nil {
+					t.Fatal(err)
+				}
+				defer stopCmd(oldest)
+				time.Sleep(1200 * time.Millisecond)
+				newest := exec.Command("sh", "-c", "sleep 30 & wait", marker+"-2")
+				if err := newest.Start(); err != nil {
+					t.Fatal(err)
+				}
+				defer stopCmd(newest)
+				if res := runGoboxCLI(t, t.TempDir(), "", "kill", "-o", "-f", marker); res.ExitCode != 0 {
+					t.Fatalf("kill -o failed: %+v", res)
+				}
+				if err := waitForExit(t, oldest, time.Second); err != nil {
+					t.Fatal(err)
+				}
+				requireAlive(t, newest)
+			default:
+				t.Fatalf("unexpected case %s", tc.id)
+			}
 		})
 	}
 }

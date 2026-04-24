@@ -99,6 +99,7 @@ func DfCmd(args []string) error {
 	printDfHeader(opts)
 	seen := map[string]bool{}
 	rows := []dfRow{}
+	var rowErr error
 	for _, p := range paths {
 		if len(fsFlags.Args()) > 0 {
 			if _, err := statDfPath(p); err != nil {
@@ -116,6 +117,7 @@ func DfCmd(args []string) error {
 		row, err := readDfRow(m)
 		if err != nil {
 			if len(fsFlags.Args()) == 0 {
+				rowErr = err
 				continue
 			}
 			return err
@@ -128,6 +130,9 @@ func DfCmd(args []string) error {
 	}
 	if opts.total {
 		printDfRow(totalDfRow(rows, opts), opts)
+	}
+	if len(rows) == 0 && rowErr != nil {
+		return rowErr
 	}
 	return nil
 }

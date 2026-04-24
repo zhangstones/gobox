@@ -7,6 +7,12 @@ import (
 	"path/filepath"
 )
 
+type readpathExitError struct{}
+
+func (readpathExitError) Error() string          { return "some paths could not be resolved" }
+func (readpathExitError) ExitCode() int          { return 1 }
+func (readpathExitError) SuppressCLIError() bool { return true }
+
 func ReadpathCmd(args []string) error {
 	fsFlags := flag.NewFlagSet("readpath", flag.ContinueOnError)
 	canonicalize := fsFlags.Bool("f", false, "canonicalize by following symlinks")
@@ -57,7 +63,7 @@ func ReadpathCmd(args []string) error {
 		}
 	}
 	if hadErr {
-		return fmt.Errorf("some paths could not be resolved")
+		return readpathExitError{}
 	}
 	return nil
 }

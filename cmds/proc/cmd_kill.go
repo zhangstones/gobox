@@ -12,6 +12,17 @@ import (
 	"syscall"
 )
 
+var supportedSignals = []struct {
+	name string
+	sig  syscall.Signal
+}{
+	{name: "HUP", sig: syscall.SIGHUP},
+	{name: "INT", sig: syscall.SIGINT},
+	{name: "QUIT", sig: syscall.SIGQUIT},
+	{name: "KILL", sig: syscall.SIGKILL},
+	{name: "TERM", sig: syscall.SIGTERM},
+}
+
 func KillCmd(args []string) error {
 	signal := syscall.SIGTERM
 	if len(args) > 0 && strings.HasPrefix(args[0], "-") && len(args[0]) > 1 && !strings.HasPrefix(args[0], "--") {
@@ -48,14 +59,26 @@ func KillCmd(args []string) error {
 	}
 	if *list {
 		if rest := fsFlags.Args(); len(rest) > 0 {
+			if num, err := strconv.Atoi(strings.TrimPrefix(strings.ToUpper(rest[0]), "SIG")); err == nil {
+				name, ok := signalName(syscall.Signal(num))
+				if !ok {
+					return fmt.Errorf("unsupported signal %s", rest[0])
+				}
+				fmt.Println(name)
+				return nil
+			}
 			sig, err := parseSignal(rest[0])
 			if err != nil {
 				return err
 			}
-			fmt.Println(sig.(syscall.Signal))
+			fmt.Println(int(sig.(syscall.Signal)))
 			return nil
 		}
-		fmt.Println("HUP INT QUIT KILL TERM")
+		names := make([]string, 0, len(supportedSignals))
+		for _, spec := range supportedSignals {
+			names = append(names, spec.name)
+		}
+		fmt.Println(strings.Join(names, " "))
 		return nil
 	}
 	if *sigName != "" {
@@ -111,6 +134,9 @@ func KillCmd(args []string) error {
 			continue
 		}
 		if err := syscall.Kill(p.pid, signal); err != nil {
+			if err == syscall.ESRCH {
+				continue
+			}
 			return err
 		}
 	}
@@ -182,4 +208,13 @@ func readProcMatch(pid int) (procMatch, error) {
 		cmd = strings.TrimSpace(string(commBytes))
 	}
 	return procMatch{pid: pid, ppid: ppid, start: start, comm: strings.TrimSpace(string(commBytes)), cmd: cmd}, nil
+}
+
+func signalName(sig syscall.Signal) (string, bool) {
+	for _, spec := range supportedSignals {
+		if spec.sig == sig {
+			return spec.name, true
+		}
+	}
+	return "", false
 }

@@ -465,7 +465,18 @@ func TestParity_ReadpathCases(t *testing.T) {
 	})
 
 	t.Run("READPATH-007", func(t *testing.T) {
-		t.Skip("realpath -q stderr suppression differs across distros; needs environment-normalized assertion")
+		env := t.TempDir()
+		gobox := runGoboxMainCLI(t, env, "", "readpath", "-q", "-e", "missing")
+		native := runNativeCLI(t, env, "", "realpath", "-q", "-e", "missing")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("readpath -q exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		if gobox.Stdout != "" || gobox.Stderr != "" {
+			t.Fatalf("readpath -q should stay silent on missing path, got stdout=%q stderr=%q", gobox.Stdout, gobox.Stderr)
+		}
+		if native.Stdout != "" {
+			t.Fatalf("native realpath -q unexpectedly wrote stdout: %q", native.Stdout)
+		}
 	})
 }
 

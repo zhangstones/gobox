@@ -72,17 +72,22 @@ func TimeoutCmd(args []string) error {
 				killTimer := time.NewTimer(killAfterDuration)
 				defer killTimer.Stop()
 				select {
-				case <-done:
+				case err := <-done:
+					if *preserve {
+						return commandExitErr(err)
+					}
 					return timeoutExitError(124)
 				case <-killTimer.C:
 					_ = cmd.Process.Kill()
+					err := <-done
+					return timeoutExitError(processExitCode(err))
 				}
 			}
 		}
-		<-done
 		if *preserve {
-			return timeoutExitError(124)
+			return commandExitErr(<-done)
 		}
+		<-done
 		return timeoutExitError(124)
 	}
 }
@@ -100,26 +105,34 @@ func parseDurationArg(s string) (time.Duration, error) {
 
 func parseSignal(s string) (os.Signal, error) {
 	s = strings.TrimPrefix(strings.ToUpper(s), "SIG")
-	switch s {
-	case "TERM", "15":
-		return syscall.SIGTERM, nil
-	case "KILL", "9":
-		return syscall.SIGKILL, nil
-	case "INT", "2":
-		return syscall.SIGINT, nil
-	case "HUP", "1":
-		return syscall.SIGHUP, nil
-	default:
-		return nil, fmt.Errorf("unsupported signal %s", s)
+	for _, spec := range supportedSignals {
+		if s == spec.name || s == strconv.Itoa(int(spec.sig)) {
+			return spec.sig, nil
+		}
 	}
+	return nil, fmt.Errorf("unsupported signal %s", s)
 }
 
 func commandExitErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if ee, ok := err.(*exec.ExitError); ok {
-		return timeoutExitError(ee.ExitCode())
+	if _, ok := err.(*exec.ExitError); ok {
+		return timeoutExitError(processExitCode(err))
 	}
 	return err
+}
+
+func processExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	ee, ok := err.(*exec.ExitError)
+	if !ok {
+		return 1
+	}
+	if status, ok := ee.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+		return 128 + int(status.Signal())
+	}
+	return ee.ExitCode()
 }

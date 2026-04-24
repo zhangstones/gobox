@@ -90,8 +90,22 @@ func TestKillCmdOptionsListOneSignal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out) != "terminated" && strings.TrimSpace(out) != "15" {
+	if strings.TrimSpace(out) != "15" {
 		t.Fatalf("unexpected single signal output %q", out)
+	}
+
+}
+
+func TestKillCmdOptionsListNumericSignalName(t *testing.T) {
+
+	out, err := captureProcCmd(t, func() error {
+		return KillCmd([]string{"-l", "15"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "TERM" {
+		t.Fatalf("unexpected numeric signal output %q", out)
 	}
 
 }

@@ -575,5 +575,45 @@ func TestParity_Base64Cases(t *testing.T) {
 				writeFile(t, filepath.Join(env.Dir, "data.b64"), "aGVsbG8=")
 			},
 		},
+		{
+			ID:            "BASE64-003",
+			Name:          "base64 wrap",
+			GoboxArgs:     []string{"base64", "-w", "4", "data.bin"},
+			NativeCommand: "base64",
+			NativeArgs:    []string{"-w", "4", "data.bin"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "data.bin"), "hello world")
+			},
+		},
+		{
+			ID:            "BASE64-004",
+			Name:          "base64 ignore garbage",
+			GoboxArgs:     []string{"base64", "-d", "-i", "dirty.b64"},
+			NativeCommand: "base64",
+			NativeArgs:    []string{"-d", "-i", "dirty.b64"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "dirty.b64"), "aG!!Vs\nbG8=")
+			},
+		},
+	})
+
+	t.Run("BASE64-005", func(t *testing.T) {
+		env := t.TempDir()
+		outFile := filepath.Join(env, "out.b64")
+		writeFile(t, filepath.Join(env, "data.bin"), "hello world")
+		res := runGoboxCLI(t, env, "", "base64", "-w", "0", "-o", outFile, "data.bin")
+		if res.ExitCode != 0 {
+			t.Fatalf("base64 -o failed: %+v", res)
+		}
+		if res.Stdout != "" {
+			t.Fatalf("base64 -o should not write stdout, got %q", res.Stdout)
+		}
+		data, err := os.ReadFile(outFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != "aGVsbG8gd29ybGQ=" {
+			t.Fatalf("unexpected base64 output file %q", string(data))
+		}
 	})
 }

@@ -614,14 +614,16 @@ func TestIfstatCmdMissingInterfaceArg(t *testing.T) {
 }
 
 func TestIfstatCmdUnsupportedOS(t *testing.T) {
-	if runtime.GOOS == "linux" {
-		t.Skip("skipping OS test on Linux")
-	}
+	oldGOOS := ifstatGOOS
+	ifstatGOOS = "darwin"
+	t.Cleanup(func() { ifstatGOOS = oldGOOS })
 
-	// On non-Linux systems, should fail with "supported only on Linux"
 	_, err := runIfstatCmd([]string{})
 	if err == nil {
 		t.Errorf("Expected error on non-Linux OS")
+	}
+	if !strings.Contains(err.Error(), "supported only on Linux") {
+		t.Fatalf("unexpected unsupported OS error: %v", err)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -187,6 +188,30 @@ func runGoboxMainCLI(t *testing.T, dir string, stdin string, args ...string) par
 	return parityResult{Stdout: stdoutBuf.String(), Stderr: stderrBuf.String(), ExitCode: exitCode}
 }
 
+func runGoboxSubprocess(t *testing.T, dir string, args []string, timeout time.Duration) parityResult {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, os.Args[0], append([]string{"-test.run=TestParityHelperProcess", "--"}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOBOX_PARITY_HELPER=1")
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+	err := cmd.Run()
+	exitCode := 0
+	if err != nil && ctx.Err() == nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			t.Fatalf("gobox subprocess failed: %v", err)
+		}
+	}
+	return parityResult{Stdout: stdoutBuf.String(), Stderr: stderrBuf.String(), ExitCode: exitCode}
+}
+
 func goboxExitCode(cmd string, err error) int {
 	if err == nil {
 		return 0
@@ -291,6 +316,42 @@ func invokeGobox(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %s", cmd)
 	}
+}
+
+func runGoboxCommand(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "missing command")
+		return 1
+	}
+	err := invokeGobox(args)
+	if err == nil {
+		return 0
+	}
+	cmd := args[0]
+	type cliErrorSilencer interface{ SuppressCLIError() bool }
+	type cliExitCoder interface{ ExitCode() int }
+	if exitErr, ok := err.(cliExitCoder); ok {
+		if silencer, ok := err.(cliErrorSilencer); !ok || !silencer.SuppressCLIError() {
+			fmt.Fprintln(os.Stderr, cmd+":", err)
+		}
+		return exitErr.ExitCode()
+	}
+	if silencer, ok := err.(cliErrorSilencer); !ok || !silencer.SuppressCLIError() {
+		fmt.Fprintln(os.Stderr, cmd+":", err)
+	}
+	return 2
+}
+
+func TestParityHelperProcess(t *testing.T) {
+	if os.Getenv("GOBOX_PARITY_HELPER") != "1" {
+		return
+	}
+	for i, arg := range os.Args {
+		if arg == "--" {
+			os.Exit(runGoboxCommand(os.Args[i+1:]))
+		}
+	}
+	os.Exit(1)
 }
 
 func runNativeCLI(t *testing.T, dir string, stdin string, command string, args ...string) parityResult {
@@ -437,6 +498,31 @@ func startMarkerProcess(t *testing.T, marker string) *exec.Cmd {
 	}
 	time.Sleep(50 * time.Millisecond)
 	return cmd
+}
+
+func waitForExit(t *testing.T, cmd *exec.Cmd, timeout time.Duration) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if _, ok := err.(*exec.ExitError); ok {
+			return nil
+		}
+		return err
+	case <-time.After(timeout):
+		return fmt.Errorf("process %d did not exit within %s", cmd.Process.Pid, timeout)
+	}
+}
+
+func requireAlive(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	if cmd == nil || cmd.Process == nil {
+		t.Fatal("missing process handle")
+	}
+	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("process %d is not alive: %v", cmd.Process.Pid, err)
+	}
 }
 
 func startExactNameProcess(t *testing.T, name string) *exec.Cmd {

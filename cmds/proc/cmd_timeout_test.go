@@ -46,8 +46,8 @@ func TestTimeoutCmdOptionsKillAfter(t *testing.T) {
 
 	start := time.Now()
 	err := TimeoutCmd([]string{"-k", "0.1s", "0.1s", "sh", "-c", "trap '' TERM; while true; do sleep 1; done"})
-	if exitErr, ok := err.(timeoutExitError); !ok || exitErr.ExitCode() != 124 {
-		t.Fatalf("expected timeout exit 124, got %T %v", err, err)
+	if exitErr, ok := err.(timeoutExitError); !ok || exitErr.ExitCode() != 137 {
+		t.Fatalf("expected timeout exit 137, got %T %v", err, err)
 	}
 	if elapsed := time.Since(start); elapsed < 180*time.Millisecond {
 		t.Fatalf("expected kill-after grace period, elapsed=%v", elapsed)
@@ -74,8 +74,8 @@ func TestTimeoutCmdOptionsInvalidDuration(t *testing.T) {
 func TestTimeoutCmdOptionsPreserveStatusAccepted(t *testing.T) {
 
 	err := TimeoutCmd([]string{"--preserve-status", "0.1s", "sleep", "2"})
-	if exitErr, ok := err.(timeoutExitError); !ok || exitErr.ExitCode() != 124 {
-		t.Fatalf("expected timeout exit 124, got %T %v", err, err)
+	if exitErr, ok := err.(timeoutExitError); !ok || exitErr.ExitCode() != 143 {
+		t.Fatalf("expected timeout exit 143, got %T %v", err, err)
 	}
 
 }
@@ -121,4 +121,11 @@ func TestTimeoutCmdOptionsCustomSignalIsDeliveredBeforeKillAfter(t *testing.T) {
 		t.Fatalf("expected TERM trap marker, got %q", data)
 	}
 
+}
+
+func TestTimeoutCmdOptionsPreserveStatusUsesChildExitAfterTimeout(t *testing.T) {
+	err := TimeoutCmd([]string{"--preserve-status", "0.1s", "sh", "-c", "trap 'exit 7' TERM; while true; do sleep 0.01; done"})
+	if exitErr, ok := err.(timeoutExitError); !ok || exitErr.ExitCode() != 7 {
+		t.Fatalf("expected preserved child exit 7, got %T %v", err, err)
+	}
 }

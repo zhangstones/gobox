@@ -504,19 +504,12 @@ func TestNpCmdInvalidTimeout(t *testing.T) {
 func TestNpCmdNegativeCount(t *testing.T) {
 	skipIfNotLinux(t)
 
-	// Negative count should be handled gracefully
-	done := make(chan error, 1)
-	go func() {
-		_, err := runNpCmd([]string{"-tcp", "-p", "80", "-c", "-1", "-W", "2", "127.0.0.1"})
-		done <- err
-	}()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-time.After(3 * time.Second):
-		// May hang on negative count, skip
-		t.Skip("negative count causes hang")
+	_, err := runNpCmd([]string{"-tcp", "-p", "80", "-c", "-1", "-W", "2", "127.0.0.1"})
+	if err == nil {
+		t.Fatal("expected error for negative count")
+	}
+	if !strings.Contains(err.Error(), "count must be >= 0") {
+		t.Fatalf("unexpected negative count error: %v", err)
 	}
 }
 

@@ -473,6 +473,75 @@ func TestParity_Sha256sumCases(t *testing.T) {
 				writeFile(t, filepath.Join(env.Dir, "data"), "hello")
 			},
 		},
+		{
+			ID:            "SHA256-002",
+			Name:          "sha256sum --check",
+			GoboxArgs:     []string{"sha256sum", "--check", "checksums.sha256"},
+			NativeCommand: "sha256sum",
+			NativeArgs:    []string{"--check", "checksums.sha256"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "input.txt"), "hello")
+				res := runNativeCLI(t, env.Dir, "", "sha256sum", "input.txt")
+				writeFile(t, filepath.Join(env.Dir, "checksums.sha256"), normalizeText(res.Stdout)+"\n")
+			},
+			Normalize: normalizeText,
+		},
+		{
+			ID:            "SHA256-003",
+			Name:          "sha256sum --tag",
+			GoboxArgs:     []string{"sha256sum", "--tag", "input.txt"},
+			NativeCommand: "sha256sum",
+			NativeArgs:    []string{"--tag", "input.txt"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "input.txt"), "hello")
+			},
+		},
+		{
+			ID:            "SHA256-004",
+			Name:          "sha256sum --quiet",
+			GoboxArgs:     []string{"sha256sum", "--quiet", "--check", "checksums.sha256"},
+			NativeCommand: "sha256sum",
+			NativeArgs:    []string{"--quiet", "--check", "checksums.sha256"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "input.txt"), "hello")
+				res := runNativeCLI(t, env.Dir, "", "sha256sum", "input.txt")
+				writeFile(t, filepath.Join(env.Dir, "checksums.sha256"), normalizeText(res.Stdout)+"\n")
+			},
+			Normalize: normalizeText,
+		},
+		{
+			ID:            "SHA256-005",
+			Name:          "sha256sum --status",
+			GoboxArgs:     []string{"sha256sum", "--status", "--check", "checksums.sha256"},
+			NativeCommand: "sha256sum",
+			NativeArgs:    []string{"--status", "--check", "checksums.sha256"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "input.txt"), "hello")
+				res := runNativeCLI(t, env.Dir, "", "sha256sum", "input.txt")
+				writeFile(t, filepath.Join(env.Dir, "checksums.sha256"), normalizeText(res.Stdout)+"\n")
+			},
+			Assert: func(t *testing.T, gobox, native parityResult) {
+				if gobox.ExitCode != native.ExitCode {
+					t.Fatalf("sha256sum --status exit mismatch %d != %d", gobox.ExitCode, native.ExitCode)
+				}
+			},
+		},
+	})
+
+	t.Run("SHA256-006", func(t *testing.T) {
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "checksums.sha256"), "bad line\n")
+		gobox := runGoboxCLI(t, env, "", "sha256sum", "--warn", "--check", "checksums.sha256")
+		native := runNativeCLI(t, env, "", "sha256sum", "--warn", "--check", "checksums.sha256")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("sha256sum --warn exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		if !strings.Contains(strings.ToLower(gobox.Stdout+gobox.Stderr), "improperly formatted") {
+			t.Fatalf("sha256sum --warn missing gobox warning: %+v", gobox)
+		}
+		if !strings.Contains(strings.ToLower(native.Stdout+native.Stderr), "improperly formatted") {
+			t.Fatalf("sha256sum --warn missing native warning: %+v", native)
+		}
 	})
 }
 

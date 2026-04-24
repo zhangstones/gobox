@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+var ifstatGOOS = runtime.GOOS
+
 func IfstatCmd(args []string) error {
 	fsFlags := flag.NewFlagSet("ifstat", flag.ContinueOnError)
 	interval := fsFlags.Int("p", 1, "sample interval in seconds")
@@ -34,7 +36,7 @@ func IfstatCmd(args []string) error {
 		return err
 	}
 
-	if runtime.GOOS != "linux" {
+	if ifstatGOOS != "linux" {
 		return errors.New("ifstat: supported only on Linux")
 	}
 

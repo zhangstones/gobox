@@ -572,9 +572,13 @@ func TestTwUnknownOption(t *testing.T) {
 }
 
 func TestTwInvalidPortFormat(t *testing.T) {
-	// Skip this test - when TwCmd runs, it registers global HTTP handlers
-	// which conflict when run as direct function calls in the same process
-	t.Skip("Test requires server mode which registers global HTTP handlers - conflicts with other tests")
+	_, err := runTwCmd([]string{"-p", "not-a-port"})
+	if err == nil {
+		t.Fatal("expected invalid port format error")
+	}
+	if !strings.Contains(err.Error(), "invalid port") {
+		t.Fatalf("expected invalid port error, got %v", err)
+	}
 }
 
 func TestTwNonexistentDirectory(t *testing.T) {

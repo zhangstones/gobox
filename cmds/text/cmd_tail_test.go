@@ -1,7 +1,9 @@
 package text
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -747,13 +749,58 @@ func TestTailFollowWithQuiet(t *testing.T) {
 // ============== FILE ROTATION TEST (FOLLOW BY NAME) ==============
 
 func TestTailFollowByNameRotation(t *testing.T) {
-	// This test is complex - it tests file rotation with follow mode
-	// We can't easily convert it to direct function call because it requires:
-	// 1. Starting follow mode
-	// 2. Modifying the file while it's running
-	// 3. Verifying new content is detected
-	// For now, skip this test in direct function mode
-	t.Skip("Skipping file rotation test - requires exec.Command for proper testing")
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "rotating.log")
+	if err := os.WriteFile(filename, []byte("old-1\nold-2\n"), 0644); err != nil {
+		t.Fatalf("write initial file: %v", err)
+	}
+
+	var buf bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	defer cancel()
+
+	oldStdout := os.Stdout
+	rOut, wOut, _ := os.Pipe()
+	os.Stdout = wOut
+	defer func() { os.Stdout = oldStdout }()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- TailCmdWithContext(ctx, []string{"--follow=name", "-s", "0.05", "-n", "1", filename})
+	}()
+
+	time.Sleep(120 * time.Millisecond)
+	rotated := filename + ".1"
+	if err := os.Rename(filename, rotated); err != nil {
+		t.Fatalf("rotate file: %v", err)
+	}
+	if err := os.WriteFile(filename, []byte("new-1\n"), 0644); err != nil {
+		t.Fatalf("write replacement file: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	appendFile, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("open replacement file: %v", err)
+	}
+	if _, err := appendFile.WriteString("new-2\n"); err != nil {
+		_ = appendFile.Close()
+		t.Fatalf("append replacement file: %v", err)
+	}
+	_ = appendFile.Close()
+
+	err = <-errCh
+	_ = wOut.Close()
+	_, _ = io.Copy(&buf, rOut)
+	if err != nil && err != context.DeadlineExceeded {
+		t.Fatalf("tail follow by name returned error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "old-2") {
+		t.Fatalf("expected initial tail output after startup, got %q", out)
+	}
+	if !strings.Contains(out, "new-1") || !strings.Contains(out, "new-2") {
+		t.Fatalf("expected rotated file content in output, got %q", out)
+	}
 }
 
 // getFileInfo gets basic file info for testing

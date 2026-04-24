@@ -104,6 +104,9 @@ func NpCmd(args []string) error {
 	}
 
 	// Validate port
+	if *count < 0 {
+		return fmt.Errorf("count must be >= 0, got %d", *count)
+	}
 	if *port == 0 && mode != "scan" && mode != "icmp" && mode != "arp" {
 		return fmt.Errorf("port is required for TCP/UDP mode (use -p)")
 	}

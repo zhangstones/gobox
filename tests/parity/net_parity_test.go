@@ -323,7 +323,19 @@ func TestParity_NetstatCases(t *testing.T) {
 	})
 
 	t.Run("NETSTAT-020", func(t *testing.T) {
-		t.Skip("netstat -c is intentionally continuous; signal-loop behavior is covered by command-level tests")
+		if runtime.GOOS != "linux" {
+			t.Skip("linux only")
+		}
+		_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")
+		defer closeFn()
+		gobox := runGoboxSubprocess(t, t.TempDir(), []string{"netstat", "-c", "-n", "-l", "-port", port}, 1350*time.Millisecond)
+		native := runNativeFollow(t, t.TempDir(), "netstat", []string{"-c", "-n", "-l"}, nil, 1350*time.Millisecond)
+		if strings.Count(gobox.Stdout, "Proto") < 2 {
+			t.Fatalf("gobox netstat -c did not render multiple cycles: %q", gobox.Stdout)
+		}
+		if strings.Count(native.Stdout, "Proto") < 2 {
+			t.Fatalf("native netstat -c did not render multiple cycles: %q", native.Stdout)
+		}
 	})
 }
 
@@ -815,12 +827,23 @@ func TestParity_DnsCases(t *testing.T) {
 
 func TestParity_NpCases(t *testing.T) {
 	t.Run("NP-001", func(t *testing.T) {
-		if _, err := net.InterfaceByName("lo"); err != nil {
-			t.Skip("loopback interface lo not available")
+		loopbackName := ""
+		ifaces, err := net.Interfaces()
+		if err != nil {
+			t.Fatalf("list interfaces: %v", err)
+		}
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagLoopback != 0 && iface.Flags&net.FlagUp != 0 {
+				loopbackName = iface.Name
+				break
+			}
+		}
+		if loopbackName == "" {
+			t.Skip("no active loopback interface available")
 		}
 		_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")
 		defer closeFn()
-		res := runGoboxCLI(t, t.TempDir(), "", "np", "-tcp", "-I", "lo", "-p", port, "-c", "1", "-q", "127.0.0.1")
+		res := runGoboxCLI(t, t.TempDir(), "", "np", "-tcp", "-I", loopbackName, "-p", port, "-c", "1", "-q", "127.0.0.1")
 		if res.ExitCode != 0 || !strings.Contains(res.Stdout, "1 packets transmitted") {
 			t.Fatalf("np -I failed: %+v", res)
 		}
@@ -942,9 +965,6 @@ func TestParity_NpCases(t *testing.T) {
 	})
 
 	t.Run("NP-012", func(t *testing.T) {
-		if runtime.GOOS != "linux" {
-			t.Skip("linux only")
-		}
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatalf("listen: %v", err)

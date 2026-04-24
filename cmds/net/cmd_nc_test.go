@@ -140,8 +140,55 @@ func TestNCHelp(t *testing.T) {
 // and are marked with a comment.
 
 func TestNCListenMode(t *testing.T) {
-	// Skip this test as it requires server mode with exec.Command
-	t.Skip("Test requires server mode - difficult to convert to direct function call")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to reserve port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	oldStdout := os.Stdout
+	oldStdin := os.Stdin
+	rOut, wOut, _ := os.Pipe()
+	rIn, wIn, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stdin = rIn
+	defer func() {
+		os.Stdout = oldStdout
+		os.Stdin = oldStdin
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- NcCmdWithContext(ctx, []string{"-l", strconv.Itoa(port)})
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	client, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(port), time.Second)
+	if err != nil {
+		t.Fatalf("client dial failed: %v", err)
+	}
+	if _, err := io.WriteString(client, "hello from client\n"); err != nil {
+		client.Close()
+		t.Fatalf("client write failed: %v", err)
+	}
+	_ = client.Close()
+	_ = wIn.Close()
+
+	err = <-serverErr
+	_ = wOut.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, rOut)
+	if err != nil && err != context.DeadlineExceeded && err != context.Canceled {
+		t.Fatalf("listen mode returned error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "hello from client") {
+		t.Fatalf("expected listener stdout to include client payload, got %q", buf.String())
+	}
 }
 
 // ============== ALTERNATIVE LISTEN MODE TEST (direct function) ==============

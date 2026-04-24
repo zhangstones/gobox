@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -41,9 +42,17 @@ func TwCmd(args []string) error {
 			} else {
 				portStr = args[i]
 			}
-			fmt.Sscanf(portStr, "%d", &port)
+			parsedPort, err := strconv.Atoi(portStr)
+			if err != nil || parsedPort <= 0 || parsedPort > 65535 {
+				return fmt.Errorf("invalid port: %s", portStr)
+			}
+			port = parsedPort
 		case strings.HasPrefix(arg, "--port="):
-			fmt.Sscanf(arg[7:], "%d", &port)
+			parsedPort, err := strconv.Atoi(arg[7:])
+			if err != nil || parsedPort <= 0 || parsedPort > 65535 {
+				return fmt.Errorf("invalid port: %s", arg[7:])
+			}
+			port = parsedPort
 		case (arg == "-d" || arg == "--dir") && i+1 < len(args):
 			i++
 			if strings.HasPrefix(arg, "--dir=") {
@@ -70,17 +79,19 @@ doneFlags:
 
 	addr := fmt.Sprintf(":%d", port)
 
-	// Setup handlers
+	// Use a dedicated mux so repeated TwCmd calls do not mutate the global DefaultServeMux.
+	mux := http.NewServeMux()
 	if bench {
-		http.HandleFunc("/ping", handlePing)
-		http.HandleFunc("/upload", handleUpload)
+		mux.HandleFunc("/ping", handlePing)
+		mux.HandleFunc("/upload", handleUpload)
 	} else {
-		http.HandleFunc("/", MakeStaticHandler(dir))
+		mux.HandleFunc("/", MakeStaticHandler(dir))
 	}
 
 	// Configure HTTP server
 	server := &http.Server{
-		Addr: addr,
+		Addr:    addr,
+		Handler: mux,
 	}
 
 	if reuse {
