@@ -440,12 +440,12 @@ func TestTopCmdSingleIteration(t *testing.T) {
 	}
 }
 
-func TestIostatCmdZeroSamples(t *testing.T) {
+func TestIostatCmdPositionals(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("iostat supported only on Linux")
 	}
 	stdout, _, err := captureOutput(t, func() error {
-		return disk.IostatCmd([]string{"-n", "1"})
+		return disk.IostatCmd([]string{"1", "1"})
 	})
 	if err != nil {
 		t.Fatalf("IostatCmd returned error: %v", err)
@@ -455,6 +455,29 @@ func TestIostatCmdZeroSamples(t *testing.T) {
 	}
 	if len(strings.Fields(stdout)) <= 6 {
 		t.Fatalf("IostatCmd expected at least one device row, got %q", stdout)
+	}
+}
+
+func TestIostatCmdCgroupSmoke(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("iostat supported only on Linux")
+	}
+	if _, err := os.Stat("/sys/fs/cgroup/io.stat"); err != nil {
+		if _, err := os.Stat("/sys/fs/cgroup/blkio/blkio.throttle.io_service_bytes"); err != nil {
+			if _, err := os.Stat("/sys/fs/cgroup/blkio/blkio.io_service_bytes"); err != nil {
+				t.Skip("cgroup iostat files not available")
+			}
+		}
+	}
+
+	stdout, _, err := captureOutput(t, func() error {
+		return disk.IostatCmd([]string{"--cgroup", "-n", "1"})
+	})
+	if err != nil {
+		t.Fatalf("IostatCmd --cgroup returned error: %v", err)
+	}
+	if !bytes.Contains([]byte(stdout), []byte("Device")) {
+		t.Fatalf("IostatCmd --cgroup expected device stats header, got %q", stdout)
 	}
 }
 

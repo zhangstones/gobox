@@ -83,23 +83,66 @@ func TestParity_Md5sumCases(t *testing.T) {
 }
 
 func TestParity_IostatCases(t *testing.T) {
-	if runtime.GOOS == "linux" {
-		for _, tc := range []struct {
-			id   string
-			args []string
-		}{
-			{"IOSTAT-001", []string{"iostat", "-i", "1", "-n", "1"}},
-			{"IOSTAT-003", []string{"iostat", "-H", "-n", "1"}},
-			{"IOSTAT-004", []string{"iostat", "-z", "-n", "1"}},
-		} {
-			t.Run(tc.id, func(t *testing.T) {
-				res := runGoboxCLI(t, t.TempDir(), "", tc.args...)
-				if res.ExitCode != 0 {
-					t.Fatalf("%s failed: %+v", tc.id, res)
-				}
-			})
-		}
+	if runtime.GOOS != "linux" {
+		t.Skip("linux only")
 	}
+
+	requireNativeCommand(t, "iostat")
+
+	t.Run("IOSTAT-001", func(t *testing.T) {
+		gobox := runGoboxCLI(t, t.TempDir(), "", "iostat", "-i", "1", "-n", "1")
+		native := runNativeCLI(t, t.TempDir(), "", "iostat", "1", "1")
+		assertIostatStructuredParity(t, gobox, native)
+	})
+
+	t.Run("IOSTAT-002", func(t *testing.T) {
+		res := runGoboxCLI(t, t.TempDir(), "", "iostat", "-n", "1")
+		if res.ExitCode != 0 {
+			t.Fatalf("iostat failed: %+v", res)
+		}
+		if !strings.Contains(res.Stdout, "Device") {
+			t.Fatalf("iostat missing header: %+v", res)
+		}
+	})
+
+	t.Run("IOSTAT-003", func(t *testing.T) {
+		gobox := runGoboxCLI(t, t.TempDir(), "", "iostat", "-H", "-n", "1")
+		if gobox.ExitCode != 0 {
+			t.Fatalf("gobox iostat -H failed: %+v", gobox)
+		}
+		if !strings.Contains(gobox.Stdout, "/s") {
+			t.Fatalf("iostat -H missing per-second units: %+v", gobox)
+		}
+	})
+
+	t.Run("IOSTAT-004", func(t *testing.T) {
+		gobox := runGoboxCLI(t, t.TempDir(), "", "iostat", "-z", "-n", "1")
+		native := runNativeCLI(t, t.TempDir(), "", "iostat", "-z", "1", "1")
+		assertIostatStructuredParity(t, gobox, native)
+	})
+
+	t.Run("IOSTAT-005", func(t *testing.T) {
+		if _, err := os.Stat("/sys/fs/cgroup/io.stat"); err != nil {
+			if _, err := os.Stat("/sys/fs/cgroup/blkio/blkio.throttle.io_service_bytes"); err != nil {
+				if _, err := os.Stat("/sys/fs/cgroup/blkio/blkio.io_service_bytes"); err != nil {
+					t.Skip("no cgroup io stats available")
+				}
+			}
+		}
+		res := runGoboxCLI(t, t.TempDir(), "", "iostat", "--cgroup", "-n", "1")
+		if res.ExitCode != 0 {
+			t.Fatalf("iostat --cgroup failed: %+v", res)
+		}
+		if !strings.Contains(res.Stdout, "Device") {
+			t.Fatalf("iostat --cgroup missing header: %+v", res)
+		}
+	})
+
+	t.Run("IOSTAT-006", func(t *testing.T) {
+		gobox := runGoboxCLI(t, t.TempDir(), "", "iostat", "1", "1")
+		native := runNativeCLI(t, t.TempDir(), "", "iostat", "1", "1")
+		assertIostatStructuredParity(t, gobox, native)
+	})
 }
 
 func TestParity_IoperfCases(t *testing.T) {
@@ -439,16 +482,6 @@ func TestParity_IoperfFioCases(t *testing.T) {
 		})
 	}
 
-	t.Run("IOSTAT-002", func(t *testing.T) {
-		if runtime.GOOS != "linux" {
-			t.Skip("linux only")
-		}
-		res := runGoboxCLI(t, t.TempDir(), "", "iostat", "-n", "1")
-		if res.ExitCode != 0 {
-			t.Fatalf("iostat failed: %+v", res)
-		}
-	})
-
 	t.Run("IOPERF-006", func(t *testing.T) {
 		if runtime.GOOS != "linux" {
 			t.Skip("linux only")
@@ -543,6 +576,52 @@ func TestParity_Sha256sumCases(t *testing.T) {
 			t.Fatalf("sha256sum --warn missing native warning: %+v", native)
 		}
 	})
+}
+
+func assertIostatStructuredParity(t *testing.T, gobox, native parityResult) {
+	t.Helper()
+	if gobox.ExitCode != 0 {
+		t.Fatalf("gobox iostat failed: %+v", gobox)
+	}
+	if native.ExitCode != 0 {
+		t.Fatalf("native iostat failed: %+v", native)
+	}
+	if !strings.Contains(gobox.Stdout, "Device") || !strings.Contains(native.Stdout, "Device") {
+		t.Fatalf("iostat header missing\ngobox=%q\nnative=%q", gobox.Stdout, native.Stdout)
+	}
+
+	goboxDevices := iostatDeviceSet(gobox.Stdout)
+	nativeDevices := iostatDeviceSet(native.Stdout)
+	if len(goboxDevices) == 0 {
+		t.Fatalf("gobox iostat produced no device rows: %+v", gobox)
+	}
+	if len(nativeDevices) == 0 {
+		t.Fatalf("native iostat produced no device rows: %+v", native)
+	}
+	if !hasSetIntersection(goboxDevices, nativeDevices) {
+		t.Fatalf("iostat device sets do not overlap\ngobox=%v\nnative=%v", goboxDevices, nativeDevices)
+	}
+}
+
+func iostatDeviceSet(out string) map[string]struct{} {
+	devices := make(map[string]struct{})
+	for _, line := range strings.Split(normalizeText(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] == "Device" {
+			continue
+		}
+		devices[fields[0]] = struct{}{}
+	}
+	return devices
+}
+
+func hasSetIntersection(left, right map[string]struct{}) bool {
+	for key := range left {
+		if _, ok := right[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func TestParity_Md5InternalSanity(t *testing.T) {

@@ -531,6 +531,8 @@
 | IOSTAT-002 | `-n count` | contract | `iostat -c` | local Linux host | 采样次数受控 |
 | IOSTAT-003 | `-H` | contract | `iostat -h` | local Linux host | 人类可读格式生效 |
 | IOSTAT-004 | `-z` | contract | `iostat -z` | local Linux host | 零活动设备过滤生效 |
+| IOSTAT-005 | `--cgroup` | behavior | gobox-only | local Linux host with cgroup io stats | 可切换到基于 cgroup 的旧输出路径 |
+| IOSTAT-006 | `interval [count]` | structured | `iostat 1 1` | local Linux host | 位置参数形式的采样间隔与次数可执行 |
 
 ### ioperf
 
