@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func captureProcOutput(t *testing.T, fn func() error) (string, error) {
@@ -53,11 +54,63 @@ func TestPsCmdFullFormatShowsExecutable(t *testing.T) {
 	if len(lines) < 2 {
 		t.Fatalf("expected header and at least one process line, got %q", output)
 	}
-	if !strings.Contains(lines[0], "PPID") || !strings.Contains(lines[0], "EXE") {
-		t.Fatalf("expected full-format header with PPID/EXE, got %q", lines[0])
+	for _, want := range []string{"UID", "PID", "PPID", "CMD"} {
+		if !strings.Contains(lines[0], want) {
+			t.Fatalf("expected full-format header with %s, got %q", want, lines[0])
+		}
 	}
-	if strings.Contains(lines[0], "CMD") {
-		t.Fatalf("expected EXE column in full format, got %q", lines[0])
+	if len(strings.Fields(lines[1])) < 8 {
+		t.Fatalf("expected full-format row with core columns, got %q", lines[1])
+	}
+}
+
+func TestPsCmdHelpPrefersCanonicalFlags(t *testing.T) {
+	output, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("PsCmd help failed: %v", err)
+	}
+	for _, want := range []string{"--sort FIELD", "-maxcmd N", "-ww", "Compatibility:"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, output)
+		}
+	}
+	for _, unwanted := range []string{"-sort string", "  -long\n"} {
+		if strings.Contains(output, unwanted) {
+			t.Fatalf("expected help to hide %q, got %q", unwanted, output)
+		}
+	}
+}
+
+func TestRenderPSCommandSanitizesNewlines(t *testing.T) {
+	got := renderPSCommand("bash -c \"printf 'a\\nb'\"\nnext", "", 0)
+	if strings.Contains(got, "\n") || strings.Contains(got, "\r") {
+		t.Fatalf("expected sanitized single-line command, got %q", got)
+	}
+	if !strings.Contains(got, "printf") || !strings.Contains(got, "next") {
+		t.Fatalf("expected sanitized command to retain content, got %q", got)
+	}
+}
+
+func TestFitPSRowsToWidthTruncatesLastColumn(t *testing.T) {
+	headers := []string{"UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"}
+	rows := [][]string{{"root", "123", "1", "0", "12:00", "pts/0", "00:00", "bash -c this-is-a-very-long-command-line"}}
+	fitted := fitPSRowsToWidth(headers, rows, 40)
+	if len(fitted) != 1 || fitted[0][7] == rows[0][7] {
+		t.Fatalf("expected command column truncation, got %q", fitted)
+	}
+	if !strings.HasSuffix(fitted[0][7], "...") {
+		t.Fatalf("expected ellipsis after width truncation, got %q", fitted[0][7])
+	}
+}
+
+func TestFitPSRowsToWidthLeavesNonTTYRowsUntouched(t *testing.T) {
+	headers := []string{"UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"}
+	rows := [][]string{{"root", "123", "1", "0", "12:00", "pts/0", "00:00", "bash -c this-is-a-very-long-command-line"}}
+	fitted := fitPSRowsToWidth(headers, rows, 0)
+	if len(fitted) != 1 || fitted[0][7] != rows[0][7] {
+		t.Fatalf("expected non-tty/default width path to preserve full command, got %q", fitted)
 	}
 }
 
@@ -69,7 +122,7 @@ func TestPsCmdLengthLimitAppliesWithoutTTY(t *testing.T) {
 	filter := filepath.Base(exePath)
 
 	output, err := captureProcOutput(t, func() error {
-		return PsCmd([]string{"-full", filter, "-n", "1", "-l", "8", "-i", "1", "-sort", "pid", "-r"})
+		return PsCmd([]string{"-full", filter, "-n", "1", "-maxcmd", "8", "-i", "1", "--sort", "pid", "-r"})
 	})
 	if err != nil {
 		t.Fatalf("PsCmd failed: %v", err)
@@ -85,10 +138,21 @@ func TestPsCmdLengthLimitAppliesWithoutTTY(t *testing.T) {
 	}
 	cmd := strings.Join(fields[4:], " ")
 	if len([]rune(cmd)) > 8 {
-		t.Fatalf("expected command to respect -l 8, got %q", cmd)
+		t.Fatalf("expected command to respect -maxcmd 8, got %q", cmd)
 	}
 	if !strings.Contains(cmd, "...") {
 		t.Fatalf("expected truncated command with ellipsis, got %q", cmd)
+	}
+}
+
+func TestNormalizePSArgsKeepsLegacyMaxCmdAlias(t *testing.T) {
+	args, bsdAux := normalizePSArgs([]string{"-l", "12", "--sort", "pid"})
+	if bsdAux {
+		t.Fatalf("unexpected aux detection")
+	}
+	got := strings.Join(args, " ")
+	if got != "-maxcmd 12 --sort pid" {
+		t.Fatalf("expected legacy -l N to normalize to -maxcmd N, got %q", got)
 	}
 }
 
@@ -102,8 +166,10 @@ func TestTopCmdNonTTYOutputDoesNotEmitClearScreen(t *testing.T) {
 	if strings.Contains(output, "\x1b[H\x1b[2J") {
 		t.Fatalf("expected no clear-screen escape in non-tty output, got %q", output)
 	}
-	if !strings.Contains(output, "PPID") || !strings.Contains(output, "EXE") {
-		t.Fatalf("expected top output to include ps full-format header, got %q", output)
+	for _, want := range []string{"PID", "%CPU", "CMD"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected top output to include %s in the process header, got %q", want, output)
+		}
 	}
 }
 
@@ -164,7 +230,7 @@ func TestPsCmdWideWideDisablesTruncation(t *testing.T) {
 	filter := filepath.Base(exePath)
 
 	output, err := captureProcOutput(t, func() error {
-		return PsCmd([]string{"-full", filter, "-n", "1", "-l", "4", "-ww", "-i", "1", "-sort", "pid", "-r"})
+		return PsCmd([]string{"-full", filter, "-n", "1", "-maxcmd", "4", "-ww", "-i", "1", "--sort", "pid", "-r"})
 	})
 	if err != nil {
 		t.Fatalf("PsCmd failed: %v", err)
@@ -190,6 +256,30 @@ func TestPsCmdCustomOutputFields(t *testing.T) {
 		if !strings.Contains(header, field) {
 			t.Fatalf("expected custom header to contain %s, got %q", field, header)
 		}
+	}
+}
+
+func TestPrintCustomPSAlignsColumns(t *testing.T) {
+	infos := []procInfo{
+		{pid: 7, ppid: 1, user: "root", cpu: 1.2, rss: 4096, vsize: 8192, cmdline: "sleep 10", start: time.Unix(0, 0)},
+		{pid: 12345, ppid: 999, user: "verylongusername", cpu: 12.3, rss: 10240, vsize: 20480, cmdline: "a much longer command", start: time.Unix(0, 0)},
+	}
+	out, err := captureProcOutput(t, func() error {
+		printCustomPS(infos, []string{"user", "pid", "ppid", "args"}, 0, 0, 0)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines, got %q", out)
+	}
+	headerPID := strings.Index(lines[0], "PID")
+	row1PID := strings.Index(lines[1], "7")
+	row2PID := strings.Index(lines[2], "12345")
+	if headerPID == -1 || row1PID != headerPID || row2PID != headerPID {
+		t.Fatalf("expected PID column alignment, got %q", out)
 	}
 }
 

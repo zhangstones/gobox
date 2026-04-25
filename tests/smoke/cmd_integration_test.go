@@ -481,6 +481,24 @@ func TestIostatCmdCgroupSmoke(t *testing.T) {
 	}
 }
 
+func TestIostatCmdHumanReadableSmoke(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("iostat supported only on Linux")
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		return disk.IostatCmd([]string{"-H", "1", "1"})
+	})
+	if err != nil {
+		t.Fatalf("IostatCmd -H returned error: %v", err)
+	}
+	if !bytes.Contains([]byte(stdout), []byte("Device")) {
+		t.Fatalf("IostatCmd -H expected device stats header, got %q", stdout)
+	}
+	if !bytes.Contains([]byte(stdout), []byte("/s")) {
+		t.Fatalf("IostatCmd -H expected per-second units, got %q", stdout)
+	}
+}
+
 func TestNetstatCmdRuns(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("netstat supported only on Linux")
@@ -503,6 +521,31 @@ func TestNetstatCmdRuns(t *testing.T) {
 	}
 	if !bytes.Contains([]byte(stdout), []byte("127.0.0.1:"+strconv.Itoa(port))) {
 		t.Fatalf("NetstatCmd expected listener port %d in output, got %q", port, stdout)
+	}
+}
+
+func TestNetstatCmdExtendedLongFlagsSmoke(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("netstat supported only on Linux")
+	}
+
+	ln, err := stdnet.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	port := ln.Addr().(*stdnet.TCPAddr).Port
+	stdout, _, err := captureOutput(t, func() error {
+		return net.NetstatCmd([]string{"--tcp", "--listening", "--programs", "--extend", "--timers", "--numeric", "--wide", "-port", strconv.Itoa(port)})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd long flags returned error: %v", err)
+	}
+	for _, want := range []string{"PID/Program", "User", "Inode", "Timer", "127.0.0.1:" + strconv.Itoa(port)} {
+		if !bytes.Contains([]byte(stdout), []byte(want)) {
+			t.Fatalf("NetstatCmd long flags expected %q, got %q", want, stdout)
+		}
 	}
 }
 

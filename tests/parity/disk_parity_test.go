@@ -96,19 +96,19 @@ func TestParity_IostatCases(t *testing.T) {
 	})
 
 	t.Run("IOSTAT-002", func(t *testing.T) {
-		res := runGoboxCLI(t, t.TempDir(), "", "iostat", "-n", "1")
-		if res.ExitCode != 0 {
-			t.Fatalf("iostat failed: %+v", res)
-		}
-		if !strings.Contains(res.Stdout, "Device") {
-			t.Fatalf("iostat missing header: %+v", res)
-		}
+		gobox := runGoboxCLI(t, t.TempDir(), "", "iostat", "-n", "1")
+		native := runNativeCLI(t, t.TempDir(), "", "iostat")
+		assertIostatStructuredParity(t, gobox, native)
 	})
 
 	t.Run("IOSTAT-003", func(t *testing.T) {
+		base := runGoboxCLI(t, t.TempDir(), "", "iostat", "-n", "1")
 		gobox := runGoboxCLI(t, t.TempDir(), "", "iostat", "-H", "-n", "1")
-		if gobox.ExitCode != 0 {
-			t.Fatalf("gobox iostat -H failed: %+v", gobox)
+		if base.ExitCode != 0 || gobox.ExitCode != 0 {
+			t.Fatalf("gobox iostat baseline failed base=%+v human=%+v", base, gobox)
+		}
+		if base.Stdout == gobox.Stdout {
+			t.Fatalf("iostat -H did not change output\n--- base ---\n%s\n--- human ---\n%s", base.Stdout, gobox.Stdout)
 		}
 		if !strings.Contains(gobox.Stdout, "/s") {
 			t.Fatalf("iostat -H missing per-second units: %+v", gobox)
@@ -129,12 +129,16 @@ func TestParity_IostatCases(t *testing.T) {
 				}
 			}
 		}
+		base := runGoboxCLI(t, t.TempDir(), "", "iostat", "-n", "1")
 		res := runGoboxCLI(t, t.TempDir(), "", "iostat", "--cgroup", "-n", "1")
-		if res.ExitCode != 0 {
-			t.Fatalf("iostat --cgroup failed: %+v", res)
+		if base.ExitCode != 0 || res.ExitCode != 0 {
+			t.Fatalf("iostat --cgroup failed base=%+v cgroup=%+v", base, res)
 		}
 		if !strings.Contains(res.Stdout, "Device") {
 			t.Fatalf("iostat --cgroup missing header: %+v", res)
+		}
+		if base.Stdout == res.Stdout {
+			t.Fatalf("iostat --cgroup did not change output relative to diskstats baseline\n--- base ---\n%s\n--- cgroup ---\n%s", base.Stdout, res.Stdout)
 		}
 	})
 
@@ -142,6 +146,18 @@ func TestParity_IostatCases(t *testing.T) {
 		gobox := runGoboxCLI(t, t.TempDir(), "", "iostat", "1", "1")
 		native := runNativeCLI(t, t.TempDir(), "", "iostat", "1", "1")
 		assertIostatStructuredParity(t, gobox, native)
+	})
+
+	t.Run("IOSTAT-007", func(t *testing.T) {
+		res := runGoboxCLI(t, t.TempDir(), "", "iostat", "--help")
+		if res.ExitCode != 0 {
+			t.Fatalf("iostat --help failed: %+v", res)
+		}
+		for _, want := range []string{"Usage: gobox iostat", "Positionals:", "Columns:", "Examples:"} {
+			if !strings.Contains(res.Stdout, want) && !strings.Contains(res.Stderr, want) {
+				t.Fatalf("iostat --help missing %q\nstdout=%q\nstderr=%q", want, res.Stdout, res.Stderr)
+			}
+		}
 	})
 }
 

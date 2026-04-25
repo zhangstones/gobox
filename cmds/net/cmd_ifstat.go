@@ -176,20 +176,27 @@ func IfstatCmd(args []string) error {
 	showErrorsCol := *showErrors
 	showDropsCol := *showDrops
 
+	interfaceWidth := len("Interface")
+	for _, ifaceName := range ifaces {
+		if len(ifaceName) > interfaceWidth {
+			interfaceWidth = len(ifaceName)
+		}
+	}
+
 	// Header
 	printHeader := func() {
 		if showErrorsCol && showDropsCol {
-			fmt.Printf("%-12s  %9s  %9s  %9s  %9s  %7s  %7s  %7s  %7s\n",
-				"Interface", "rxpps/s", "txpps/s", "rxKB/s", "txKB/s", "rxerrs", "txerrs", "rxdrop", "txdrop")
+			fmt.Printf("%-*s  %9s  %9s  %9s  %9s  %7s  %7s  %7s  %7s\n",
+				interfaceWidth, "Interface", "rxpps/s", "txpps/s", "rxKB/s", "txKB/s", "rxerrs", "txerrs", "rxdrop", "txdrop")
 		} else if showErrorsCol {
-			fmt.Printf("%-12s  %9s  %9s  %9s  %9s  %7s  %7s\n",
-				"Interface", "rxpps/s", "txpps/s", "rxKB/s", "txKB/s", "rxerrs", "txerrs")
+			fmt.Printf("%-*s  %9s  %9s  %9s  %9s  %7s  %7s\n",
+				interfaceWidth, "Interface", "rxpps/s", "txpps/s", "rxKB/s", "txKB/s", "rxerrs", "txerrs")
 		} else if showDropsCol {
-			fmt.Printf("%-12s  %9s  %9s  %9s  %9s  %7s  %7s\n",
-				"Interface", "rxpps/s", "txpps/s", "rxKB/s", "txKB/s", "rxdrop", "txdrop")
+			fmt.Printf("%-*s  %9s  %9s  %9s  %9s  %7s  %7s\n",
+				interfaceWidth, "Interface", "rxpps/s", "txpps/s", "rxKB/s", "txKB/s", "rxdrop", "txdrop")
 		} else {
-			fmt.Printf("%-12s  %9s  %9s  %9s  %9s\n",
-				"Interface", "rxpps/s", "txpps/s", "rxKB/s", "txKB/s")
+			fmt.Printf("%-*s  %9s  %9s  %9s  %9s\n",
+				interfaceWidth, "Interface", "rxpps/s", "txpps/s", "rxKB/s", "txKB/s")
 		}
 	}
 
@@ -241,6 +248,9 @@ func IfstatCmd(args []string) error {
 		}
 
 		for _, ifaceName := range currentIfaces {
+			if len(ifaceName) > interfaceWidth {
+				interfaceWidth = len(ifaceName)
+			}
 			prev := prevStats[ifaceName]
 			curr := currStats[ifaceName]
 
@@ -269,20 +279,20 @@ func IfstatCmd(args []string) error {
 			}
 
 			if showErrorsCol && showDropsCol {
-				fmt.Printf("%-12s  %9.2f  %9.2f  %9.2f  %9.2f  %7d  %7d  %7d  %7d\n",
-					ifaceName, rxPps, txPps, rxKBps, txKBps,
+				fmt.Printf("%-*s  %9.2f  %9.2f  %9.2f  %9.2f  %7d  %7d  %7d  %7d\n",
+					interfaceWidth, ifaceName, rxPps, txPps, rxKBps, txKBps,
 					curr.RxErrors, curr.TxErrors, curr.RxDropped, curr.TxDropped)
 			} else if showErrorsCol {
-				fmt.Printf("%-12s  %9.2f  %9.2f  %9.2f  %9.2f  %7d  %7d\n",
-					ifaceName, rxPps, txPps, rxKBps, txKBps,
+				fmt.Printf("%-*s  %9.2f  %9.2f  %9.2f  %9.2f  %7d  %7d\n",
+					interfaceWidth, ifaceName, rxPps, txPps, rxKBps, txKBps,
 					curr.RxErrors, curr.TxErrors)
 			} else if showDropsCol {
-				fmt.Printf("%-12s  %9.2f  %9.2f  %9.2f  %9.2f  %7d  %7d\n",
-					ifaceName, rxPps, txPps, rxKBps, txKBps,
+				fmt.Printf("%-*s  %9.2f  %9.2f  %9.2f  %9.2f  %7d  %7d\n",
+					interfaceWidth, ifaceName, rxPps, txPps, rxKBps, txKBps,
 					curr.RxDropped, curr.TxDropped)
 			} else {
-				fmt.Printf("%-12s  %9.2f  %9.2f  %9.2f  %9.2f\n",
-					ifaceName, rxPps, txPps, rxKBps, txKBps)
+				fmt.Printf("%-*s  %9.2f  %9.2f  %9.2f  %9.2f\n",
+					interfaceWidth, ifaceName, rxPps, txPps, rxKBps, txKBps)
 			}
 		}
 

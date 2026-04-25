@@ -81,6 +81,42 @@ func TestDfType(t *testing.T) {
 	}
 }
 
+func TestDfLongFilesystemAndTypeStayAligned(t *testing.T) {
+	oldGOOS, oldReadMounts, oldStatPath, oldStatfs := dfGOOS, readMounts, statDfPath, statfsDfPath
+	dfGOOS = "linux"
+	readMounts = func() ([]mountInfo, error) {
+		return []mountInfo{{
+			Source: "/dev/mapper/very-long-container-volume-name",
+			Target: "/mnt/data",
+			FSType: "verylongfilesystemtype",
+		}}, nil
+	}
+	statDfPath = os.Stat
+	statfsDfPath = func(_ string, st *syscall.Statfs_t) error {
+		st.Bsize = 1024
+		st.Blocks = 20
+		st.Bavail = 5
+		return nil
+	}
+	t.Cleanup(func() {
+		dfGOOS, readMounts, statDfPath, statfsDfPath = oldGOOS, oldReadMounts, oldStatPath, oldStatfs
+	})
+
+	out, err := captureFsCmd(t, func() error { return DfCmd([]string{"-T"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected header and row, got %q", out)
+	}
+	headerType := strings.Index(lines[0], "Type")
+	rowType := strings.Index(lines[1], "verylongfilesystemtype")
+	if headerType == -1 || rowType != headerType {
+		t.Fatalf("expected type column to stay aligned, got header=%q row=%q", lines[0], lines[1])
+	}
+}
+
 func TestDfInodes(t *testing.T) {
 	dir := setupDfFixture(t)
 	out, err := captureFsCmd(t, func() error { return DfCmd([]string{"-i", dir}) })

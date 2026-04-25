@@ -59,8 +59,9 @@ func TopCmd(args []string) error {
 		if !*batch && utils.IsTerminal(os.Stdout) {
 			fmt.Print("\033[H\033[2J")
 		}
-		// forward selected sorting flags to psCmd so behavior matches cmd_ps.go
-		psArgs := []string{"-f", "-sort", *sortBy}
+		// forward selected sorting flags to psCmd so batch-mode top keeps the
+		// CPU/memory-oriented process table instead of ps -f's full-format view.
+		psArgs := []string{"-sort", *sortBy}
 		if *rev {
 			psArgs = append(psArgs, "-r")
 		}

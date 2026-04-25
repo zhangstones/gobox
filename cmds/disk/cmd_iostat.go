@@ -50,6 +50,7 @@ var (
 	readFileIostat = os.ReadFile
 	statIostat     = os.Stat
 	sleepIostat    = time.Sleep
+	uptimeIostat   = readUptimeIostat
 )
 
 func IostatCmd(args []string) error {
@@ -66,8 +67,33 @@ func iostatCmd(args []string, stdout io.Writer) error {
 	showNonZero := fsFlags.Bool("z", false, "show only devices with non-zero I/O rates")
 	useCgroup := fsFlags.Bool("cgroup", false, "use cgroup io.stat/blkio based output")
 	fsFlags.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: gobox iostat [-i sec] [-n count] [-H] [-z] [--cgroup] [interval [count]]")
-		fmt.Fprintln(os.Stderr, "Print block device I/O rates from /proc/diskstats, or use --cgroup for blkio/io.stat based output.")
+		fmt.Fprintln(os.Stderr, "Usage: gobox iostat [OPTION]... [interval [count]]")
+		fmt.Fprintln(os.Stderr, "Report block device I/O activity sampled over time.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "By default gobox reads /proc/diskstats and prints per-device rates.")
+		fmt.Fprintln(os.Stderr, "With --cgroup it reads cgroup io.stat / blkio counters instead.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Options:")
+		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Positionals:")
+		fmt.Fprintln(os.Stderr, "  interval   sample interval in seconds (same as -i)")
+		fmt.Fprintln(os.Stderr, "  count      number of reports to print (same as -n)")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Columns:")
+		fmt.Fprintln(os.Stderr, "  Device     device name from diskstats or cgroup entry")
+		fmt.Fprintln(os.Stderr, "  ReadIOPS   read operations per second")
+		fmt.Fprintln(os.Stderr, "  WriteIOPS  write operations per second")
+		fmt.Fprintln(os.Stderr, "  TotalIOPS  combined read + write IOPS")
+		fmt.Fprintln(os.Stderr, "  ReadB/s    read throughput in bytes per second")
+		fmt.Fprintln(os.Stderr, "  WriteB/s   write throughput in bytes per second")
+		fmt.Fprintln(os.Stderr, "  TotalB/s   combined throughput in bytes per second")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  gobox iostat")
+		fmt.Fprintln(os.Stderr, "  gobox iostat 1 5")
+		fmt.Fprintln(os.Stderr, "  gobox iostat -i 2 -n 3 -H -z")
+		fmt.Fprintln(os.Stderr, "  gobox iostat --cgroup 1 1")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -95,18 +121,34 @@ func iostatCmd(args []string, stdout io.Writer) error {
 		return err
 	}
 
+	// Match native iostat semantics: the first report is since-boot average,
+	// then subsequent reports are interval deltas.
+	current, err := reader()
+	if err != nil {
+		return err
+	}
+
 	for iter := 0; iter < *count; iter++ {
-		start, err := reader()
-		if err != nil {
-			return err
-		}
-		sleepIostat(time.Duration(*interval) * time.Second)
-		end, err := reader()
-		if err != nil {
-			return err
+		var start, end map[string]ioCounters
+		var dur float64
+		if iter == 0 {
+			end = current
+			dur, err = uptimeIostat()
+			if err != nil {
+				return err
+			}
+		} else {
+			start = current
+			sleepIostat(time.Duration(*interval) * time.Second)
+			current, err = reader()
+			if err != nil {
+				return err
+			}
+			end = current
+			dur = float64(*interval)
 		}
 
-		rows := buildIostatRows(start, end, float64(*interval), *human, *showNonZero, *useCgroup)
+		rows := buildIostatRows(start, end, dur, *human, *showNonZero, *useCgroup)
 		writeIostatTable(stdout, rows)
 		if iter != *count-1 {
 			fmt.Fprintln(stdout)
@@ -144,6 +186,25 @@ func buildIostatReader(useCgroup bool) (func() (map[string]ioCounters, error), e
 	return func() (map[string]ioCounters, error) {
 		return readDiskstats("/proc/diskstats")
 	}, nil
+}
+
+func readUptimeIostat() (float64, error) {
+	data, err := readFileIostat("/proc/uptime")
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return 0, errors.New("iostat: malformed /proc/uptime")
+	}
+	uptime, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return 0, fmt.Errorf("iostat: parse /proc/uptime: %w", err)
+	}
+	if uptime <= 0 {
+		return 1, nil
+	}
+	return uptime, nil
 }
 
 func readDiskstats(path string) (map[string]ioCounters, error) {

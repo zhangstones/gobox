@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -31,16 +32,26 @@ func captureNetOutput(t *testing.T, fn func() error) (string, error) {
 
 	os.Stdout = wOut
 	os.Stderr = wErr
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(&outBuf, rOut)
+	}()
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(&errBuf, rErr)
+	}()
+
 	runErr := fn()
 	_ = wOut.Close()
 	_ = wErr.Close()
 	os.Stdout = oldStdout
 	os.Stderr = oldStderr
-
-	var buf bytes.Buffer
-	_, _ = io.Copy(&buf, rOut)
-	_, _ = io.Copy(&buf, rErr)
-	return buf.String(), runErr
+	wg.Wait()
+	return outBuf.String() + errBuf.String(), runErr
 }
 
 func TestParsePortFromAddr(t *testing.T) {
@@ -273,6 +284,67 @@ func TestNetstatCmdCombinedShortFlags(t *testing.T) {
 	}
 	if !strings.Contains(output, "TCP") || !strings.Contains(output, "LISTEN") || !strings.Contains(output, "PID/Program") {
 		t.Fatalf("expected combined -tnlp output for listener, got %q", output)
+	}
+}
+
+func TestPrintNetstatTableAlignsLongAddresses(t *testing.T) {
+	out, err := captureNetOutput(t, func() error {
+		printNetstatTable([]netstatSocketRow{
+			{
+				conn:       tcpConn{RxQueue: 1, TxQueue: 2, State: "ESTABLISHED", UID: "1000", Inode: "123", Timer: "off"},
+				proto:      "TCP6",
+				local:      "fe80::1ff:fe23:4567:890a%eth0:65535",
+				remote:     "/very/long/unix/socket/path/for/testing",
+				pidProgram: "1234/really-long-process-name",
+			},
+		}, true, true, true)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected header and row, got %q", out)
+	}
+	headerState := strings.Index(lines[0], "State")
+	rowState := strings.Index(lines[1], "ESTABLISHED")
+	headerPID := strings.Index(lines[0], "PID/Program")
+	rowPID := strings.Index(lines[1], "1234/really-long-process-name")
+	if headerState == -1 || rowState != headerState || headerPID == -1 || rowPID != headerPID {
+		t.Fatalf("expected aligned netstat output, got %q", out)
+	}
+}
+
+func TestPrintNetstatInterfacesAlignsLongNames(t *testing.T) {
+	oldParse := parseProcNetDevNetstat
+	parseProcNetDevNetstat = func(string) ([]netstatInterface, error) {
+		return []netstatInterface{{
+			Name:   "veth1234567890abcd",
+			MTU:    1500,
+			RXOK:   1,
+			RXErr:  0,
+			RXDrop: 0,
+			TXOK:   2,
+			TXErr:  0,
+			TXDrop: 0,
+			Flags:  "up",
+		}}, nil
+	}
+	t.Cleanup(func() { parseProcNetDevNetstat = oldParse })
+
+	out, err := captureNetOutput(t, func() error { return printNetstatInterfaces(false) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected header and row, got %q", out)
+	}
+	headerFlg := strings.Index(lines[0], "Flg")
+	rowFlg := strings.Index(lines[1], "up")
+	if headerFlg == -1 || rowFlg != headerFlg {
+		t.Fatalf("expected interface column alignment, got %q", out)
 	}
 }
 
@@ -533,5 +605,308 @@ func TestNetstatCmdCommonFlagsAccepted(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("expected %v to be accepted, got %v", args, err)
 		}
+	}
+}
+
+func TestNetstatCmdHelpMergesShortAndLongFlags(t *testing.T) {
+	out, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("netstat --help failed: %v", err)
+	}
+	for _, want := range []string{
+		"Usage: gobox netstat",
+		"-t, --tcp",
+		"-u, --udp",
+		"-x, --unix",
+		"-l, --listening",
+		"-p, --programs",
+		"-r, --route",
+		"-i, --interfaces",
+		"-s, --statistics",
+		"-c, --continuous",
+		"-n, --numeric",
+		"-W, --wide",
+		"--sort FIELD",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in help output %q", want, out)
+		}
+	}
+	for _, unwanted := range []string{
+		"  -t show TCP sockets",
+		"  -tcp show TCP sockets",
+		"  -listening",
+		"  -programs",
+	} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("expected merged help output, found duplicate-style entry %q in %q", unwanted, out)
+		}
+	}
+}
+
+func TestNetstatCmdShortAndLongFlagsMatchForTCPListener(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("netstat is only supported on Linux")
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	shortOut, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"-t", "-l", "-p", "-e", "-o", "-n", "-W", "-port", port})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd short flags failed: %v", err)
+	}
+	longOut, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"--tcp", "--listening", "--programs", "--extend", "--timers", "--numeric", "--wide", "-port", port})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd long flags failed: %v", err)
+	}
+	if shortOut != longOut {
+		t.Fatalf("expected short/long TCP flag output to match\nshort:\n%s\nlong:\n%s", shortOut, longOut)
+	}
+}
+
+func TestNetstatCmdLongUDPFlagMatchesShort(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("netstat is only supported on Linux")
+	}
+
+	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	defer conn.Close()
+
+	port := strconv.Itoa(conn.LocalAddr().(*net.UDPAddr).Port)
+	shortOut, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"-u", "-port", port})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd -u failed: %v", err)
+	}
+	longOut, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"--udp", "-port", port})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd --udp failed: %v", err)
+	}
+	if shortOut != longOut {
+		t.Fatalf("expected short/long UDP flag output to match\nshort:\n%s\nlong:\n%s", shortOut, longOut)
+	}
+}
+
+func TestNetstatCmdLongUnixFlagMatchesShort(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("netstat is only supported on Linux")
+	}
+
+	unixPath := filepath.Join(t.TempDir(), "netstat-long.sock")
+	ln, err := net.Listen("unix", unixPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	defer ln.Close()
+
+	shortOut, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"-x", "-l"})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd -x -l failed: %v", err)
+	}
+	longOut, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"--unix", "--listening"})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd --unix --listening failed: %v", err)
+	}
+	if !strings.Contains(shortOut, unixPath) || !strings.Contains(longOut, unixPath) {
+		t.Fatalf("expected unix socket %s in both outputs\nshort:\n%s\nlong:\n%s", unixPath, shortOut, longOut)
+	}
+}
+
+func TestNetstatCmdLongModeFlagsMatchShort(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("netstat is only supported on Linux")
+	}
+
+	cases := []struct {
+		shortArgs []string
+		longArgs  []string
+		equal     bool
+		wants     []string
+	}{
+		{shortArgs: []string{"-r"}, longArgs: []string{"--route"}, equal: true},
+		{shortArgs: []string{"-i"}, longArgs: []string{"--interfaces"}, wants: []string{"Iface", "Flg"}},
+		{shortArgs: []string{"-s"}, longArgs: []string{"--statistics"}, wants: []string{"Ip:", "Tcp:", "Udp:"}},
+	}
+	for _, tc := range cases {
+		shortOut, err := captureNetOutput(t, func() error { return NetstatCmd(tc.shortArgs) })
+		if err != nil {
+			t.Fatalf("NetstatCmd %v failed: %v", tc.shortArgs, err)
+		}
+		longOut, err := captureNetOutput(t, func() error { return NetstatCmd(tc.longArgs) })
+		if err != nil {
+			t.Fatalf("NetstatCmd %v failed: %v", tc.longArgs, err)
+		}
+		if tc.equal && shortOut != longOut {
+			t.Fatalf("expected %v and %v outputs to match\nshort:\n%s\nlong:\n%s", tc.shortArgs, tc.longArgs, shortOut, longOut)
+		}
+		for _, want := range tc.wants {
+			if !strings.Contains(shortOut, want) || !strings.Contains(longOut, want) {
+				t.Fatalf("expected %v and %v outputs to both contain %q\nshort:\n%s\nlong:\n%s", tc.shortArgs, tc.longArgs, want, shortOut, longOut)
+			}
+		}
+	}
+}
+
+func TestNetstatCmdStatsProtocolFilters(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("netstat is only supported on Linux")
+	}
+
+	allOut, err := captureNetOutput(t, func() error { return NetstatCmd([]string{"-s"}) })
+	if err != nil {
+		t.Fatalf("NetstatCmd -s failed: %v", err)
+	}
+	tcpOut, err := captureNetOutput(t, func() error { return NetstatCmd([]string{"-s", "-t"}) })
+	if err != nil {
+		t.Fatalf("NetstatCmd -s -t failed: %v", err)
+	}
+	udpOut, err := captureNetOutput(t, func() error { return NetstatCmd([]string{"-s", "-u"}) })
+	if err != nil {
+		t.Fatalf("NetstatCmd -s -u failed: %v", err)
+	}
+	if allOut == tcpOut {
+		t.Fatalf("expected -s -t to differ from bare -s\n-s:\n%s\n-s -t:\n%s", allOut, tcpOut)
+	}
+	if !strings.Contains(tcpOut, "Tcp:") || strings.Contains(tcpOut, "Ip:") || strings.Contains(tcpOut, "Udp:") {
+		t.Fatalf("expected -s -t to only contain TCP-family sections, got %q", tcpOut)
+	}
+	if !strings.Contains(udpOut, "Udp:") || strings.Contains(udpOut, "Ip:") || strings.Contains(udpOut, "Tcp:") {
+		t.Fatalf("expected -s -u to only contain UDP-family sections, got %q", udpOut)
+	}
+}
+
+func TestNetstatCmdCompatibilityFlagsPreserveFilteredOutput(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("netstat is only supported on Linux")
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	baseOut, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"-t", "-l", "-port", port})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd base flags failed: %v", err)
+	}
+	for _, args := range [][]string{
+		{"-t", "-l", "-a", "-port", port},
+		{"-t", "-l", "--all", "-port", port},
+		{"-t", "-l", "-n", "-port", port},
+		{"-t", "-l", "--numeric", "-port", port},
+		{"-t", "-l", "-W", "-port", port},
+		{"-t", "-l", "--wide", "-port", port},
+	} {
+		out, err := captureNetOutput(t, func() error { return NetstatCmd(args) })
+		if err != nil {
+			t.Fatalf("NetstatCmd %v failed: %v", args, err)
+		}
+		if out != baseOut {
+			t.Fatalf("expected compatibility flags %v to preserve filtered output\nbase:\n%s\nactual:\n%s", args, baseOut, out)
+		}
+	}
+}
+
+func TestNetstatCmdIPv4AndIPv6Filters(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("netstat is only supported on Linux")
+	}
+
+	ipv4Ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp4: %v", err)
+	}
+	defer ipv4Ln.Close()
+
+	ipv4Port := strconv.Itoa(ipv4Ln.Addr().(*net.TCPAddr).Port)
+	ipv4Out, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"-4", "-l", "-port", ipv4Port})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd -4 failed: %v", err)
+	}
+	if !strings.Contains(ipv4Out, ":"+ipv4Port) || strings.Contains(ipv4Out, "TCP6") {
+		t.Fatalf("expected IPv4-only output for port %s, got %q", ipv4Port, ipv4Out)
+	}
+
+	ipv6Ln, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback unavailable: %v", err)
+	}
+	defer ipv6Ln.Close()
+
+	ipv6Port := strconv.Itoa(ipv6Ln.Addr().(*net.TCPAddr).Port)
+	ipv6Out, err := captureNetOutput(t, func() error {
+		return NetstatCmd([]string{"-6", "-l", "-port", ipv6Port})
+	})
+	if err != nil {
+		t.Fatalf("NetstatCmd -6 failed: %v", err)
+	}
+	if !strings.Contains(ipv6Out, ":"+ipv6Port) || !strings.Contains(ipv6Out, "TCP6") {
+		t.Fatalf("expected IPv6-only output for port %s, got %q", ipv6Port, ipv6Out)
+	}
+}
+
+func TestNetstatCmdLongContinuousFlagRuns(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("netstat is only supported on Linux")
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		p, err := os.FindProcess(os.Getpid())
+		if err == nil {
+			_ = p.Signal(os.Interrupt)
+		}
+	}()
+
+	done := make(chan struct{})
+	var runErr error
+	go func() {
+		defer close(done)
+		_, runErr = captureNetOutput(t, func() error {
+			return NetstatCmd([]string{"--continuous", "--tcp", "--listening", "-port", port})
+		})
+	}()
+
+	select {
+	case <-done:
+		if runErr != nil {
+			t.Fatalf("NetstatCmd --continuous failed: %v", runErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("NetstatCmd --continuous did not stop after interrupt")
 	}
 }

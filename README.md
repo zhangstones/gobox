@@ -85,13 +85,25 @@ gobox <command> [args...]
 ./gobox sed 's/foo/bar/g' input.txt
 
 # 查看占用较高的进程
-./gobox ps -sort cpu -r -n 10
+./gobox ps --sort cpu -r -n 10
+
+# 全格式查看进程；-f 负责增加列，默认宽度策略仍然生效
+./gobox ps -f -n 10
+
+# 需要完整命令行时用 -ww 关闭 ps 默认宽度截断
+./gobox ps -f -ww -n 10
 
 # 查看内存概况
 ./gobox free -h
 
 # 查看监听中的网络连接
 ./gobox netstat -l -n
+
+# 查看合并后的 netstat 帮助
+./gobox netstat --help
+
+# 查看带列说明的 iostat 帮助
+./gobox iostat --help
 
 # 查看容器内接口地址
 ./gobox ip addr

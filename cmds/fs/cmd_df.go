@@ -96,7 +96,6 @@ func DfCmd(args []string) error {
 		}
 	}
 
-	printDfHeader(opts)
 	seen := map[string]bool{}
 	rows := []dfRow{}
 	var rowErr error
@@ -126,10 +125,13 @@ func DfCmd(args []string) error {
 			continue
 		}
 		rows = append(rows, row)
-		printDfRow(row, opts)
 	}
 	if opts.total {
-		printDfRow(totalDfRow(rows, opts), opts)
+		rows = append(rows, totalDfRow(rows, opts))
+	}
+	printDfHeader(rows, opts)
+	for _, row := range rows {
+		printDfRow(row, rows, opts)
 	}
 	if len(rows) == 0 && rowErr != nil {
 		return rowErr
@@ -193,7 +195,22 @@ func readDfRow(m mountInfo) (dfRow, error) {
 	return dfRow{mount: m, stat: st}, nil
 }
 
-func printDfHeader(opts dfOptions) {
+func dfColumnWidths(rows []dfRow, opts dfOptions) (int, int) {
+	sourceWidth := len("Filesystem")
+	typeWidth := len("Type")
+	for _, row := range rows {
+		if l := len(row.mount.Source); l > sourceWidth {
+			sourceWidth = l
+		}
+		if l := len(row.mount.FSType); l > typeWidth {
+			typeWidth = l
+		}
+	}
+	return sourceWidth, typeWidth
+}
+
+func printDfHeader(rows []dfRow, opts dfOptions) {
+	sourceWidth, typeWidth := dfColumnWidths(rows, opts)
 	blockHeader := "1K-blocks"
 	if opts.human {
 		blockHeader = "Size"
@@ -206,29 +223,30 @@ func printDfHeader(opts dfOptions) {
 	}
 	if opts.inodes {
 		if opts.showType {
-			fmt.Printf("%-20s %-8s %10s %10s %10s %5s %s\n", "Filesystem", "Type", "Inodes", "IUsed", "IFree", "IUse%", "Mounted on")
+			fmt.Printf("%-*s %-*s %10s %10s %10s %5s %s\n", sourceWidth, "Filesystem", typeWidth, "Type", "Inodes", "IUsed", "IFree", "IUse%", "Mounted on")
 			return
 		}
-		fmt.Printf("%-20s %10s %10s %10s %5s %s\n", "Filesystem", "Inodes", "IUsed", "IFree", "IUse%", "Mounted on")
+		fmt.Printf("%-*s %10s %10s %10s %5s %s\n", sourceWidth, "Filesystem", "Inodes", "IUsed", "IFree", "IUse%", "Mounted on")
 		return
 	}
 	if opts.showType {
-		fmt.Printf("%-20s %-8s %10s %10s %10s %5s %s\n", "Filesystem", "Type", blockHeader, "Used", "Available", "Use%", "Mounted on")
+		fmt.Printf("%-*s %-*s %10s %10s %10s %5s %s\n", sourceWidth, "Filesystem", typeWidth, "Type", blockHeader, "Used", "Available", "Use%", "Mounted on")
 		return
 	}
-	fmt.Printf("%-20s %10s %10s %10s %5s %s\n", "Filesystem", blockHeader, "Used", "Available", "Use%", "Mounted on")
+	fmt.Printf("%-*s %10s %10s %10s %5s %s\n", sourceWidth, "Filesystem", blockHeader, "Used", "Available", "Use%", "Mounted on")
 }
 
-func printDfRow(row dfRow, opts dfOptions) {
+func printDfRow(row dfRow, rows []dfRow, opts dfOptions) {
+	sourceWidth, typeWidth := dfColumnWidths(rows, opts)
 	m := row.mount
 	st := row.stat
 	if opts.inodes {
 		used := st.Files - st.Ffree
 		if opts.showType {
-			fmt.Printf("%-20s %-8s %10d %10d %10d %5s %s\n", m.Source, m.FSType, st.Files, used, st.Ffree, percent(used, st.Files), m.Target)
+			fmt.Printf("%-*s %-*s %10d %10d %10d %5s %s\n", sourceWidth, m.Source, typeWidth, m.FSType, st.Files, used, st.Ffree, percent(used, st.Files), m.Target)
 			return
 		}
-		fmt.Printf("%-20s %10d %10d %10d %5s %s\n", m.Source, st.Files, used, st.Ffree, percent(used, st.Files), m.Target)
+		fmt.Printf("%-*s %10d %10d %10d %5s %s\n", sourceWidth, m.Source, st.Files, used, st.Ffree, percent(used, st.Files), m.Target)
 		return
 	}
 	blockSize := uint64(st.Bsize)
@@ -237,10 +255,10 @@ func printDfRow(row dfRow, opts dfOptions) {
 	used := total - free
 	totalText, usedText, freeText := formatDfSize(total, used, free, opts)
 	if opts.showType {
-		fmt.Printf("%-20s %-8s %10s %10s %10s %5s %s\n", m.Source, m.FSType, totalText, usedText, freeText, percent(used, total), m.Target)
+		fmt.Printf("%-*s %-*s %10s %10s %10s %5s %s\n", sourceWidth, m.Source, typeWidth, m.FSType, totalText, usedText, freeText, percent(used, total), m.Target)
 		return
 	}
-	fmt.Printf("%-20s %10s %10s %10s %5s %s\n", m.Source, totalText, usedText, freeText, percent(used, total), m.Target)
+	fmt.Printf("%-*s %10s %10s %10s %5s %s\n", sourceWidth, m.Source, totalText, usedText, freeText, percent(used, total), m.Target)
 }
 
 func formatDfSize(total, used, free uint64, opts dfOptions) (string, string, string) {

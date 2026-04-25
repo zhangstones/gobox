@@ -183,8 +183,19 @@ func TestParity_DuCases(t *testing.T) {
 		setupTree(env)
 		gobox := runGoboxCLI(t, env, "", "du", "-c", "tree")
 		native := runNativeCLI(t, env, "", "du", "-c", "tree")
-		if gobox.ExitCode != native.ExitCode || !strings.Contains(gobox.Stdout, "\ttotal") || !strings.Contains(native.Stdout, "\ttotal") {
+		if gobox.ExitCode != native.ExitCode {
 			t.Fatalf("du -c mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", gobox, native)
+		}
+		goboxLines := nonEmptyLines(gobox.Stdout)
+		nativeLines := nonEmptyLines(native.Stdout)
+		if len(goboxLines) < 2 || len(nativeLines) < 2 {
+			t.Fatalf("du -c expected entries plus total line\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
+		}
+		if !strings.HasSuffix(goboxLines[len(goboxLines)-1], "\ttotal") || !strings.HasSuffix(nativeLines[len(nativeLines)-1], "\ttotal") {
+			t.Fatalf("du -c should end with a total line\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
+		}
+		if duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
+			t.Fatalf("du -c path set mismatch\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
 		}
 	})
 
@@ -343,8 +354,16 @@ func TestParity_DfCases(t *testing.T) {
 		if gobox.ExitCode != native.ExitCode {
 			t.Fatalf("df exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 		}
-		if !strings.Contains(gobox.Stdout, "Filesystem") || !strings.Contains(native.Stdout, "Filesystem") {
+		goboxLines := nonEmptyLines(gobox.Stdout)
+		nativeLines := nonEmptyLines(native.Stdout)
+		if len(goboxLines) != 2 || len(nativeLines) != 2 {
+			t.Fatalf("df PATH should render exactly header + one filesystem row\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+		}
+		if !strings.Contains(goboxLines[0], "Filesystem") || !strings.Contains(nativeLines[0], "Filesystem") {
 			t.Fatalf("df output missing header\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+		}
+		if strings.Fields(goboxLines[1])[0] == "" || strings.Fields(nativeLines[1])[0] == "" {
+			t.Fatalf("df PATH missing filesystem row\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
 	})
 
@@ -369,6 +388,43 @@ func TestParity_DfCases(t *testing.T) {
 			native := runNativeCLI(t, t.TempDir(), "", tc.args[0], tc.args[1:]...)
 			if res.ExitCode != native.ExitCode {
 				t.Fatalf("%s exit mismatch gobox=%d native=%d\n--- gobox ---\n%s\n--- native ---\n%s", tc.id, res.ExitCode, native.ExitCode, res.Stdout, native.Stdout)
+			}
+			switch tc.id {
+			case "DF-006":
+				base := runGoboxCLI(t, t.TempDir(), "", "df", ".")
+				if base.ExitCode != 0 {
+					t.Fatalf("DF-006 baseline failed: %+v", base)
+				}
+				if base.Stdout == res.Stdout {
+					t.Fatalf("DF-006 should change output relative to default df\n--- base ---\n%s\n--- -H ---\n%s", base.Stdout, res.Stdout)
+				}
+			case "DF-007", "DF-008", "DF-009", "DF-010":
+				if dfMountList(res.Stdout) != dfMountList(native.Stdout) {
+					t.Fatalf("%s mount-set mismatch\n--- gobox ---\n%s\n--- native ---\n%s", tc.id, res.Stdout, native.Stdout)
+				}
+				if tc.id == "DF-007" {
+					base := runGoboxCLI(t, t.TempDir(), "", "df")
+					if base.ExitCode != 0 {
+						t.Fatalf("DF-007 baseline failed: %+v", base)
+					}
+					if dfMountList(base.Stdout) == dfMountList(res.Stdout) {
+						t.Fatalf("DF-007 should expose additional all-filesystem rows beyond default df\n--- base ---\n%s\n--- -a ---\n%s", base.Stdout, res.Stdout)
+					}
+				}
+			case "DF-011":
+				lines := nonEmptyLines(res.Stdout)
+				if len(lines) < 2 || !strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "total") {
+					t.Fatalf("DF-011 should end with a total row\n%s", res.Stdout)
+				}
+			case "DF-012":
+				lines := nonEmptyLines(res.Stdout)
+				if len(lines) < 2 {
+					t.Fatalf("DF-012 output too short\n%s", res.Stdout)
+				}
+				header := strings.Fields(lines[0])
+				if len(header) < 6 || header[0] != "Filesystem" || header[1] != "1024-blocks" {
+					t.Fatalf("DF-012 should render POSIX header fields, got %q", lines[0])
+				}
 			}
 			for _, want := range tc.contains {
 				if !strings.Contains(res.Stdout, want) || !strings.Contains(native.Stdout, want) {
@@ -678,4 +734,21 @@ func dfHasHumanReadableRow(out string) bool {
 		}
 	}
 	return false
+}
+
+func dfMountList(out string) string {
+	lines := nonEmptyLines(out)
+	if len(lines) < 2 {
+		return ""
+	}
+	mounts := make([]string, 0, len(lines)-1)
+	for _, line := range lines[1:] {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		mounts = append(mounts, fields[len(fields)-1])
+	}
+	sort.Strings(mounts)
+	return strings.Join(mounts, "\n")
 }

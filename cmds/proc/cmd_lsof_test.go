@@ -238,6 +238,31 @@ func TestLsofCmdInjectedProcRootFileFilterAndPidsOnlyUseInjectedProcTree(t *test
 
 }
 
+func TestLsofLongCommandAndFDAreAligned(t *testing.T) {
+	setupFakeLsofProc(t, []fakeLsofProcess{
+		{
+			pid:  "1234",
+			comm: "very-long-command-name",
+			fdTargets: map[string]string{
+				"123u": filepath.Join(t.TempDir(), "demo-file"),
+			},
+		},
+	}, nil)
+	out, err := captureProcCmd(t, func() error { return LsofCmd(nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected header and row, got %q", out)
+	}
+	headerName := strings.Index(lines[0], "NAME")
+	rowName := strings.Index(lines[1], "/tmp/")
+	if headerName == -1 || rowName != headerName {
+		t.Fatalf("expected lsof columns to align, got %q", out)
+	}
+}
+
 type fakeLsofProcess struct {
 	pid       string
 	comm      string

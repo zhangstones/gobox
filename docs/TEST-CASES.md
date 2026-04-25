@@ -33,6 +33,8 @@
 2. `⚠️ 部分一致` 条目必须验证“差异边界”，而不是只测成功路径。
 3. `🆕 gobox扩展` 条目必须验证参数是否真正进入执行路径，而不是仅测试 flag 可解析。
 4. 新增或增强命令时必须先补齐 case 编号，再根据实际实现方式确认 Mode。
+5. `behavior` case 必须证明“加参数前后行为发生可观察变化”；只检查 header、关键字或成功退出不算覆盖。
+6. 组合参数至少要有一条 case 验证优先级或交互语义，避免某个参数在组合场景里被静默忽略。
 
 ---
 
@@ -280,22 +282,22 @@
 | CURL-003 | `-o, --output FILE` | behavior | `curl -o` | local HTTP server | 文件输出一致 |
 | CURL-004 | `-O, --remote-name` | behavior | `curl -O` | local HTTP server | 远程文件名保存一致 |
 | CURL-005 | `-L, --location` | behavior | `curl -L` | redirect server | 跟随重定向一致 |
-| CURL-006 | `-I, --head` | behavior | `curl -I` | local HTTP server | 仅输出头部 |
+| CURL-006 | `-I, --head` | behavior | `curl -I` | local HTTP server | 必须只输出响应头而不带 body |
 | CURL-007 | `-w, --write-out` | behavior | `curl -w` | local HTTP server | 关键格式占位符一致 |
-| CURL-008 | `-m, --max-time` | behavior | `curl -m` | slow server | 超时行为一致 |
-| CURL-009 | `-X, --request` | behavior | `curl -X` | local HTTP server | 请求方法一致 |
-| CURL-010 | `-H, --header` | behavior | `curl -H` | local HTTP server | 自定义头一致 |
+| CURL-008 | `-m, --max-time` | behavior | `curl -m` | slow server | 超时前不得输出成功 body |
+| CURL-009 | `-X, --request` | behavior | `curl -X` | local HTTP server | 显式请求方法必须传递到服务端 |
+| CURL-010 | `-H, --header` | behavior | `curl -H` | local HTTP server | 自定义头必须传递到服务端 |
 | CURL-011 | `-d, --data` | behavior | `curl -d` | local HTTP server | POST body 一致 |
 | CURL-012 | `-k, --insecure` | behavior | `curl -k` | local HTTPS server with self-signed cert | 忽略证书错误后请求可成功 |
-| CURL-013 | `--connect-timeout` | behavior | `curl --connect-timeout` | unroutable target | 连接超时一致 |
+| CURL-013 | `--connect-timeout` | behavior | `curl --connect-timeout` | unroutable target | 连接超时路径不得产出成功 body |
 | CURL-014 | `--resolve` | behavior | `curl --resolve` | local HTTP server + fake host | 强制解析一致 |
 | CURL-015 | `-f, --fail` | behavior | `curl -f` | 404/500 server | 失败退出语义一致 |
 | CURL-016 | `-i, --include` | behavior | `curl -i` | local HTTP server | 响应头输出一致 |
 | CURL-017 | `-T, --upload-file` | behavior | `curl -T` | local upload server | PUT 上传一致 |
 | CURL-018 | `-F, --form` | behavior | `curl -F` | local multipart server | multipart 上传一致 |
-| CURL-019 | `-c, --concurrent=N` | contract | gobox-only | local bench server | 并发请求数参数生效 |
-| CURL-020 | `-n, --requests=N` | contract | gobox-only | local bench server | 总请求数参数生效 |
-| CURL-021 | `--warmup=N` | contract | gobox-only | local bench server | 预热阶段可执行 |
+| CURL-019 | `-c, --concurrent=N` | behavior | gobox-only | local bench server | `-c` 必须相对默认并发基线改变 bench 汇总输出 |
+| CURL-020 | `-n, --requests=N` | behavior | gobox-only | local bench server | `-n` 必须相对基线请求数改变 bench 汇总输出 |
+| CURL-021 | `--warmup=N` | behavior | gobox-only | local bench server | `--warmup` 必须相对 no-warmup 基线改变 bench 输出并显示预热阶段 |
 | CURL-022 | `-t, --timeout=SEC` | behavior | `curl -m` | local slow HTTP server | 请求超时语义与 `curl -m` 对齐 |
 
 ### nc/netcat
@@ -303,19 +305,19 @@
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
 | NC-001 | `-l, --listen` | behavior | `nc -l` | local socket | 监听模式一致 |
-| NC-002 | `-z, --zero` | behavior | `nc -z` | local socket | 零 I/O 端口探测一致 |
-| NC-003 | `-u, --udp` | behavior | `nc -u` | local UDP socket | UDP 发送行为一致 |
-| NC-004 | `-w, --wait=SEC` | behavior | `nc -w` | timeout target | 等待超时一致 |
-| NC-005 | `-v, --verbose` | behavior | `nc -v` | local socket | verbose 关键输出一致 |
+| NC-002 | `-z, --zero` | behavior | `nc -z` | local socket | 零 I/O 探测成功时应保持 quiet 且不走数据路径 |
+| NC-003 | `-u, --udp` | behavior | `nc -u` | local UDP socket | UDP 零 I/O 探测成功时应保持 quiet |
+| NC-004 | `-w, --wait=SEC` | behavior | `nc -w` | timeout target | 超时/失败路径必须保持非成功语义 |
+| NC-005 | `-v, --verbose` | behavior | `nc -v` | local socket | `-v` 必须相对 plain `-z` 增加诊断输出 |
 | NC-006 | `-n, --numeric-only` | behavior | `nc -n` | host/ip target | 跳过 DNS 解析一致 |
 | NC-007 | `-4` | behavior | `nc -4` | IPv4 server | IPv4 强制一致 |
 | NC-008 | `-6` | behavior | `nc -6` | IPv6 server | IPv6 强制一致 |
 | NC-009 | `--bench` | contract | gobox-only | local bench pair | benchmark 模式稳定 |
-| NC-010 | `-c, --concurrent=N` | contract | gobox-only | local bench pair | 并发连接数生效 |
-| NC-011 | `-n, --requests=N` | contract | gobox-only | local bench pair | 请求数生效 |
-| NC-012 | `-s, --size=N` | contract | gobox-only | local bench pair | 数据块大小生效 |
-| NC-013 | `-t, --time=SEC` | contract | gobox-only | local bench pair | 测试持续时间生效 |
-| NC-014 | `-i, --interval=SEC` | contract | gobox-only | local bench pair | 报告间隔生效 |
+| NC-010 | `-c, --concurrent=N` | behavior | gobox-only | local bench pair | 并发连接数必须相对默认 bench 基线改变输出 |
+| NC-011 | `-n, --requests=N` | behavior | gobox-only | local bench pair | 请求数必须相对默认 bench 基线改变输出 |
+| NC-012 | `-s, --size=N` | behavior | gobox-only | local bench pair | 数据块大小必须相对默认 bench 基线改变输出 |
+| NC-013 | `-t, --time=SEC` | behavior | gobox-only | local bench pair | 持续时间参数必须相对默认 bench 基线改变输出 |
+| NC-014 | `-i, --interval=SEC` | behavior | gobox-only | local bench pair | 报告间隔参数必须相对默认 bench 基线改变输出 |
 
 ### netstat
 
@@ -325,22 +327,26 @@
 | NETSTAT-002 | `-sort string` | structured | gobox-only | local listeners | 排序字段语义正确 |
 | NETSTAT-003 | `-state string` | structured | `netstat` | local listener + state filter | 状态列表过滤正确 |
 | NETSTAT-004 | `-l, --listening` | structured | `netstat -l` | local listener | 仅输出监听 socket |
-| NETSTAT-005 | `-n, --numeric` | structured | `netstat -n` | local listener | 仅数字地址/端口输出 |
-| NETSTAT-006 | `-a, --all` | structured | `netstat -a` | local sockets | 参数可用并显示 socket 表 |
+| NETSTAT-005 | `-n, --numeric` | contract | gobox-only | local sockets | gobox 当前默认已是数字地址/端口，`-n` 应保持与默认输出一致 |
+| NETSTAT-006 | `-a, --all` | contract | gobox-only | local sockets | gobox 当前默认 socket 选择已覆盖 `-a` 兼容语义，输出应与默认一致 |
 | NETSTAT-007 | `-t, --tcp` | structured | `netstat -t` | local TCP listener | 仅输出 TCP socket |
 | NETSTAT-008 | `-u, --udp` | structured | `netstat -u` | local UDP socket | 仅输出 UDP socket |
 | NETSTAT-009 | `-x, --unix` | structured | `netstat -x` | local Unix socket | 仅输出 Unix socket |
-| NETSTAT-010 | `-p, --programs` | structured | `netstat -p` | local sockets | PID/Program 列可用 |
+| NETSTAT-010 | `-p, --programs` | behavior | `netstat -p` | local sockets | `-p` 必须在保留目标 socket 的同时为结果行增加 PID/Program 信息 |
 | NETSTAT-011 | `-4` | structured | `netstat -4` | local IPv4 socket | 仅输出 IPv4 socket |
 | NETSTAT-012 | `-6` | structured | `netstat -6` | local IPv6 socket | 仅输出 IPv6 socket |
-| NETSTAT-013 | `-e, --extend` | structured | `netstat -e` | local sockets | 扩展列可用 |
-| NETSTAT-014 | `-o, --timers` | structured | `netstat -o` | local sockets | Timer 列可用 |
-| NETSTAT-015 | `-W, --wide` | structured | `netstat -W` | local sockets | 参数可用且不截断地址 |
-| NETSTAT-016 | combined short flags, e.g. `-tnlp` | structured | `netstat -tnlp` | local TCP listener | 合并短参数展开并命中监听项 |
-| NETSTAT-017 | `-r` | structured | `netstat -r` | local route table | 路由表输出包含关键表头 |
-| NETSTAT-018 | `-i` | structured | `netstat -i` | local interfaces | 接口表输出包含关键表头 |
-| NETSTAT-019 | `-s` | structured | `netstat -s` | local protocol stats | 协议统计输出包含关键段落 |
+| NETSTAT-013 | `-e, --extend` | behavior | `netstat -e` | local sockets | `-e` 必须在保留目标 socket 的同时增加扩展列 |
+| NETSTAT-014 | `-o, --timers` | behavior | `netstat -o` | local sockets | `-o` 必须在保留目标 socket 的同时增加 Timer 列 |
+| NETSTAT-015 | `-W, --wide` | contract | gobox-only | local sockets | gobox 当前默认不截断地址，`-W` 应保持与 `-n -l` 基线一致 |
+| NETSTAT-016 | combined short flags, e.g. `-tnlp` | behavior | `netstat -tnlp` | local TCP listener | 合并短参数必须相对 `-t -l` 基线改变输出，并命中目标 listener |
+| NETSTAT-017 | `-r` | structured | `netstat -r` | local route table | 路由表必须包含接口列与默认路由语义 |
+| NETSTAT-018 | `-i` | structured | `netstat -i` | local interfaces | 接口表必须包含环回接口与收发统计列 |
+| NETSTAT-019 | `-s` | behavior | `netstat -s` | local protocol stats | 裸 `-s` 必须包含比 `-s -t` 更完整的多协议统计视图 |
 | NETSTAT-020 | `-c` | contract | `netstat -c` | bounded command execution | continuous 模式可进入刷新路径 |
+| NETSTAT-021 | short/long flag equivalence for socket table flags | structured | gobox-only | local TCP listener | `-t/-l/-p/-e/-o/-n/-W` 与 `--tcp/--listening/--programs/--extend/--timers/--numeric/--wide` 输出一致 |
+| NETSTAT-022 | short/long flag equivalence for view flags | structured | gobox-only | local route table | `-r` 与 `--route` 输出一致 |
+| NETSTAT-023 | `--help` grouped help output | contract | gobox-only | none | 帮助输出按功能分组，短长参数合并为单行展示 |
+| NETSTAT-024 | `-s` with protocol filters, e.g. `-s -t` | behavior | `netstat -s -t` | local protocol stats | 组合后只保留目标协议统计，不能退化成裸 `-s` |
 
 ### tw
 
@@ -366,9 +372,9 @@
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
 | IFSTAT-001 | `-A` | contract | gobox-only | local interfaces | 显示全部接口集合不弱于默认模式 |
-| IFSTAT-002 | `-a` | contract | gobox-only | local interfaces | 绝对值模式参数可进入执行路径并稳定输出 |
-| IFSTAT-003 | `-d` | contract | gobox-only | local interfaces | drop 列出现 |
-| IFSTAT-004 | `-e` | contract | gobox-only | local interfaces | error 列出现 |
+| IFSTAT-002 | `-a` | behavior | gobox-only | local interfaces | `-a` 必须相对默认模式改变输出并切换到绝对值视图 |
+| IFSTAT-003 | `-d` | behavior | gobox-only | local interfaces | `-d` 必须相对默认模式增加 drop 列 |
+| IFSTAT-004 | `-e` | behavior | gobox-only | local interfaces | `-e` 必须相对默认模式增加 error 列 |
 | IFSTAT-005 | `-i string` | contract | gobox-only | selected iface | 仅输出指定接口 |
 | IFSTAT-006 | `-n int` | contract | gobox-only | local interfaces | 样本数受控并按次数退出 |
 | IFSTAT-007 | `-p int` | contract | gobox-only | local interfaces | 采样间隔参数生效 |
@@ -378,9 +384,9 @@
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
 | IP-001 | `addr` / `a` | structured | `ip addr` | local interfaces | 接口名、地址和状态集合不弱于 native |
-| IP-002 | `-o addr` | structured | `ip -o addr` | local interfaces | 单行输出中接口与地址字段可解析 |
+| IP-002 | `-o addr` | behavior | `ip -o addr` | local interfaces | `-o` 必须相对多行 `addr` 视图切换为单行 scoped records |
 | IP-003 | `link` / `l` | structured | `ip link` | local interfaces | 接口名、MTU、MAC、flags 语义一致 |
-| IP-004 | `-s link` | structured | `ip -s link` | local interfaces | RX/TX 统计字段存在且为非负数 |
+| IP-004 | `-s link` | behavior | `ip -s link` | local interfaces | `-s` 必须相对基础 `link` 视图增加 RX/TX 统计字段 |
 | IP-005 | `route` / `r` | structured | `ip route` | local route table | IPv4 路由和默认路由字段可解析 |
 | IP-006 | `neigh` / `n` | structured | `ip neigh` | local ARP/neigh table | 邻居 IP、设备和状态字段可解析 |
 
@@ -397,13 +403,13 @@
 | NP-007 | `-icmp` | behavior | `ping` | local target | ICMP 模式可执行 |
 | NP-008 | `-l int` | contract | gobox-only | local TCP target | 长连接模式生效 |
 | NP-009 | `-p int` | behavior | `nc -p`/TCP target | local TCP/UDP target | 目标端口生效 |
-| NP-010 | `-q` | behavior | `ping -q` | local target | 安静模式输出收敛 |
+| NP-010 | `-q` | behavior | `ping -q` | local target | `-q` 必须相对默认模式收敛为 summary-only 输出 |
 | NP-011 | `-s int` | contract | gobox-only | local target | 源端口绑定生效 |
-| NP-012 | `-scan` | contract | `nc -z` | local open/closed ports | 扫描结果稳定 |
+| NP-012 | `-scan` | behavior | gobox-only | local open/closed ports | 扫描结果必须报告目标端口状态和汇总计数 |
 | NP-013 | `-tcp` | behavior | `nc` | local TCP server | TCP 模式可执行 |
 | NP-014 | `-udp` | behavior | `nc -u` | local UDP server | UDP 模式可执行 |
-| NP-015 | `-v` | behavior | `ping -v` | local target | verbose 输出包含关键字段 |
-| NP-016 | `-w int` | contract | gobox-only | local target | worker 并发参数生效 |
+| NP-015 | `-v` | behavior | `ping -v` | local target | `-v` 必须相对 quiet 模式增加逐次诊断输出 |
+| NP-016 | `-w int` | behavior | gobox-only | local target | `-w` 必须相对单 worker 基线改变执行/报告路径 |
 
 ---
 
@@ -413,24 +419,24 @@
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
-| PS-001 | `-e` | structured | `ps -e` | current process | 可看到所有/当前进程 |
-| PS-002 | `-f` | structured | `ps -f` | current process | 包含 `PPID` 和执行信息 |
+| PS-001 | `-e` | contract | gobox-only | current process | gobox 当前默认即全进程视图，`-e` 应保持与默认输出一致 |
+| PS-002 | `-f` | structured | `ps -f` | current process | 切换到 full-format 并包含 `UID`/`PPID`/`STIME`/`TTY`/`TIME`/`CMD` 等核心列，`CMD` 保持单行 |
 | PS-003 | `-i int` | contract | gobox-only | current process | 采样间隔参数可执行 |
-| PS-004 | `-l int` | contract | gobox-only | long cmdline process | 截断长度生效 |
+| PS-004 | `-maxcmd N` | contract | gobox-only | long cmdline process | 显式命令长度上限生效 |
 | PS-005 | `-n int` | contract | gobox-only | current processes | 限制输出行数 |
 | PS-006 | `-full string` | structured | `pgrep -f` | current process | 完整命令行正则匹配符合 `pgrep -f` |
 | PS-007 | `-r` | structured | `ps -r` | current processes | 排序方向反转 |
-| PS-008 | `-sort string` | contract | gobox-only | current processes | 排序字段生效 |
-| PS-009 | `-ww` | contract | `ps -ww` | long cmdline process | 不截断宽度 |
+| PS-008 | `--sort FIELD` | contract | gobox-only | current processes | 排序字段生效 |
+| PS-009 | `-ww` | contract | `ps -ww` | long cmdline process | `ps` 默认宽度策略可被 `-ww` 关闭，长命令保持完整单行 |
 | PS-010 | `-o FIELD1,FIELD2` | structured | `ps -o` | current process | 自定义列输出正确 |
 | PS-011 | `-comm string` | structured | `pgrep -x` | current process | 进程名精确匹配符合 `pgrep -x` |
 | PS-012 | `-A` | structured | `ps -A` | current process | all-process alias 可看到当前进程 |
-| PS-013 | `-F` | structured | `ps -F` | current process | extra full 格式包含关键列 |
+| PS-013 | `-F` | behavior | `ps -F` | current process | `-F` 必须相对基础 `-p PID` 增加 full-format 列并保留目标 PID |
 | PS-014 | `-u USER` | structured | `ps -u` | current user | 用户过滤命中当前进程集合 |
 | PS-015 | `-p PID` | structured | `ps -p` | current process | PID 过滤只保留目标进程 |
 | PS-016 | `-C NAME` | structured | `ps -C` | current process name | 命令名过滤命中目标进程 |
-| PS-017 | `--sort FIELD` | structured | `ps --sort` | current processes | GNU 风格排序参数生效 |
-| PS-018 | `aux` | structured | `ps aux` | current process | BSD 风格输出包含 USER/PID/CMD 等列 |
+| PS-017 | `--sort -FIELD` | structured | `ps --sort` | current processes | GNU 风格降序排序参数生效 |
+| PS-018 | `aux` | behavior | `ps aux` | current process | BSD 风格输出与默认 `ps` 在列和进程选择语义上有可观察差异 |
 
 ### top
 
@@ -452,10 +458,10 @@
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
-| FREE-001 | default memory summary | structured | `free` | local Linux host | total/used/free/buff-cache/available 语义一致 |
-| FREE-002 | `-h` | structured | `free -h` | local Linux host | 人类可读单位输出且字段集合一致 |
-| FREE-003 | `-m` | structured | `free -m` | local Linux host | MiB 单位换算语义一致 |
-| FREE-004 | `-g` | structured | `free -g` | local Linux host | GiB 单位换算语义一致 |
+| FREE-001 | default memory summary | structured | `free` | local Linux host | Mem/Swap 行必须包含可解析的核心列集合 |
+| FREE-002 | `-h` | behavior | `free -h` | local Linux host | `-h` 必须相对默认输出切换为人类可读单位 |
+| FREE-003 | `-m` | behavior | `free -m` | local Linux host | `-m` 必须相对默认输出切换为 MiB 数值视图 |
+| FREE-004 | `-g` | behavior | `free -g` | local Linux host | `-g` 必须相对默认输出切换为 GiB 数值视图 |
 | FREE-005 | `-s SEC -c COUNT` | behavior | `free -s -c` | local Linux host | 按指定次数采样并退出 |
 
 ### xargs
@@ -489,15 +495,15 @@
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
-| LSOF-001 | default open files | structured | `lsof` | current process | 输出包含当前进程可见打开文件 |
-| LSOF-002 | `-p PID` | structured | `lsof -p` | current process | 仅输出指定 PID 的打开文件 |
-| LSOF-003 | `-c NAME` | structured | `lsof -c` | controlled named process | 命令名过滤集合一致 |
-| LSOF-004 | `-i` | structured | `lsof -i` | local socket | 仅输出网络文件 |
+| LSOF-001 | default open files | structured | `lsof` | current process | 输出包含表头和当前进程可见打开文件 |
+| LSOF-002 | `-p PID` | structured | `lsof -p` | current process | 结果行只能属于指定 PID |
+| LSOF-003 | `-c NAME` | structured | `lsof -c` | controlled named process | 命令名过滤只保留目标进程集合 |
+| LSOF-004 | `-i` | behavior | `lsof -i` | local socket | `-i` 必须相对默认 `lsof` 缩小为网络文件结果集 |
 | LSOF-005 | `-iTCP` | structured | `lsof -iTCP` | local TCP socket | TCP 协议过滤集合一致 |
 | LSOF-006 | `-iUDP` | structured | `lsof -iUDP` | local UDP socket | UDP 协议过滤集合一致 |
-| LSOF-007 | `-i :PORT` | structured | `lsof -i :PORT` | local listener | 端口过滤命中目标 socket |
-| LSOF-008 | `-n` | structured | `lsof -n` | local socket | 不出现主机名解析结果 |
-| LSOF-009 | `-P` | structured | `lsof -P` | local socket | 不出现服务名解析结果 |
+| LSOF-007 | `-i :PORT` | behavior | `lsof -i :PORT` | local listener | 端口过滤必须相对 bare `-i` 缩小结果集并保留目标 socket |
+| LSOF-008 | `-n` | contract | gobox-only | local socket | gobox 当前默认已是数字主机表示，`-n` 应保持与 `-i` 基线一致 |
+| LSOF-009 | `-P` | contract | gobox-only | local socket | gobox 当前默认已是数字端口表示，`-P` 应保持与 `-i :PORT` 基线一致 |
 | LSOF-010 | `-t` | exact | `lsof -t` | controlled process | 仅输出 PID 列表 |
 | LSOF-011 | `FILE...` | structured | `lsof FILE...` | opened temp file | 能定位打开指定文件的进程 |
 
@@ -527,12 +533,13 @@
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
-| IOSTAT-001 | `-i sec` | contract | `iostat -p` | local Linux host | 采样间隔参数可执行 |
-| IOSTAT-002 | `-n count` | contract | `iostat -c` | local Linux host | 采样次数受控 |
-| IOSTAT-003 | `-H` | contract | `iostat -h` | local Linux host | 人类可读格式生效 |
-| IOSTAT-004 | `-z` | contract | `iostat -z` | local Linux host | 零活动设备过滤生效 |
+| IOSTAT-001 | `-i sec` | structured | `iostat 1 1` | local Linux host | 间隔采样输出结构与 native 一致 |
+| IOSTAT-002 | `-n count` | structured | `iostat` | local Linux host | 单次采样输出结构与 native 一致 |
+| IOSTAT-003 | `-H` | behavior | gobox-only | local Linux host | `-H` 必须相对默认输出切换为人类可读吞吐单位 |
+| IOSTAT-004 | `-z` | structured | `iostat -z 1 1` | local Linux host | 零活动设备过滤后的结构与 native 一致 |
 | IOSTAT-005 | `--cgroup` | behavior | gobox-only | local Linux host with cgroup io stats | 可切换到基于 cgroup 的旧输出路径 |
 | IOSTAT-006 | `interval [count]` | structured | `iostat 1 1` | local Linux host | 位置参数形式的采样间隔与次数可执行 |
+| IOSTAT-007 | `--help` enriched help output | contract | gobox-only | none | 帮助输出包含位置参数、列说明和示例 |
 
 ### ioperf
 

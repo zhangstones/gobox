@@ -44,7 +44,8 @@ func LsofCmd(args []string) error {
 	}
 	printed := map[int]bool{}
 	if !*pidsOnly {
-		fmt.Printf("%-10s %6s %-4s %s\n", "COMMAND", "PID", "FD", "NAME")
+		printLsofTable(rows, protoFilter, portFilter)
+		return nil
 	}
 	for _, r := range rows {
 		if protoFilter != "" && !strings.Contains(strings.ToUpper(r.name), protoFilter) {
@@ -53,14 +54,10 @@ func LsofCmd(args []string) error {
 		if portFilter != "" && !strings.Contains(r.name, ":"+portFilter) {
 			continue
 		}
-		if *pidsOnly {
-			if !printed[r.pid] {
-				fmt.Println(r.pid)
-				printed[r.pid] = true
-			}
-			continue
+		if !printed[r.pid] {
+			fmt.Println(r.pid)
+			printed[r.pid] = true
 		}
-		fmt.Printf("%-10s %6d %-4s %s\n", r.command, r.pid, r.fd, r.name)
 	}
 	return nil
 }
@@ -70,6 +67,35 @@ type lsofRow struct {
 	pid     int
 	fd      string
 	name    string
+}
+
+func printLsofTable(rows []lsofRow, protoFilter, portFilter string) {
+	filtered := make([]lsofRow, 0, len(rows))
+	commandWidth := len("COMMAND")
+	pidWidth := len("PID")
+	fdWidth := len("FD")
+	for _, r := range rows {
+		if protoFilter != "" && !strings.Contains(strings.ToUpper(r.name), protoFilter) {
+			continue
+		}
+		if portFilter != "" && !strings.Contains(r.name, ":"+portFilter) {
+			continue
+		}
+		filtered = append(filtered, r)
+		if len(r.command) > commandWidth {
+			commandWidth = len(r.command)
+		}
+		if l := len(strconv.Itoa(r.pid)); l > pidWidth {
+			pidWidth = l
+		}
+		if len(r.fd) > fdWidth {
+			fdWidth = len(r.fd)
+		}
+	}
+	fmt.Printf("%-*s %*s %-*s %s\n", commandWidth, "COMMAND", pidWidth, "PID", fdWidth, "FD", "NAME")
+	for _, r := range filtered {
+		fmt.Printf("%-*s %*d %-*s %s\n", commandWidth, r.command, pidWidth, r.pid, fdWidth, r.fd, r.name)
+	}
 }
 
 func normalizeLsofArgs(args []string) []string {

@@ -61,11 +61,7 @@ func PsCmd(args []string) error {
 	hideIdle := fsFlags.Bool("hide-idle", false, "hide processes with zero sampled CPU")
 
 	fsFlags.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: gobox ps [OPTIONS]")
-		fmt.Fprintln(os.Stderr, "List processes. On Linux this shows CPU% and memory (RSS/VMS) by sampling /proc.")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Options:")
-		fsFlags.PrintDefaults()
+		printPSUsage()
 	}
 
 	if err := fsFlags.Parse(args); err != nil {
@@ -77,8 +73,15 @@ func PsCmd(args []string) error {
 	if *allA {
 		*all = true
 	}
+	maxCmdExplicit := false
+	fsFlags.Visit(func(f *flag.Flag) {
+		if f.Name == "maxcmd" || f.Name == "ww" {
+			maxCmdExplicit = true
+		}
+	})
 	if *wideWide {
 		*maxCmd = 0
+		maxCmdExplicit = true
 	}
 	if *fullFilter != "" && *commFilter != "" {
 		return fmt.Errorf("-full and -comm cannot be used together")
@@ -94,8 +97,19 @@ func PsCmd(args []string) error {
 	if bsdAux {
 		*all = true
 		*maxCmd = 0
+		maxCmdExplicit = true
 		if len(customFields) == 0 {
 			customFields = []string{"user", "pid", "pcpu", "pmem", "vsz", "rss", "tty", "stat", "start", "time", "args"}
+		}
+	}
+	ttyWidth := 0
+	if !maxCmdExplicit && !utils.IsTerminal(os.Stdout) {
+		*maxCmd = 0
+	}
+	if !maxCmdExplicit && utils.IsTerminal(os.Stdout) {
+		if width, ok := utils.StdoutWidth(); ok {
+			ttyWidth = width
+			*maxCmd = 0
 		}
 	}
 	sortField, sortReverse := normalizePSSortField(*sortBy)
@@ -201,44 +215,36 @@ func PsCmd(args []string) error {
 
 		// print
 		if len(customFields) > 0 {
-			printCustomPS(infos, customFields, *maxCmd, memTotal)
+			printCustomPS(infos, customFields, *maxCmd, memTotal, ttyWidth)
 			return nil
 		}
 		if *extendedFull {
-			printCustomPS(infos, []string{"uid", "pid", "ppid", "pcpu", "pmem", "vsz", "rss", "tty", "stat", "start", "time", "args"}, *maxCmd, memTotal)
+			printCustomPS(infos, []string{"uid", "pid", "ppid", "pcpu", "pmem", "vsz", "rss", "tty", "stat", "start", "time", "args"}, *maxCmd, memTotal, ttyWidth)
 			return nil
 		}
 		if *longFormat {
-			printCustomPS(infos, []string{"pid", "ppid", "stat", "tty", "time", "args"}, *maxCmd, memTotal)
+			printCustomPS(infos, []string{"pid", "ppid", "stat", "tty", "time", "args"}, *maxCmd, memTotal, ttyWidth)
 			return nil
 		}
 		if *full {
-			fmt.Printf("%6s %6s %6s %8s %8s %s\n", "PID", "PPID", "%CPU", "RSS", "VMS", "EXE")
-			for _, pi := range infos {
-				rss := utils.HumanSize(pi.rss)
-				vms := utils.HumanSize(pi.vsize)
-				exe := pi.exe
-				if exe == "" {
-					exe = pi.cmdline
-				}
-				if *maxCmd > 0 {
-					exe = truncateString(exe, *maxCmd)
-				}
-				fmt.Printf("%6d %6d %6.1f %8s %8s %s\n", pi.pid, pi.ppid, pi.cpu, rss, vms, exe)
-			}
+			printPSFullFormat(infos, *maxCmd, ttyWidth)
 			return nil
 		}
 
-		fmt.Printf("%6s %6s %8s %8s %s\n", "PID", "%CPU", "RSS", "VMS", "CMD")
+		rows := make([][]string, 0, len(infos))
 		for _, pi := range infos {
 			rss := utils.HumanSize(pi.rss)
 			vms := utils.HumanSize(pi.vsize)
-			cmd := pi.cmdline
-			if *maxCmd > 0 {
-				cmd = truncateString(cmd, *maxCmd)
-			}
-			fmt.Printf("%6d %6.1f %8s %8s %s\n", pi.pid, pi.cpu, rss, vms, cmd)
+			cmd := renderPSCommand(pi.cmdline, pi.exe, *maxCmd)
+			rows = append(rows, []string{
+				strconv.Itoa(pi.pid),
+				fmt.Sprintf("%.1f", pi.cpu),
+				rss,
+				vms,
+				cmd,
+			})
 		}
+		printPSAlignedTableWithHeaders([]string{"PID", "%CPU", "RSS", "VMS", "CMD"}, rows, ttyWidth)
 		return nil
 	}
 
@@ -247,6 +253,33 @@ func PsCmd(args []string) error {
 		return psFallbackCustom(customFields, *maxCmd)
 	}
 	return psFallback(fsFlags, all, full)
+}
+
+func printPSUsage() {
+	fmt.Fprintln(os.Stderr, "Usage: gobox ps [OPTIONS]")
+	fmt.Fprintln(os.Stderr, "List processes. On Linux this shows CPU% and memory (RSS/VMS) by sampling /proc.")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Options:")
+	fmt.Fprintln(os.Stderr, "  -e, -A            show all processes")
+	fmt.Fprintln(os.Stderr, "  -f                full format (UID/PPID/STIME/TTY/TIME/CMD)")
+	fmt.Fprintln(os.Stderr, "  -F                extra full format")
+	fmt.Fprintln(os.Stderr, "  -u USERS          show only comma-separated users or UIDs")
+	fmt.Fprintln(os.Stderr, "  -p PIDS           show only comma-separated process IDs")
+	fmt.Fprintln(os.Stderr, "  -C NAMES          show only comma-separated command names")
+	fmt.Fprintln(os.Stderr, "  -comm PATTERN     exact process-name filter (pgrep -x style)")
+	fmt.Fprintln(os.Stderr, "  -full REGEXP      full command-line regexp filter (pgrep -f style)")
+	fmt.Fprintln(os.Stderr, "  -o FIELDS         custom output fields, e.g. pid,ppid,cmd,pcpu,pmem")
+	fmt.Fprintln(os.Stderr, "  --sort FIELD      sort by: pid|cpu|rss|vms|cmd|exe|ppid|user|start|etime|time")
+	fmt.Fprintln(os.Stderr, "  -r                reverse sort order")
+	fmt.Fprintln(os.Stderr, "  -n N              show only N entries (0 = all)")
+	fmt.Fprintln(os.Stderr, "  -i MS             CPU sample interval in milliseconds")
+	fmt.Fprintln(os.Stderr, "  -ww               do not truncate command width")
+	fmt.Fprintln(os.Stderr, "  -maxcmd N         max command length (0 = unlimited)")
+	fmt.Fprintln(os.Stderr, "  -hide-idle        hide processes with zero sampled CPU")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Compatibility:")
+	fmt.Fprintln(os.Stderr, "  ps aux            BSD-style process table")
+	fmt.Fprintln(os.Stderr, "  -l N              accepted as a legacy alias for -maxcmd N")
 }
 
 func normalizePSArgs(args []string) ([]string, bool) {
@@ -299,9 +332,9 @@ func psFallback(fsFlags *flag.FlagSet, all, full *bool) error {
 	sort.Slice(procs, func(i, j int) bool { return procs[i].Pid() < procs[j].Pid() })
 
 	if *full {
-		fmt.Printf("PID\tPPID\tEXE\n")
+		fmt.Printf("UID\tPID\tPPID\tC\tSTIME\tTTY\tTIME\tCMD\n")
 		for _, p := range procs {
-			fmt.Printf("%d\t%d\t%s\n", p.Pid(), p.PPid(), p.Executable())
+			fmt.Printf("-\t%d\t%d\t0\t-\t?\t0:00\t%s\n", p.Pid(), p.PPid(), p.Executable())
 		}
 		return nil
 	}
@@ -320,11 +353,7 @@ func psFallbackCustom(fields []string, maxCmd int) error {
 	}
 	sort.Slice(procs, func(i, j int) bool { return procs[i].Pid() < procs[j].Pid() })
 
-	headers := make([]string, 0, len(fields))
-	for _, field := range fields {
-		headers = append(headers, psFieldHeader(field))
-	}
-	fmt.Println(strings.Join(headers, " "))
+	rows := make([][]string, 0, len(procs))
 	for _, p := range procs {
 		values := make([]string, 0, len(fields))
 		for _, field := range fields {
@@ -347,8 +376,9 @@ func psFallbackCustom(fields []string, maxCmd int) error {
 				values = append(values, "-")
 			}
 		}
-		fmt.Println(strings.Join(values, " "))
+		rows = append(rows, values)
 	}
+	printPSAlignedTable(fields, rows, 0)
 	return nil
 }
 
@@ -622,19 +652,132 @@ func psFieldHeader(field string) string {
 	}
 }
 
-func printCustomPS(infos []procInfo, fields []string, maxCmd int, memTotal int64) {
-	headers := make([]string, 0, len(fields))
-	for _, field := range fields {
-		headers = append(headers, psFieldHeader(field))
-	}
-	fmt.Println(strings.Join(headers, " "))
+func printCustomPS(infos []procInfo, fields []string, maxCmd int, memTotal int64, ttyWidth int) {
+	rows := make([][]string, 0, len(infos))
 	for _, pi := range infos {
 		values := make([]string, 0, len(fields))
 		for _, field := range fields {
 			values = append(values, renderPSField(pi, field, maxCmd, memTotal))
 		}
-		fmt.Println(strings.Join(values, " "))
+		rows = append(rows, values)
 	}
+	printPSAlignedTable(fields, rows, ttyWidth)
+}
+
+func printPSAlignedTable(fields []string, rows [][]string, ttyWidth int) {
+	headers := make([]string, len(fields))
+	for i, field := range fields {
+		headers[i] = psFieldHeader(field)
+	}
+	printPSAlignedTableWithHeaders(headers, rows, ttyWidth)
+}
+
+func printPSAlignedLine(values []string, widths []int) {
+	for i, value := range values {
+		if i > 0 {
+			fmt.Print(" ")
+		}
+		if i == len(values)-1 {
+			fmt.Print(value)
+			continue
+		}
+		fmt.Printf("%-*s", widths[i], value)
+	}
+	fmt.Println()
+}
+
+func printPSFullFormat(infos []procInfo, maxCmd int, ttyWidth int) {
+	rows := make([][]string, 0, len(infos))
+	for _, pi := range infos {
+		cmd := renderPSCommand(pi.cmdline, pi.exe, maxCmd)
+		userName := pi.user
+		if userName == "" {
+			userName = strconv.Itoa(pi.uid)
+		}
+		rows = append(rows, []string{
+			userName,
+			strconv.Itoa(pi.pid),
+			strconv.Itoa(pi.ppid),
+			strconv.Itoa(int(pi.cpu)),
+			formatStartTime(pi.start),
+			renderPSField(pi, "tty", maxCmd, 0),
+			formatCPUTime(pi.utime + pi.stime),
+			cmd,
+		})
+	}
+	printPSAlignedTableWithHeaders([]string{"UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"}, rows, ttyWidth)
+}
+
+func printPSAlignedTableWithHeaders(headers []string, rows [][]string, ttyWidth int) {
+	rows = fitPSRowsToWidth(headers, rows, ttyWidth)
+	widths := make([]int, len(headers))
+	for i, header := range headers {
+		widths[i] = len(header)
+	}
+	for _, row := range rows {
+		for i, value := range row {
+			if len(value) > widths[i] {
+				widths[i] = len(value)
+			}
+		}
+	}
+	printPSAlignedLine(headers, widths)
+	for _, row := range rows {
+		printPSAlignedLine(row, widths)
+	}
+}
+
+func fitPSRowsToWidth(headers []string, rows [][]string, ttyWidth int) [][]string {
+	if ttyWidth <= 0 || len(headers) == 0 {
+		return rows
+	}
+	last := len(headers) - 1
+	reserved := 0
+	for i := 0; i < last; i++ {
+		width := len(headers[i])
+		for _, row := range rows {
+			if i < len(row) && len(row[i]) > width {
+				width = len(row[i])
+			}
+		}
+		reserved += width
+	}
+	reserved += last
+	maxLast := ttyWidth - reserved
+	if maxLast < len(headers[last]) {
+		maxLast = len(headers[last])
+	}
+	if maxLast <= 0 {
+		return rows
+	}
+	fitted := make([][]string, 0, len(rows))
+	for _, row := range rows {
+		cloned := append([]string(nil), row...)
+		if last < len(cloned) {
+			cloned[last] = truncateString(cloned[last], maxLast)
+		}
+		fitted = append(fitted, cloned)
+	}
+	return fitted
+}
+
+func renderPSCommand(cmdline, fallback string, maxCmd int) string {
+	cmd := sanitizePSDisplay(cmdline)
+	if cmd == "" {
+		cmd = sanitizePSDisplay(fallback)
+	}
+	if maxCmd > 0 {
+		cmd = truncateString(cmd, maxCmd)
+	}
+	return cmd
+}
+
+func sanitizePSDisplay(s string) string {
+	if s == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer("\r", " ", "\n", " ", "\t", " ")
+	return strings.Join(strings.Fields(replacer.Replace(s)), " ")
 }
 
 func renderPSField(pi procInfo, field string, maxCmd int, memTotal int64) string {
@@ -644,23 +787,9 @@ func renderPSField(pi procInfo, field string, maxCmd int, memTotal int64) string
 	case "ppid":
 		return strconv.Itoa(pi.ppid)
 	case "args":
-		cmd := pi.cmdline
-		if cmd == "" {
-			cmd = pi.exe
-		}
-		if maxCmd > 0 {
-			cmd = truncateString(cmd, maxCmd)
-		}
-		return cmd
+		return renderPSCommand(pi.cmdline, pi.exe, maxCmd)
 	case "comm":
-		exe := pi.exe
-		if exe == "" {
-			exe = pi.cmdline
-		}
-		if maxCmd > 0 {
-			exe = truncateString(exe, maxCmd)
-		}
-		return exe
+		return renderPSCommand(pi.exe, pi.cmdline, maxCmd)
 	case "pcpu":
 		return fmt.Sprintf("%.1f", pi.cpu)
 	case "pmem":
