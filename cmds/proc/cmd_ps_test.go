@@ -146,13 +146,66 @@ func TestPsCmdLengthLimitAppliesWithoutTTY(t *testing.T) {
 }
 
 func TestNormalizePSArgsKeepsLegacyMaxCmdAlias(t *testing.T) {
-	args, bsdAux := normalizePSArgs([]string{"-l", "12", "--sort", "pid"})
-	if bsdAux {
-		t.Fatalf("unexpected aux detection")
+	args, bsdMode := normalizePSArgs([]string{"-l", "12", "--sort", "pid"})
+	if bsdMode.userFormat || bsdMode.allUsers || bsdMode.includeNoTTY {
+		t.Fatalf("unexpected bsd mode detection: %+v", bsdMode)
 	}
 	got := strings.Join(args, " ")
 	if got != "-maxcmd 12 --sort pid" {
 		t.Fatalf("expected legacy -l N to normalize to -maxcmd N, got %q", got)
+	}
+}
+
+func TestNormalizePSArgsParsesBSDLettersIndividually(t *testing.T) {
+	args, bsdMode := normalizePSArgs([]string{"ax", "u", "-n", "1"})
+	if len(args) != 2 || args[0] != "-n" || args[1] != "1" {
+		t.Fatalf("unexpected normalized args: %v", args)
+	}
+	if !bsdMode.allUsers || !bsdMode.includeNoTTY || !bsdMode.userFormat {
+		t.Fatalf("expected ax/u to enable BSD mode, got %+v", bsdMode)
+	}
+}
+
+func TestApplyPSBSDSelection(t *testing.T) {
+	currentUID := os.Geteuid()
+	otherUID := currentUID + 1
+	infos := []procInfo{
+		{pid: 1, uid: currentUID, tty: "pts/0"},
+		{pid: 2, uid: currentUID, tty: "?"},
+		{pid: 3, uid: otherUID, tty: "pts/1"},
+		{pid: 4, uid: otherUID, tty: "?"},
+	}
+	clone := func() []procInfo { return append([]procInfo(nil), infos...) }
+	gotDefault := applyPSBSDSelection(clone(), psBSDMode{userFormat: true})
+	if len(gotDefault) != 1 || gotDefault[0].pid != 1 {
+		t.Fatalf("unexpected default BSD selection: %+v", gotDefault)
+	}
+	gotA := applyPSBSDSelection(clone(), psBSDMode{allUsers: true})
+	if len(gotA) != 2 || gotA[0].pid != 1 || gotA[1].pid != 3 {
+		t.Fatalf("unexpected BSD a selection: %+v", gotA)
+	}
+	gotX := applyPSBSDSelection(clone(), psBSDMode{includeNoTTY: true})
+	if len(gotX) != 2 || gotX[0].pid != 1 || gotX[1].pid != 2 {
+		t.Fatalf("unexpected BSD x selection: %+v", gotX)
+	}
+	gotAX := applyPSBSDSelection(clone(), psBSDMode{allUsers: true, includeNoTTY: true})
+	if len(gotAX) != 4 {
+		t.Fatalf("unexpected BSD ax selection: %+v", gotAX)
+	}
+}
+
+func TestApplyPSExplicitSelectionsUsesUnion(t *testing.T) {
+	infos := []procInfo{
+		{pid: 1, uid: os.Geteuid(), exe: "bash", tty: "pts/0"},
+		{pid: 2, uid: os.Geteuid() + 1, exe: "sleep", tty: "?"},
+		{pid: 3, uid: os.Geteuid(), exe: "sleep", tty: "?"},
+	}
+	got, err := applyPSExplicitSelections(infos, false, psBSDMode{userFormat: true}, "2", "", "")
+	if err != nil {
+		t.Fatalf("applyPSExplicitSelections failed: %v", err)
+	}
+	if len(got) != 2 || got[0].pid != 1 || got[1].pid != 2 {
+		t.Fatalf("expected BSD user selection union pid selection, got %+v", got)
 	}
 }
 
@@ -166,7 +219,7 @@ func TestTopCmdNonTTYOutputDoesNotEmitClearScreen(t *testing.T) {
 	if strings.Contains(output, "\x1b[H\x1b[2J") {
 		t.Fatalf("expected no clear-screen escape in non-tty output, got %q", output)
 	}
-	for _, want := range []string{"PID", "%CPU", "CMD"} {
+	for _, want := range []string{"PID", "%CPU", "COMMAND"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected top output to include %s in the process header, got %q", want, output)
 		}
@@ -311,6 +364,20 @@ func TestPsCmdBSDStyleAux(t *testing.T) {
 	for _, field := range []string{"USER", "PID", "%CPU", "%MEM", "VSZ", "RSS", "TTY", "STAT", "START", "TIME", "CMD"} {
 		if !strings.Contains(output, field) {
 			t.Fatalf("expected aux header to contain %s, got %q", field, output)
+		}
+	}
+}
+
+func TestPsCmdBSDStyleULetterEnablesUserFormat(t *testing.T) {
+	output, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"u", "-n", "1", "-i", "1"})
+	})
+	if err != nil {
+		t.Fatalf("PsCmd failed: %v", err)
+	}
+	for _, field := range []string{"USER", "PID", "%CPU", "%MEM", "CMD"} {
+		if !strings.Contains(output, field) {
+			t.Fatalf("expected BSD u header to contain %s, got %q", field, output)
 		}
 	}
 }

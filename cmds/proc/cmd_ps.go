@@ -20,25 +20,49 @@ import (
 )
 
 type procInfo struct {
-	pid     int
-	ppid    int
-	exe     string
-	cmdline string
-	vsize   int64 // bytes
-	rss     int64 // bytes
-	utime   int64
-	stime   int64
-	cpu     float64 // percent
-	uid     int
-	user    string
-	state   string
-	tty     string
-	start   time.Time
-	elapsed time.Duration
+	pid      int
+	ppid     int
+	exe      string
+	cmdline  string
+	vsize    int64 // bytes
+	rss      int64 // bytes
+	utime    int64
+	stime    int64
+	cpu      float64 // percent
+	uid      int
+	user     string
+	state    string
+	tty      string
+	start    time.Time
+	elapsed  time.Duration
+	cpuTicks int64
+}
+
+type procSnapshot struct {
+	totalJiffies int64
+	cpuTimes     cpuTimes
+	infos        map[int]procInfo
+}
+
+type cpuTimes struct {
+	user    uint64
+	nice    uint64
+	system  uint64
+	idle    uint64
+	iowait  uint64
+	irq     uint64
+	softirq uint64
+	steal   uint64
+}
+
+type psBSDMode struct {
+	allUsers     bool
+	includeNoTTY bool
+	userFormat   bool
 }
 
 func PsCmd(args []string) error {
-	args, bsdAux := normalizePSArgs(args)
+	args, bsdMode := normalizePSArgs(args)
 	fsFlags := flag.NewFlagSet("ps", flag.ContinueOnError)
 	all := fsFlags.Bool("e", false, "show all processes (best-effort)")
 	allA := fsFlags.Bool("A", false, "show all processes (alias for -e)")
@@ -94,14 +118,13 @@ func PsCmd(args []string) error {
 			return fmt.Errorf("no valid output fields in %q", *outputFormat)
 		}
 	}
-	if bsdAux {
-		*all = true
+	if bsdMode.userFormat {
 		*maxCmd = 0
-		maxCmdExplicit = true
 		if len(customFields) == 0 {
 			customFields = []string{"user", "pid", "pcpu", "pmem", "vsz", "rss", "tty", "stat", "start", "time", "args"}
 		}
 	}
+	showFullCommand := *fullFilter != "" || *full || *extendedFull || *longFormat || bsdMode.userFormat
 	ttyWidth := 0
 	if !maxCmdExplicit && !utils.IsTerminal(os.Stdout) {
 		*maxCmd = 0
@@ -123,25 +146,14 @@ func PsCmd(args []string) error {
 			// fallback to go-ps listing if gathering detailed info fails
 			return psFallback(fsFlags, all, full)
 		}
-		if *pidFilter != "" {
-			pids, err := parsePIDList(*pidFilter)
+		hasSelection := hasPSSelection(*all, bsdMode, *pidFilter, *userFilter, *commandFilter)
+		if !hasSelection {
+			infos = applyPSDefaultSelection(infos)
+		} else {
+			infos, err = applyPSExplicitSelections(infos, *all, bsdMode, *pidFilter, *userFilter, *commandFilter)
 			if err != nil {
 				return err
 			}
-			infos = filterProcInfos(infos, func(pi procInfo) bool { return pids[pi.pid] })
-		}
-		if *userFilter != "" {
-			users, uids, err := parseUserList(*userFilter)
-			if err != nil {
-				return err
-			}
-			infos = filterProcInfos(infos, func(pi procInfo) bool {
-				return uids[pi.uid] || users[pi.user] || users[strconv.Itoa(pi.uid)]
-			})
-		}
-		if *commandFilter != "" {
-			names := parseStringSet(*commandFilter)
-			infos = filterProcInfos(infos, func(pi procInfo) bool { return names[pi.exe] })
 		}
 		if *hideIdle {
 			infos = filterProcInfos(infos, func(pi procInfo) bool { return pi.cpu != 0 })
@@ -174,32 +186,7 @@ func PsCmd(args []string) error {
 			infos = filtered
 		}
 
-		// sorting
-		switch sortField {
-		case "cpu", "pcpu":
-			sort.Slice(infos, func(i, j int) bool { return infos[i].cpu < infos[j].cpu })
-		case "rss":
-			sort.Slice(infos, func(i, j int) bool { return infos[i].rss < infos[j].rss })
-		case "vms", "vsize", "vsz":
-			sort.Slice(infos, func(i, j int) bool { return infos[i].vsize < infos[j].vsize })
-		case "cmd", "args", "command":
-			sort.Slice(infos, func(i, j int) bool { return infos[i].cmdline < infos[j].cmdline })
-		case "comm":
-			sort.Slice(infos, func(i, j int) bool { return infos[i].exe < infos[j].exe })
-		case "user", "uid":
-			sort.Slice(infos, func(i, j int) bool {
-				if infos[i].uid == infos[j].uid {
-					return infos[i].pid < infos[j].pid
-				}
-				return infos[i].uid < infos[j].uid
-			})
-		case "etime":
-			sort.Slice(infos, func(i, j int) bool { return infos[i].elapsed < infos[j].elapsed })
-		case "time":
-			sort.Slice(infos, func(i, j int) bool { return infos[i].utime+infos[i].stime < infos[j].utime+infos[j].stime })
-		default:
-			sort.Slice(infos, func(i, j int) bool { return infos[i].pid < infos[j].pid })
-		}
+		sortProcInfos(infos, sortField)
 		if *rev {
 			for i, j := 0, len(infos)-1; i < j; i, j = i+1, j-1 {
 				infos[i], infos[j] = infos[j], infos[i]
@@ -235,7 +222,10 @@ func PsCmd(args []string) error {
 		for _, pi := range infos {
 			rss := utils.HumanSize(pi.rss)
 			vms := utils.HumanSize(pi.vsize)
-			cmd := renderPSCommand(pi.cmdline, pi.exe, *maxCmd)
+			cmd := renderPSCommand(pi.exe, pi.cmdline, *maxCmd)
+			if showFullCommand {
+				cmd = renderPSCommand(pi.cmdline, pi.exe, *maxCmd)
+			}
 			rows = append(rows, []string{
 				strconv.Itoa(pi.pid),
 				fmt.Sprintf("%.1f", pi.cpu),
@@ -282,13 +272,21 @@ func printPSUsage() {
 	fmt.Fprintln(os.Stderr, "  -l N              accepted as a legacy alias for -maxcmd N")
 }
 
-func normalizePSArgs(args []string) ([]string, bool) {
+func normalizePSArgs(args []string) ([]string, psBSDMode) {
 	out := make([]string, 0, len(args))
-	bsdAux := false
+	mode := psBSDMode{}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		if arg == "aux" {
-			bsdAux = true
+		if !strings.HasPrefix(arg, "-") && isBSDPSMode(arg) {
+			if strings.ContainsRune(arg, 'a') {
+				mode.allUsers = true
+			}
+			if strings.ContainsRune(arg, 'x') {
+				mode.includeNoTTY = true
+			}
+			if strings.ContainsRune(arg, 'u') {
+				mode.userFormat = true
+			}
 			continue
 		}
 		if arg == "-l" {
@@ -306,7 +304,21 @@ func normalizePSArgs(args []string) ([]string, bool) {
 		}
 		out = append(out, arg)
 	}
-	return out, bsdAux
+	return out, mode
+}
+
+func isBSDPSMode(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch r {
+		case 'a', 'u', 'x':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func isInteger(s string) bool {
@@ -315,6 +327,102 @@ func isInteger(s string) bool {
 	}
 	_, err := strconv.Atoi(s)
 	return err == nil
+}
+
+func applyPSBSDSelection(infos []procInfo, mode psBSDMode) []procInfo {
+	currentUID := os.Geteuid()
+	return filterProcInfos(infos, func(pi procInfo) bool {
+		sameUser := pi.uid == currentUID
+		hasTTY := pi.tty != "" && pi.tty != "?"
+		if !mode.allUsers && !sameUser {
+			return false
+		}
+		if !mode.includeNoTTY && !hasTTY {
+			return false
+		}
+		return true
+	})
+}
+
+func hasPSSelection(all bool, mode psBSDMode, pidFilter, userFilter, commandFilter string) bool {
+	if all || mode.allUsers || mode.includeNoTTY || mode.userFormat {
+		return true
+	}
+	return pidFilter != "" || userFilter != "" || commandFilter != ""
+}
+
+func applyPSDefaultSelection(infos []procInfo) []procInfo {
+	currentUID := os.Geteuid()
+	currentTTY := currentProcessTTY()
+	return filterProcInfos(infos, func(pi procInfo) bool {
+		if pi.uid != currentUID {
+			return false
+		}
+		if currentTTY == "" {
+			return true
+		}
+		return pi.tty == currentTTY
+	})
+}
+
+func applyPSExplicitSelections(infos []procInfo, all bool, mode psBSDMode, pidFilter, userFilter, commandFilter string) ([]procInfo, error) {
+	selected := make(map[int]bool, len(infos))
+	if all {
+		for _, pi := range infos {
+			selected[pi.pid] = true
+		}
+	}
+	if mode.allUsers || mode.includeNoTTY || mode.userFormat {
+		for _, pi := range applyPSBSDSelection(infos, mode) {
+			selected[pi.pid] = true
+		}
+	}
+	if pidFilter != "" {
+		pids, err := parsePIDList(pidFilter)
+		if err != nil {
+			return nil, err
+		}
+		for _, pi := range infos {
+			if pids[pi.pid] {
+				selected[pi.pid] = true
+			}
+		}
+	}
+	if userFilter != "" {
+		users, uids, err := parseUserList(userFilter)
+		if err != nil {
+			return nil, err
+		}
+		for _, pi := range infos {
+			if uids[pi.uid] || users[pi.user] || users[strconv.Itoa(pi.uid)] {
+				selected[pi.pid] = true
+			}
+		}
+	}
+	if commandFilter != "" {
+		names := parseStringSet(commandFilter)
+		for _, pi := range infos {
+			if names[pi.exe] {
+				selected[pi.pid] = true
+			}
+		}
+	}
+	return filterProcInfos(infos, func(pi procInfo) bool { return selected[pi.pid] }), nil
+}
+
+func currentProcessTTY() string {
+	target, err := os.Readlink("/proc/self/fd/0")
+	if err != nil || target == "" {
+		return ""
+	}
+	if strings.HasPrefix(target, "/dev/") {
+		tty := strings.TrimPrefix(target, "/dev/")
+		if strings.HasPrefix(tty, "pts/") || strings.HasPrefix(tty, "tty") {
+			return tty
+		}
+		return ""
+	}
+	return target
 }
 
 func psFullCommand(pi procInfo) string {
@@ -463,73 +571,99 @@ func filterProcInfos(infos []procInfo, keep func(procInfo) bool) []procInfo {
 	return filtered
 }
 
-// gatherLinuxProcInfos samples process and system jiffies to compute CPU% and reads memory info.
-// interval is the sampling duration (e.g. 500ms). CPU% is normalized by CPU count to better match top.
-func gatherLinuxProcInfos(interval time.Duration) ([]procInfo, error) {
+func captureLinuxProcSnapshot() (procSnapshot, error) {
 	pids, err := listPIDsProc()
 	if err != nil {
-		return nil, err
+		return procSnapshot{}, err
 	}
 	pageSize := int64(os.Getpagesize())
 	bootTime := readBootTime()
 	now := time.Now()
+	total, _ := readTotalJiffies()
+	cpu, _ := readCPUTimes()
 
-	infos := make([]procInfo, 0, len(pids))
-	// initial sample
-	total1, _ := readTotalJiffies()
+	snapshot := procSnapshot{
+		totalJiffies: total,
+		cpuTimes:     cpu,
+		infos:        make(map[int]procInfo, len(pids)),
+	}
 	for _, pid := range pids {
 		pi, err := readProcStat(pid, pageSize, bootTime, now)
 		if err != nil {
 			continue
 		}
+		snapshot.infos[pi.pid] = pi
+	}
+	return snapshot, nil
+}
+
+func diffProcSnapshots(prev, curr procSnapshot) []procInfo {
+	infos := make([]procInfo, 0, len(curr.infos))
+	deltaTotal := curr.totalJiffies - prev.totalJiffies
+	numCPU := float64(runtime.NumCPU())
+	for pid, pi := range curr.infos {
+		if prevPi, ok := prev.infos[pid]; ok && deltaTotal > 0 {
+			deltaProc := (pi.utime + pi.stime) - (prevPi.utime + prevPi.stime)
+			pi.cpuTicks = deltaProc
+			pi.cpu = (float64(deltaProc) / float64(deltaTotal)) * 100.0 * numCPU
+		}
 		infos = append(infos, pi)
 	}
+	return infos
+}
 
-	// sleep interval
+// gatherLinuxProcInfos samples process and system jiffies to compute CPU% and reads memory info.
+// interval is the sampling duration (e.g. 500ms). CPU% is normalized by CPU count to better match top.
+func gatherLinuxProcInfos(interval time.Duration) ([]procInfo, error) {
+	prev, err := captureLinuxProcSnapshot()
+	if err != nil {
+		return nil, err
+	}
 	if interval > 0 {
 		time.Sleep(interval)
 	}
-
-	total2, _ := readTotalJiffies()
-	// second sample and compute cpu%
-	pidToIndex := make(map[int]int)
-	for i, pi := range infos {
-		pidToIndex[pi.pid] = i
+	curr, err := captureLinuxProcSnapshot()
+	if err != nil {
+		return nil, err
 	}
+	return diffProcSnapshots(prev, curr), nil
+}
 
-	numCPU := float64(runtime.NumCPU())
-	now = time.Now()
-	for _, pid := range pids {
-		pi2, err := readProcStat(pid, pageSize, bootTime, now)
-		if err != nil {
-			continue
-		}
-		if idx, ok := pidToIndex[pi2.pid]; ok {
-			prev := infos[idx]
-			deltaProc := (pi2.utime + pi2.stime) - (prev.utime + prev.stime)
-			deltaTotal := total2 - total1
-			cpu := 0.0
-			if deltaTotal > 0 {
-				// normalize by CPU count so per-process % aligns with top-style %CPU
-				cpu = (float64(deltaProc) / float64(deltaTotal)) * 100.0 * numCPU
+func sortProcInfos(infos []procInfo, sortField string) {
+	switch sortField {
+	case "cpu", "pcpu":
+		sort.Slice(infos, func(i, j int) bool { return infos[i].cpu < infos[j].cpu })
+	case "rss":
+		sort.Slice(infos, func(i, j int) bool { return infos[i].rss < infos[j].rss })
+	case "vms", "vsize", "vsz":
+		sort.Slice(infos, func(i, j int) bool { return infos[i].vsize < infos[j].vsize })
+	case "cmd", "args", "command":
+		sort.Slice(infos, func(i, j int) bool { return psFullCommand(infos[i]) < psFullCommand(infos[j]) })
+	case "comm":
+		sort.Slice(infos, func(i, j int) bool { return infos[i].exe < infos[j].exe })
+	case "user", "uid":
+		sort.Slice(infos, func(i, j int) bool {
+			if infos[i].uid == infos[j].uid {
+				return infos[i].pid < infos[j].pid
 			}
-			prev.utime = pi2.utime
-			prev.stime = pi2.stime
-			prev.vsize = pi2.vsize
-			prev.rss = pi2.rss
-			prev.cmdline = pi2.cmdline
-			prev.ppid = pi2.ppid
-			prev.uid = pi2.uid
-			prev.user = pi2.user
-			prev.state = pi2.state
-			prev.tty = pi2.tty
-			prev.start = pi2.start
-			prev.elapsed = pi2.elapsed
-			prev.cpu = cpu
-			infos[idx] = prev
-		}
+			return infos[i].uid < infos[j].uid
+		})
+	case "ppid":
+		sort.Slice(infos, func(i, j int) bool {
+			if infos[i].ppid == infos[j].ppid {
+				return infos[i].pid < infos[j].pid
+			}
+			return infos[i].ppid < infos[j].ppid
+		})
+	case "start":
+		sort.Slice(infos, func(i, j int) bool { return infos[i].start.Before(infos[j].start) })
+	case "etime":
+		sort.Slice(infos, func(i, j int) bool { return infos[i].elapsed < infos[j].elapsed })
+	case "time":
+		sort.Slice(infos, func(i, j int) bool { return infos[i].utime+infos[i].stime < infos[j].utime+infos[j].stime })
+	default:
+		sort.Slice(infos, func(i, j int) bool { return infos[i].pid < infos[j].pid })
 	}
-	return infos, nil
 }
 
 func listPIDsProc() ([]int, error) {
@@ -673,17 +807,23 @@ func printPSAlignedTable(fields []string, rows [][]string, ttyWidth int) {
 }
 
 func printPSAlignedLine(values []string, widths []int) {
+	fmt.Print(renderPSAlignedLine(values, widths))
+}
+
+func renderPSAlignedLine(values []string, widths []int) string {
+	var b strings.Builder
 	for i, value := range values {
 		if i > 0 {
-			fmt.Print(" ")
+			b.WriteByte(' ')
 		}
 		if i == len(values)-1 {
-			fmt.Print(value)
+			b.WriteString(value)
 			continue
 		}
-		fmt.Printf("%-*s", widths[i], value)
+		fmt.Fprintf(&b, "%-*s", widths[i], value)
 	}
-	fmt.Println()
+	b.WriteByte('\n')
+	return b.String()
 }
 
 func printPSFullFormat(infos []procInfo, maxCmd int, ttyWidth int) {
@@ -709,6 +849,10 @@ func printPSFullFormat(infos []procInfo, maxCmd int, ttyWidth int) {
 }
 
 func printPSAlignedTableWithHeaders(headers []string, rows [][]string, ttyWidth int) {
+	fmt.Print(renderPSAlignedTableWithHeaders(headers, rows, ttyWidth))
+}
+
+func renderPSAlignedTableWithHeaders(headers []string, rows [][]string, ttyWidth int) string {
 	rows = fitPSRowsToWidth(headers, rows, ttyWidth)
 	widths := make([]int, len(headers))
 	for i, header := range headers {
@@ -721,10 +865,12 @@ func printPSAlignedTableWithHeaders(headers []string, rows [][]string, ttyWidth 
 			}
 		}
 	}
-	printPSAlignedLine(headers, widths)
+	var b strings.Builder
+	b.WriteString(renderPSAlignedLine(headers, widths))
 	for _, row := range rows {
-		printPSAlignedLine(row, widths)
+		b.WriteString(renderPSAlignedLine(row, widths))
 	}
+	return b.String()
 }
 
 func fitPSRowsToWidth(headers []string, rows [][]string, ttyWidth int) [][]string {
@@ -871,6 +1017,39 @@ func readTotalJiffies() (int64, error) {
 		total += n
 	}
 	return total, nil
+}
+
+func readCPUTimes() (cpuTimes, error) {
+	var times cpuTimes
+	f, err := os.Open("/proc/stat")
+	if err != nil {
+		return times, err
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	if !scanner.Scan() {
+		return times, scanner.Err()
+	}
+	fields := strings.Fields(scanner.Text())
+	if len(fields) < 8 || fields[0] != "cpu" {
+		return times, fmt.Errorf("unexpected /proc/stat cpu line")
+	}
+	parse := func(idx int) uint64 {
+		if idx >= len(fields) {
+			return 0
+		}
+		v, _ := strconv.ParseUint(fields[idx], 10, 64)
+		return v
+	}
+	times.user = parse(1)
+	times.nice = parse(2)
+	times.system = parse(3)
+	times.idle = parse(4)
+	times.iowait = parse(5)
+	times.irq = parse(6)
+	times.softirq = parse(7)
+	times.steal = parse(8)
+	return times, nil
 }
 
 const procClockTicks = int64(100)

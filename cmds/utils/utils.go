@@ -20,10 +20,32 @@ func IsTerminal(w io.Writer) bool {
 
 // StdoutWidth returns the current stdout terminal width when available.
 func StdoutWidth() (int, bool) {
+	width, _, ok := StdoutSize()
+	return width, ok
+}
+
+// StdoutHeight returns the current stdout terminal height when available.
+func StdoutHeight() (int, bool) {
+	_, height, ok := StdoutSize()
+	return height, ok
+}
+
+// StdoutSize returns the current stdout terminal width and height when available.
+func StdoutSize() (int, int, bool) {
+	width := 0
+	height := 0
 	if cols := os.Getenv("COLUMNS"); cols != "" {
 		if n, err := strconv.Atoi(cols); err == nil && n > 0 {
-			return n, true
+			width = n
 		}
+	}
+	if lines := os.Getenv("LINES"); lines != "" {
+		if n, err := strconv.Atoi(lines); err == nil && n > 0 {
+			height = n
+		}
+	}
+	if width > 0 && height > 0 {
+		return width, height, true
 	}
 	type winsize struct {
 		Row    uint16
@@ -33,10 +55,22 @@ func StdoutWidth() (int, bool) {
 	}
 	ws := &winsize{}
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, os.Stdout.Fd(), uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(ws)))
-	if errno != 0 || ws.Col == 0 {
-		return 0, false
+	if errno != 0 {
+		if width > 0 || height > 0 {
+			return width, height, true
+		}
+		return 0, 0, false
 	}
-	return int(ws.Col), true
+	if width == 0 && ws.Col > 0 {
+		width = int(ws.Col)
+	}
+	if height == 0 && ws.Row > 0 {
+		height = int(ws.Row)
+	}
+	if width == 0 && height == 0 {
+		return 0, 0, false
+	}
+	return width, height, true
 }
 
 // HumanSize formats bytes into human-readable string (KB, MB, GB, etc.)

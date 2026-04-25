@@ -419,12 +419,12 @@
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
-| PS-001 | `-e` | contract | gobox-only | current process | gobox 当前默认即全进程视图，`-e` 应保持与默认输出一致 |
+| PS-001 | `-e` | contract | `ps -e` | current process | 显式 all-process 选择生效，且默认 `CMD` 列保持与原生 `ps -e` 一样的 `comm` 风格展示 |
 | PS-002 | `-f` | structured | `ps -f` | current process | 切换到 full-format 并包含 `UID`/`PPID`/`STIME`/`TTY`/`TIME`/`CMD` 等核心列，`CMD` 保持单行 |
 | PS-003 | `-i int` | contract | gobox-only | current process | 采样间隔参数可执行 |
 | PS-004 | `-maxcmd N` | contract | gobox-only | long cmdline process | 显式命令长度上限生效 |
 | PS-005 | `-n int` | contract | gobox-only | current processes | 限制输出行数 |
-| PS-006 | `-full string` | structured | `pgrep -f` | current process | 完整命令行正则匹配符合 `pgrep -f` |
+| PS-006 | `-full string` | structured | `pgrep -f` | current process | 完整命令行正则匹配符合 `pgrep -f`，输出的 `CMD` 也应保留完整命令行便于核对 |
 | PS-007 | `-r` | structured | `ps -r` | current processes | 排序方向反转 |
 | PS-008 | `--sort FIELD` | contract | gobox-only | current processes | 排序字段生效 |
 | PS-009 | `-ww` | contract | `ps -ww` | long cmdline process | `ps` 默认宽度策略可被 `-ww` 关闭，长命令保持完整单行 |
@@ -436,7 +436,7 @@
 | PS-015 | `-p PID` | structured | `ps -p` | current process | PID 过滤只保留目标进程 |
 | PS-016 | `-C NAME` | structured | `ps -C` | current process name | 命令名过滤命中目标进程 |
 | PS-017 | `--sort -FIELD` | structured | `ps --sort` | current processes | GNU 风格降序排序参数生效 |
-| PS-018 | `aux` | behavior | `ps aux` | current process | BSD 风格输出与默认 `ps` 在列和进程选择语义上有可观察差异 |
+| PS-018 | BSD `aux` semantics | behavior | `ps aux` | current process | BSD 风格下默认选择“自己且有 TTY”的进程；`a` 放开 only-yourself 限制，`x` 放开 must-have-tty 限制，`u` 切换到 user-oriented 列布局 |
 
 ### top
 
