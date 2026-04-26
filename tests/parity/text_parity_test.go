@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -153,10 +154,8 @@ func TestParity_DiffCases(t *testing.T) {
 		if res.ExitCode != native.ExitCode {
 			t.Fatalf("diff -r exit mismatch gobox=%d native=%d\n--- gobox ---\n%s\n--- native ---\n%s", res.ExitCode, native.ExitCode, res.Stdout, native.Stdout)
 		}
-		for _, want := range []string{"diff -r left/sub/a.txt right/sub/a.txt", "Only in right/sub: b.txt"} {
-			if !strings.Contains(res.Stdout, want) || !strings.Contains(native.Stdout, want) {
-				t.Fatalf("diff -r missing %q\n--- gobox ---\n%s\n--- native ---\n%s", want, res.Stdout, native.Stdout)
-			}
+		if got, want := strings.Join(sortedNonEmptyLines(res.Stdout), "\n"), strings.Join(sortedNonEmptyLines(native.Stdout), "\n"); got != want {
+			t.Fatalf("diff -r line-set mismatch\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
 		}
 	})
 }
@@ -173,6 +172,12 @@ func normalizeUnifiedDiffHeaders(s string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func sortedNonEmptyLines(s string) []string {
+	lines := nonEmptyLines(s)
+	sort.Strings(lines)
+	return lines
 }
 
 func TestParity_TailCases(t *testing.T) {
@@ -197,6 +202,9 @@ func TestParity_TailCases(t *testing.T) {
 		if !strings.Contains(gobox.Stdout, "gobox-follow") || !strings.Contains(native.Stdout, "native-follow") {
 			t.Fatalf("tail -f did not follow append\ngobox=%+v\nnative=%+v", gobox, native)
 		}
+		if strings.Contains(gobox.Stdout, "base") || strings.Contains(native.Stdout, "base") {
+			t.Fatalf("tail -n 0 -f should not replay baseline content\ngobox=%+v\nnative=%+v", gobox, native)
+		}
 	})
 
 	t.Run("TAIL-003", func(t *testing.T) {
@@ -217,6 +225,9 @@ func TestParity_TailCases(t *testing.T) {
 		if !strings.Contains(gobox.Stdout, "gobox-rotated") || !strings.Contains(native.Stdout, "native-rotated") {
 			t.Fatalf("tail --follow=name did not follow rotation\ngobox=%+v\nnative=%+v", gobox, native)
 		}
+		if lastLine(gobox.Stdout) != "gobox-rotated" || lastLine(native.Stdout) != "native-rotated" {
+			t.Fatalf("tail --follow=name should end on replacement file content\ngobox=%+v\nnative=%+v", gobox, native)
+		}
 	})
 
 	t.Run("TAIL-004", func(t *testing.T) {
@@ -234,6 +245,9 @@ func TestParity_TailCases(t *testing.T) {
 		if !strings.Contains(gobox.Stdout, "gobox-created") || !strings.Contains(native.Stdout, "native-created") {
 			t.Fatalf("tail --retry did not read delayed file\ngobox=%+v\nnative=%+v", gobox, native)
 		}
+		if lastLine(gobox.Stdout) != "gobox-created" || lastLine(native.Stdout) != "native-created" {
+			t.Fatalf("tail --retry should end on newly created file content\ngobox=%+v\nnative=%+v", gobox, native)
+		}
 	})
 
 	t.Run("TAIL-006", func(t *testing.T) {
@@ -248,6 +262,9 @@ func TestParity_TailCases(t *testing.T) {
 		}, 800*time.Millisecond)
 		if !strings.Contains(gobox.Stdout, "gobox-sleep") || !strings.Contains(native.Stdout, "native-sleep") {
 			t.Fatalf("tail -s did not poll appended content\ngobox=%+v\nnative=%+v", gobox, native)
+		}
+		if strings.Contains(gobox.Stdout, "base") || strings.Contains(native.Stdout, "base") {
+			t.Fatalf("tail -n 0 -f -s should not replay baseline content\ngobox=%+v\nnative=%+v", gobox, native)
 		}
 	})
 
@@ -274,6 +291,9 @@ func TestParity_TailCases(t *testing.T) {
 		}
 		if !strings.Contains(gobox.Stdout, "pid-follow") {
 			t.Fatalf("tail --pid did not emit appended content: %+v", gobox)
+		}
+		if strings.Contains(gobox.Stdout, "base") {
+			t.Fatalf("tail --pid with -n 0 should not replay baseline content: %+v", gobox)
 		}
 	})
 }

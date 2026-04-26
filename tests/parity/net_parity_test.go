@@ -15,6 +15,79 @@ import (
 	"time"
 )
 
+func netstatHeaderAndRows(out string) (string, []string) {
+	lines := nonEmptyLines(out)
+	if len(lines) == 0 {
+		return "", nil
+	}
+	return lines[0], lines[1:]
+}
+
+func netstatFindRow(rows []string, needle string) string {
+	for _, line := range rows {
+		if strings.Contains(line, needle) {
+			return line
+		}
+	}
+	return ""
+}
+
+func netstatProto(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) < 3 {
+		return ""
+	}
+	return fields[2]
+}
+
+func ifstatHeaderAndRows(out string) (string, []string) {
+	lines := nonEmptyLines(out)
+	if len(lines) == 0 {
+		return "", nil
+	}
+	return lines[0], lines[1:]
+}
+
+func ipBlocks(out string) map[string][]string {
+	blocks := make(map[string][]string)
+	var current string
+	for _, line := range nonEmptyLines(out) {
+		if fields := strings.Fields(line); len(fields) >= 2 && strings.HasSuffix(fields[0], ":") {
+			name := strings.TrimSuffix(fields[1], ":")
+			current = name
+			blocks[current] = []string{line}
+			continue
+		}
+		if current != "" {
+			blocks[current] = append(blocks[current], line)
+		}
+	}
+	return blocks
+}
+
+func findNetLineWithPrefix(out, prefix string) string {
+	for _, line := range nonEmptyLines(out) {
+		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+			return strings.TrimSpace(line)
+		}
+	}
+	return ""
+}
+
+func findNetLineContaining(out, needle string) string {
+	for _, line := range nonEmptyLines(out) {
+		if strings.Contains(line, needle) {
+			return strings.TrimSpace(line)
+		}
+	}
+	return ""
+}
+
+func netstatHeaderFields(out string) []string {
+	header, _ := netstatHeaderAndRows(out)
+	return strings.Fields(header)
+}
+
 func TestParity_TwCases(t *testing.T) {
 	t.Run("TW-001", func(t *testing.T) {
 		res := runGoboxCLI(t, t.TempDir(), "", "tw", "-h")
@@ -120,7 +193,19 @@ func TestParity_NetstatCases(t *testing.T) {
 		if res.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("netstat -l failed gobox=%+v native=%+v", res, native)
 		}
-		if !strings.Contains(res.Stdout, "LISTEN") || !strings.Contains(native.Stdout, fmt.Sprintf(":%d", port)) {
+		header, rows := netstatHeaderAndRows(res.Stdout)
+		if len(rows) == 0 {
+			t.Fatalf("netstat -l expected listening rows\n%s", res.Stdout)
+		}
+		if got := strings.Fields(header); len(got) < 6 || got[0] != "Recv-Q" || got[2] != "Proto" {
+			t.Fatalf("netstat -l header shape mismatch: %q", header)
+		}
+		for _, line := range rows {
+			if !strings.Contains(line, "LISTEN") {
+				t.Fatalf("netstat -l leaked non-LISTEN row: %q", line)
+			}
+		}
+		if netstatFindRow(rows, fmt.Sprintf(":%d", port)) == "" || !strings.Contains(native.Stdout, fmt.Sprintf(":%d", port)) {
 			t.Fatalf("netstat -l missing listener\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
 		}
 	})
@@ -144,7 +229,8 @@ func TestParity_NetstatCases(t *testing.T) {
 		if base.Stdout != res.Stdout {
 			t.Fatalf("netstat -n should be a no-op because gobox output is already numeric\n--- base ---\n%s\n--- -n ---\n%s", base.Stdout, res.Stdout)
 		}
-		if !strings.Contains(res.Stdout, "Proto") || !strings.Contains(res.Stdout, port) || strings.Contains(res.Stdout, "localhost:") {
+		_, rows := netstatHeaderAndRows(res.Stdout)
+		if netstatFindRow(rows, port) == "" || strings.Contains(res.Stdout, "localhost:") {
 			t.Fatalf("netstat -n should still render the socket table in numeric form\n%s", res.Stdout)
 		}
 	})
@@ -168,7 +254,8 @@ func TestParity_NetstatCases(t *testing.T) {
 		if base.Stdout != res.Stdout {
 			t.Fatalf("netstat -a should currently match the default socket selection\n--- base ---\n%s\n--- -a ---\n%s", base.Stdout, res.Stdout)
 		}
-		if !strings.Contains(res.Stdout, "Proto") || !strings.Contains(res.Stdout, port) {
+		_, rows := netstatHeaderAndRows(res.Stdout)
+		if netstatFindRow(rows, port) == "" {
 			t.Fatalf("netstat -a should still render the socket table\n%s", res.Stdout)
 		}
 	})
@@ -185,8 +272,23 @@ func TestParity_NetstatCases(t *testing.T) {
 		port := ln.Addr().(*net.TCPAddr).Port
 		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-port", strconv.Itoa(port))
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-tln")
-		if res.ExitCode != 0 || native.ExitCode != 0 || !strings.Contains(res.Stdout, "TCP") || !strings.Contains(native.Stdout, strconv.Itoa(port)) || strings.Contains(res.Stdout, "UDP") || strings.Contains(res.Stdout, "UNIX") {
+		if res.ExitCode != 0 || native.ExitCode != 0 || !strings.Contains(native.Stdout, strconv.Itoa(port)) {
 			t.Fatalf("netstat -t mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
+		}
+		_, rows := netstatHeaderAndRows(res.Stdout)
+		if len(rows) == 0 {
+			t.Fatalf("netstat -t expected tcp rows\n%s", res.Stdout)
+		}
+		for _, line := range rows {
+			if netstatProto(line) != "TCP" && netstatProto(line) != "TCP6" {
+				t.Fatalf("netstat -t leaked non-TCP row: %q", line)
+			}
+			if proto := netstatProto(line); strings.HasPrefix(proto, "UDP") || proto == "UNIX" {
+				t.Fatalf("netstat -t leaked wrong protocol row: %q", line)
+			}
+		}
+		if netstatFindRow(rows, strconv.Itoa(port)) == "" {
+			t.Fatalf("netstat -t missing filtered listener row\n%s", res.Stdout)
 		}
 	})
 
@@ -202,8 +304,23 @@ func TestParity_NetstatCases(t *testing.T) {
 		port := conn.LocalAddr().(*net.UDPAddr).Port
 		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-u", "-port", strconv.Itoa(port))
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-uln")
-		if res.ExitCode != 0 || native.ExitCode != 0 || !strings.Contains(res.Stdout, "UDP") || !strings.Contains(native.Stdout, strconv.Itoa(port)) || strings.Contains(res.Stdout, "TCP") || strings.Contains(res.Stdout, "UNIX") {
+		if res.ExitCode != 0 || native.ExitCode != 0 || !strings.Contains(native.Stdout, strconv.Itoa(port)) {
 			t.Fatalf("netstat -u mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
+		}
+		_, rows := netstatHeaderAndRows(res.Stdout)
+		if len(rows) == 0 {
+			t.Fatalf("netstat -u expected udp rows\n%s", res.Stdout)
+		}
+		for _, line := range rows {
+			if netstatProto(line) != "UDP" && netstatProto(line) != "UDP6" {
+				t.Fatalf("netstat -u leaked non-UDP row: %q", line)
+			}
+			if proto := netstatProto(line); strings.HasPrefix(proto, "TCP") || proto == "UNIX" {
+				t.Fatalf("netstat -u leaked wrong protocol row: %q", line)
+			}
+		}
+		if netstatFindRow(rows, strconv.Itoa(port)) == "" {
+			t.Fatalf("netstat -u missing filtered socket row\n%s", res.Stdout)
 		}
 	})
 
@@ -219,8 +336,20 @@ func TestParity_NetstatCases(t *testing.T) {
 		defer ln.Close()
 		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-x", "-l")
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-x", "-l")
-		if res.ExitCode != native.ExitCode || !strings.Contains(res.Stdout, "UNIX") || !strings.Contains(res.Stdout, unixPath) || !strings.Contains(native.Stdout, unixPath) {
+		if res.ExitCode != native.ExitCode || !strings.Contains(native.Stdout, unixPath) {
 			t.Fatalf("netstat -x mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
+		}
+		_, rows := netstatHeaderAndRows(res.Stdout)
+		if len(rows) == 0 {
+			t.Fatalf("netstat -x expected unix rows\n%s", res.Stdout)
+		}
+		for _, line := range rows {
+			if netstatProto(line) != "UNIX" {
+				t.Fatalf("netstat -x leaked non-UNIX row: %q", line)
+			}
+		}
+		if netstatFindRow(rows, unixPath) == "" {
+			t.Fatalf("netstat -x missing target unix socket\n%s", res.Stdout)
 		}
 	})
 
@@ -267,8 +396,16 @@ func TestParity_NetstatCases(t *testing.T) {
 		port := ln.Addr().(*net.TCPAddr).Port
 		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-4", "-port", strconv.Itoa(port))
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-4ln")
-		if res.ExitCode != 0 || native.ExitCode != 0 || !strings.Contains(res.Stdout, "127.0.0.1") || !strings.Contains(native.Stdout, strconv.Itoa(port)) {
+		if res.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("netstat -4 mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
+		}
+		_, rows := netstatHeaderAndRows(res.Stdout)
+		row := netstatFindRow(rows, strconv.Itoa(port))
+		if row == "" || !strings.Contains(row, "127.0.0.1") {
+			t.Fatalf("netstat -4 missing IPv4 listener row\n%s", res.Stdout)
+		}
+		if !strings.Contains(native.Stdout, strconv.Itoa(port)) {
+			t.Fatalf("native netstat -4 baseline missing target port\n%s", native.Stdout)
 		}
 	})
 
@@ -280,8 +417,16 @@ func TestParity_NetstatCases(t *testing.T) {
 		defer closeFn()
 		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-6", "-port", port)
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-6ln")
-		if res.ExitCode != 0 || native.ExitCode != 0 || !strings.Contains(res.Stdout, "::1") || !strings.Contains(native.Stdout, port) {
+		if res.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("netstat -6 mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
+		}
+		_, rows := netstatHeaderAndRows(res.Stdout)
+		row := netstatFindRow(rows, port)
+		if row == "" || !strings.Contains(row, "::1") {
+			t.Fatalf("netstat -6 missing IPv6 listener row\n%s", res.Stdout)
+		}
+		if !strings.Contains(native.Stdout, port) {
+			t.Fatalf("native netstat -6 baseline missing target port\n%s", native.Stdout)
 		}
 	})
 
@@ -304,14 +449,17 @@ func TestParity_NetstatCases(t *testing.T) {
 		if base.Stdout == extended.Stdout {
 			t.Fatalf("netstat -e did not change output\n--- base ---\n%s\n--- with -e ---\n%s", base.Stdout, extended.Stdout)
 		}
+		header, rows := netstatHeaderAndRows(extended.Stdout)
 		for _, want := range []string{"User", "Inode"} {
-			if !strings.Contains(extended.Stdout, want) || !strings.Contains(native.Stdout, want) {
+			if !strings.Contains(header, want) || !strings.Contains(native.Stdout, want) {
 				t.Fatalf("netstat -e missing %q\n--- gobox ---\n%s\n--- native ---\n%s", want, extended.Stdout, native.Stdout)
 			}
 		}
-		lines := nonEmptyLines(extended.Stdout)
-		if len(lines) < 2 || len(strings.Fields(lines[1])) < 8 {
+		if len(rows) == 0 || len(strings.Fields(rows[0])) < 8 {
 			t.Fatalf("netstat -e should extend the filtered row with extra columns\n%s", extended.Stdout)
+		}
+		if netstatFindRow(rows, port) == "" {
+			t.Fatalf("netstat -e missing filtered listener row\n%s", extended.Stdout)
 		}
 	})
 
@@ -334,11 +482,12 @@ func TestParity_NetstatCases(t *testing.T) {
 		if base.Stdout == withTimers.Stdout {
 			t.Fatalf("netstat -o did not change output\n--- base ---\n%s\n--- with -o ---\n%s", base.Stdout, withTimers.Stdout)
 		}
-		if !strings.Contains(withTimers.Stdout, "Timer") || !strings.Contains(native.Stdout, "Timer") {
+		header, rows := netstatHeaderAndRows(withTimers.Stdout)
+		fields := strings.Fields(header)
+		if len(fields) == 0 || fields[len(fields)-1] != "Timer" || !strings.Contains(native.Stdout, "Timer") {
 			t.Fatalf("netstat -o missing Timer column\n--- gobox ---\n%s\n--- native ---\n%s", withTimers.Stdout, native.Stdout)
 		}
-		lines := nonEmptyLines(withTimers.Stdout)
-		if len(lines) < 2 || !strings.Contains(lines[1], port) {
+		if len(rows) == 0 || netstatFindRow(rows, port) == "" {
 			t.Fatalf("netstat -o should keep the filtered listener row\n%s", withTimers.Stdout)
 		}
 	})
@@ -361,7 +510,8 @@ func TestParity_NetstatCases(t *testing.T) {
 		if base.Stdout != res.Stdout {
 			t.Fatalf("netstat -W should be a compatibility no-op because gobox does not truncate addresses\n--- base ---\n%s\n--- -W ---\n%s", base.Stdout, res.Stdout)
 		}
-		if !strings.Contains(res.Stdout, "Proto") || !strings.Contains(res.Stdout, port) {
+		_, rows := netstatHeaderAndRows(res.Stdout)
+		if netstatFindRow(rows, port) == "" {
 			t.Fatalf("netstat -W should still render the filtered listening row\n%s", res.Stdout)
 		}
 	})
@@ -385,11 +535,12 @@ func TestParity_NetstatCases(t *testing.T) {
 		if base.Stdout == res.Stdout {
 			t.Fatalf("netstat -tnlp should change output relative to -t -l by enabling numeric/program views\n--- base ---\n%s\n--- combined ---\n%s", base.Stdout, res.Stdout)
 		}
-		if !strings.Contains(res.Stdout, "TCP") || !strings.Contains(res.Stdout, "PID/Program") || !strings.Contains(native.Stdout, "tcp") {
+		header, rows := netstatHeaderAndRows(res.Stdout)
+		if !strings.Contains(header, "PID/Program") || !strings.Contains(native.Stdout, "tcp") {
 			t.Fatalf("netstat combined flags missing expected protocol/program output\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
 		}
-		lines := nonEmptyLines(res.Stdout)
-		if len(lines) < 2 || !strings.Contains(lines[1], strconv.Itoa(port)) || !strings.Contains(lines[1], "/") {
+		row := netstatFindRow(rows, strconv.Itoa(port))
+		if row == "" || netstatProto(row) != "TCP" || !strings.Contains(row, "/") {
 			t.Fatalf("netstat -tnlp should keep the filtered listener row and annotate it with pid/program\n%s", res.Stdout)
 		}
 	})
@@ -400,11 +551,18 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-r")
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-r")
-		if res.ExitCode != native.ExitCode || !strings.Contains(res.Stdout, "Kernel IP routing table") || !strings.Contains(native.Stdout, "Kernel IP routing table") {
+		if res.ExitCode != native.ExitCode || findNetLineContaining(res.Stdout, "Kernel IP routing table") == "" || findNetLineContaining(native.Stdout, "Kernel IP routing table") == "" {
 			t.Fatalf("netstat -r mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
 		}
-		if !strings.Contains(res.Stdout, "Iface") || !strings.Contains(native.Stdout, "Iface") {
+		header := findNetLineContaining(res.Stdout, "Iface")
+		nativeHeader := findNetLineContaining(native.Stdout, "Iface")
+		if header == "" || nativeHeader == "" {
 			t.Fatalf("netstat -r missing route columns\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
+		}
+		for _, want := range []string{"Destination", "Gateway", "Iface"} {
+			if !strings.Contains(header, want) || !strings.Contains(nativeHeader, want) {
+				t.Fatalf("netstat -r route header missing %q\ngobox=%q\nnative=%q", want, header, nativeHeader)
+			}
 		}
 		if strings.Contains(native.Stdout, "default") && !strings.Contains(res.Stdout, "default") && !strings.Contains(res.Stdout, "0.0.0.0") {
 			t.Fatalf("netstat -r missing default-route semantic present in native\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
@@ -420,18 +578,36 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-i")
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-i")
-		if res.ExitCode != native.ExitCode || !strings.Contains(res.Stdout, "Iface") || !strings.Contains(native.Stdout, "Iface") {
+		header := findNetLineContaining(res.Stdout, "Iface")
+		nativeHeader := findNetLineContaining(native.Stdout, "Iface")
+		if res.ExitCode != native.ExitCode || header == "" || nativeHeader == "" {
 			t.Fatalf("netstat -i mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
 		}
-		if !strings.Contains(res.Stdout, "lo") || !strings.Contains(native.Stdout, "lo") {
+		goboxFields := strings.Fields(header)
+		nativeFields := strings.Fields(nativeHeader)
+		if len(goboxFields) < 3 || len(nativeFields) < 3 {
+			t.Fatalf("netstat -i header too short\ngobox=%q\nnative=%q", header, nativeHeader)
+		}
+		if strings.Join(goboxFields[:3], " ") != strings.Join(nativeFields[:3], " ") {
+			t.Fatalf("netstat -i header prefix mismatch\ngobox=%q\nnative=%q", header, nativeHeader)
+		}
+		row := ""
+		for _, line := range nonEmptyLines(res.Stdout)[1:] {
+			fields := strings.Fields(line)
+			if len(fields) > 0 && fields[0] == "lo" {
+				row = line
+				break
+			}
+		}
+		if row == "" || len(strings.Fields(row)) < 3 {
+			t.Fatalf("netstat -i missing structured loopback row\n%s", res.Stdout)
+		}
+		if !strings.Contains(native.Stdout, "lo") {
 			t.Fatalf("netstat -i missing loopback interface\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
 		}
 		lines := nonEmptyLines(res.Stdout)
 		if len(lines) < 3 {
 			t.Fatalf("netstat -i should include header plus multiple interfaces\n%s", res.Stdout)
-		}
-		if !strings.Contains(lines[0], "RX-OK") || !strings.Contains(lines[0], "TX-OK") {
-			t.Fatalf("netstat -i missing traffic counters in header\n%s", res.Stdout)
 		}
 	})
 
@@ -446,13 +622,13 @@ func TestParity_NetstatCases(t *testing.T) {
 		if res.ExitCode != native.ExitCode || tcpOnly.ExitCode != 0 {
 			t.Fatalf("netstat -s mismatch\n--- gobox ---\n%+v\n--- gobox tcp ---\n%+v\n--- native ---\n%+v", res, tcpOnly, native)
 		}
-		if !strings.Contains(res.Stdout, "Tcp:") || !strings.Contains(native.Stdout, "Tcp:") {
+		if findNetLineWithPrefix(res.Stdout, "Tcp:") == "" || findNetLineWithPrefix(native.Stdout, "Tcp:") == "" {
 			t.Fatalf("netstat -s missing tcp stats section\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
 		}
 		if res.Stdout == tcpOnly.Stdout {
 			t.Fatalf("netstat -s should include more than the tcp-only filtered view\n--- all stats ---\n%s\n--- tcp only ---\n%s", res.Stdout, tcpOnly.Stdout)
 		}
-		if !strings.Contains(res.Stdout, "Udp:") && !strings.Contains(res.Stdout, "Ip:") {
+		if findNetLineWithPrefix(res.Stdout, "Udp:") == "" && findNetLineWithPrefix(res.Stdout, "Ip:") == "" {
 			t.Fatalf("netstat -s should include non-TCP protocol stats in the unfiltered view\n%s", res.Stdout)
 		}
 	})
@@ -515,8 +691,9 @@ func TestParity_NetstatCases(t *testing.T) {
 		if res.ExitCode != 0 {
 			t.Fatalf("netstat --help failed: %+v", res)
 		}
+		out := res.Stdout + "\n" + res.Stderr
 		for _, want := range []string{"-t, --tcp", "-u, --udp", "-n, --numeric", "-W, --wide", "Filters:", "Views:"} {
-			if !strings.Contains(res.Stdout, want) && !strings.Contains(res.Stderr, want) {
+			if findNetLineContaining(out, want) == "" {
 				t.Fatalf("netstat --help missing %q\nstdout=%q\nstderr=%q", want, res.Stdout, res.Stderr)
 			}
 		}
@@ -539,10 +716,10 @@ func TestParity_NetstatCases(t *testing.T) {
 		if nativeStats.Stdout == nativeTCPStats.Stdout {
 			t.Fatalf("native netstat -s -t should not be identical to bare -s\n--- -s ---\n%s\n--- -s -t ---\n%s", nativeStats.Stdout, nativeTCPStats.Stdout)
 		}
-		if strings.Contains(goboxTCPStats.Stdout, "Ip:") || strings.Contains(goboxTCPStats.Stdout, "Udp:") {
+		if findNetLineWithPrefix(goboxTCPStats.Stdout, "Ip:") != "" || findNetLineWithPrefix(goboxTCPStats.Stdout, "Udp:") != "" {
 			t.Fatalf("gobox netstat -s -t leaked non-TCP sections\n%s", goboxTCPStats.Stdout)
 		}
-		if !strings.Contains(goboxTCPStats.Stdout, "Tcp:") {
+		if findNetLineWithPrefix(goboxTCPStats.Stdout, "Tcp:") == "" {
 			t.Fatalf("gobox netstat -s -t missing Tcp section\n%s", goboxTCPStats.Stdout)
 		}
 	})
@@ -557,16 +734,17 @@ func TestParity_IpCases(t *testing.T) {
 		if gobox.ExitCode != native.ExitCode {
 			t.Fatalf("ip addr exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 		}
-		if !strings.Contains(gobox.Stdout, "lo") || !strings.Contains(native.Stdout, "lo") {
-			t.Fatalf("ip addr output missing loopback\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+		goboxBlocks := ipBlocks(gobox.Stdout)
+		nativeBlocks := ipBlocks(native.Stdout)
+		golo, nlo := goboxBlocks["lo"], nativeBlocks["lo"]
+		if len(golo) < 2 || len(nlo) < 2 {
+			t.Fatalf("ip addr output missing loopback block\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
-		for _, want := range []string{"127.0.0.1/8", "state UP"} {
-			if !strings.Contains(gobox.Stdout, want) || !strings.Contains(native.Stdout, want) {
-				t.Fatalf("ip addr missing %q\ngobox=%s\nnative=%s", want, gobox.Stdout, native.Stdout)
-			}
+		if !strings.Contains(golo[0], "state") || !strings.Contains(nlo[0], "state") {
+			t.Fatalf("ip addr loopback header missing state field\ngobox=%q\nnative=%q", golo[0], nlo[0])
 		}
-		if len(nonEmptyLines(gobox.Stdout)) < 3 {
-			t.Fatalf("ip addr expected interface header plus address lines\n%s", gobox.Stdout)
+		if !strings.Contains(strings.Join(golo, "\n"), "127.0.0.1/8") || !strings.Contains(strings.Join(nlo, "\n"), "127.0.0.1/8") {
+			t.Fatalf("ip addr loopback block missing inet row\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
 	})
 
@@ -597,34 +775,17 @@ func TestParity_IpCases(t *testing.T) {
 		if gobox.ExitCode != native.ExitCode {
 			t.Fatalf("ip link exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 		}
-		for _, want := range []string{"lo", "mtu"} {
-			if !strings.Contains(gobox.Stdout, want) || !strings.Contains(native.Stdout, want) {
-				t.Fatalf("ip link missing %q\ngobox=%s\nnative=%s", want, gobox.Stdout, native.Stdout)
-			}
+		goboxBlocks := ipBlocks(gobox.Stdout)
+		nativeBlocks := ipBlocks(native.Stdout)
+		golo, nlo := goboxBlocks["lo"], nativeBlocks["lo"]
+		if len(golo) < 2 || len(nlo) < 2 {
+			t.Fatalf("ip link output missing loopback block\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
-		lines := nonEmptyLines(gobox.Stdout)
-		if len(lines) < 2 || !strings.Contains(lines[1], "link/") {
-			t.Fatalf("ip link should include link-layer details after interface header\n%s", gobox.Stdout)
+		if !strings.Contains(golo[0], "mtu") || !strings.Contains(nlo[0], "mtu") {
+			t.Fatalf("ip link loopback header missing mtu field\ngobox=%q\nnative=%q", golo[0], nlo[0])
 		}
-		nativeLines := nonEmptyLines(native.Stdout)
-		if len(nativeLines) < 2 {
-			t.Fatalf("native ip link output too short\n%s", native.Stdout)
-		}
-
-		hasLinkAddress := func(lines []string) bool {
-			for _, line := range lines {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 && strings.HasPrefix(fields[0], "link/") && strings.Contains(fields[1], ":") {
-					return true
-				}
-			}
-			return false
-		}
-		if !hasLinkAddress(lines) {
-			t.Fatalf("ip link should expose at least one parseable link type/address row\n%s", gobox.Stdout)
-		}
-		if !hasLinkAddress(nativeLines) {
-			t.Fatalf("native ip link should expose at least one parseable link type/address row\n%s", native.Stdout)
+		if !strings.Contains(golo[1], "link/") || !strings.Contains(nlo[1], "link/") {
+			t.Fatalf("ip link loopback block missing link-layer detail\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
 	})
 
@@ -959,11 +1120,17 @@ func TestParity_CurlCases(t *testing.T) {
 		env := t.TempDir()
 		base := runGoboxCLI(t, env, "", "curl", "--bench", "-n", "4", server.URL)
 		res := runGoboxCLI(t, env, "", "curl", "--bench", "-c", "2", "-n", "4", server.URL)
-		if base.ExitCode != 0 || res.ExitCode != 0 || !strings.Contains(res.Stdout, "Concurrency: 2") {
+		if base.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("curl bench concurrent failed base=%+v concurrent=%+v", base, res)
 		}
 		if base.Stdout == res.Stdout {
 			t.Fatalf("curl bench -c should change output relative to the default concurrency\n--- base ---\n%s\n--- concurrent ---\n%s", base.Stdout, res.Stdout)
+		}
+		if !strings.Contains(findNetLineWithPrefix(res.Stdout, "Requests:"), "Concurrency: 2") {
+			t.Fatalf("curl bench -c should report the configured concurrency\n%s", res.Stdout)
+		}
+		if findNetLineWithPrefix(res.Stdout, "Latency:") == "" || findNetLineWithPrefix(res.Stdout, "Throughput:") == "" {
+			t.Fatalf("curl bench -c missing latency/throughput summary\n%s", res.Stdout)
 		}
 	})
 
@@ -971,11 +1138,17 @@ func TestParity_CurlCases(t *testing.T) {
 		env := t.TempDir()
 		base := runGoboxCLI(t, env, "", "curl", "--bench", "-n", "2", server.URL)
 		res := runGoboxCLI(t, env, "", "curl", "--bench", "-n", "3", server.URL)
-		if base.ExitCode != 0 || res.ExitCode != 0 || !strings.Contains(res.Stdout, "Requests: 3") {
+		if base.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("curl bench requests failed base=%+v requests=%+v", base, res)
 		}
 		if base.Stdout == res.Stdout {
 			t.Fatalf("curl bench -n should change output relative to the baseline request count\n--- base ---\n%s\n--- requests ---\n%s", base.Stdout, res.Stdout)
+		}
+		if !strings.Contains(findNetLineWithPrefix(res.Stdout, "Requests:"), "Requests: 3") {
+			t.Fatalf("curl bench -n should report the configured request count\n%s", res.Stdout)
+		}
+		if findNetLineWithPrefix(res.Stdout, "Latency:") == "" || findNetLineWithPrefix(res.Stdout, "Throughput:") == "" {
+			t.Fatalf("curl bench -n missing latency/throughput summary\n%s", res.Stdout)
 		}
 	})
 
@@ -983,11 +1156,17 @@ func TestParity_CurlCases(t *testing.T) {
 		env := t.TempDir()
 		base := runGoboxCLI(t, env, "", "curl", "--bench", "-n", "2", server.URL)
 		res := runGoboxCLI(t, env, "", "curl", "--bench", "--warmup", "2", "-n", "2", server.URL)
-		if base.ExitCode != 0 || res.ExitCode != 0 || !strings.Contains(res.Stdout, "Requests: 2") {
+		if base.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("curl bench warmup failed base=%+v warmup=%+v", base, res)
 		}
 		if base.Stdout == res.Stdout {
 			t.Fatalf("curl bench --warmup should change output relative to the no-warmup baseline\n--- base ---\n%s\n--- warmup ---\n%s", base.Stdout, res.Stdout)
+		}
+		if !strings.Contains(findNetLineWithPrefix(res.Stdout, "Requests:"), "Requests: 2") {
+			t.Fatalf("curl bench --warmup should preserve the configured request count\n%s", res.Stdout)
+		}
+		if findNetLineWithPrefix(res.Stdout, "Latency:") == "" || findNetLineWithPrefix(res.Stdout, "Throughput:") == "" {
+			t.Fatalf("curl bench --warmup missing latency/throughput summary\n%s", res.Stdout)
 		}
 		if !strings.Contains(res.Stdout+res.Stderr, "Warming up 2 requests") {
 			t.Fatalf("curl bench --warmup missing warmup banner: %+v", res)
@@ -1148,11 +1327,19 @@ func TestParity_NcCases(t *testing.T) {
 			baseArgs := []string{"nc", "--bench", "-n", "2", "-s", "16B", "127.0.0.1", port}
 			base := runGoboxCLI(t, env, "", baseArgs...)
 			res := runGoboxCLI(t, env, "", args...)
-			if res.ExitCode != 0 || !strings.Contains(res.Stdout, tc.want) {
+			if res.ExitCode != 0 {
 				t.Fatalf("%s failed: %+v want %q", tc.id, res, tc.want)
 			}
 			if tc.id != "NC-009" && base.ExitCode == 0 && base.Stdout == res.Stdout {
 				t.Fatalf("%s should change bench output relative to the default bench baseline\n--- base ---\n%s\n--- variant ---\n%s", tc.id, base.Stdout, res.Stdout)
+			}
+			if line := findNetLineWithPrefix(res.Stdout, "Total:"); line == "" {
+				t.Fatalf("%s missing final total line\n%s", tc.id, res.Stdout)
+			} else if !strings.Contains(line, tc.want) {
+				t.Fatalf("%s total line missing expected payload %q\n%s", tc.id, tc.want, res.Stdout)
+			}
+			if findNetLineWithPrefix(res.Stdout, "Latency:") == "" {
+				t.Fatalf("%s missing latency summary\n%s", tc.id, res.Stdout)
 			}
 		})
 	}
@@ -1194,8 +1381,13 @@ func TestParity_DnsCases(t *testing.T) {
 		defer closeFn()
 		gobox := runGoboxCLI(t, t.TempDir(), "", "dig", "@"+net.JoinHostPort(host, port), "+noall", "+answer", "example.test")
 		native := runNativeCLI(t, t.TempDir(), "", "dig", "@"+host, "-p", port, "+noall", "+answer", "example.test")
-		if !strings.Contains(gobox.Stdout, "203.0.113.10") || !strings.Contains(native.Stdout, "203.0.113.10") {
+		goboxLine := findNetLineContaining(gobox.Stdout, "203.0.113.10")
+		nativeLine := findNetLineContaining(native.Stdout, "203.0.113.10")
+		if goboxLine == "" || nativeLine == "" {
 			t.Fatalf("dig +noall +answer mismatch gobox=%+v native=%+v", gobox, native)
+		}
+		if !strings.Contains(goboxLine, "IN") || !strings.Contains(nativeLine, "IN") {
+			t.Fatalf("dig +noall +answer should preserve answer-row shape\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
 	})
 
@@ -1229,16 +1421,22 @@ func TestParity_NpCases(t *testing.T) {
 		_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")
 		defer closeFn()
 		res := runGoboxCLI(t, t.TempDir(), "", "np", "-tcp", "-I", loopbackName, "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
-		if res.ExitCode != 0 || !strings.Contains(res.Stdout, "1 packets transmitted") {
+		if res.ExitCode != 0 {
 			t.Fatalf("np -I failed: %+v", res)
+		}
+		if line := findNetLineContaining(res.Stdout, "packets transmitted"); !strings.Contains(line, "1 packets transmitted") {
+			t.Fatalf("np -I missing expected summary line: %+v", res)
 		}
 	})
 
 	t.Run("NP-002", func(t *testing.T) {
 		port := closedTCPPort(t)
 		res := runGoboxCLI(t, t.TempDir(), "", "np", "-tcp", "-p", port, "-W", "1", "-c", "1", "-i", "0", "-q", "127.0.0.1")
-		if res.ExitCode != 0 || !strings.Contains(res.Stdout, "1 errors") {
+		if res.ExitCode != 0 {
 			t.Fatalf("np -W failed: %+v", res)
+		}
+		if line := findNetLineContaining(res.Stdout, "errors"); !strings.Contains(line, "1 errors") {
+			t.Fatalf("np -W missing expected error summary: %+v", res)
 		}
 	})
 
@@ -1266,11 +1464,14 @@ func TestParity_NpCases(t *testing.T) {
 		env := t.TempDir()
 		base := runGoboxCLI(t, env, "", "np", "-tcp", "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
 		res := runGoboxCLI(t, t.TempDir(), "", "np", "-tcp", "-p", port, "-c", "2", "-i", "1000", "-q", "127.0.0.1")
-		if base.ExitCode != 0 || res.ExitCode != 0 || !strings.Contains(res.Stdout, "2 packets transmitted") {
+		if base.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("np -c failed base=%+v count2=%+v", base, res)
 		}
-		if !strings.Contains(base.Stdout, "1 packets transmitted") || base.Stdout == res.Stdout {
+		if !strings.Contains(findNetLineContaining(base.Stdout, "packets transmitted"), "1 packets transmitted") || base.Stdout == res.Stdout {
 			t.Fatalf("np -c should change the summary relative to a single-packet baseline\n--- base ---\n%s\n--- count2 ---\n%s", base.Stdout, res.Stdout)
+		}
+		if !strings.Contains(findNetLineContaining(res.Stdout, "packets transmitted"), "2 packets transmitted") {
+			t.Fatalf("np -c missing updated packet summary\n%s", res.Stdout)
 		}
 	})
 
@@ -1280,7 +1481,7 @@ func TestParity_NpCases(t *testing.T) {
 		if gobox.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("np -flood failed gobox=%+v native=%+v", gobox, native)
 		}
-		if !strings.Contains(gobox.Stdout, "3 packets transmitted") || !strings.Contains(native.Stdout, "3 packets transmitted") {
+		if !strings.Contains(findNetLineContaining(gobox.Stdout, "packets transmitted"), "3 packets transmitted") || !strings.Contains(findNetLineContaining(native.Stdout, "packets transmitted"), "3 packets transmitted") {
 			t.Fatalf("np -flood packet count mismatch gobox=%+v native=%+v", gobox, native)
 		}
 	})
@@ -1302,7 +1503,7 @@ func TestParity_NpCases(t *testing.T) {
 		if gobox.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("np -icmp failed gobox=%+v native=%+v", gobox, native)
 		}
-		if !strings.Contains(gobox.Stdout, "1 received") || !strings.Contains(native.Stdout, "1 received") {
+		if !strings.Contains(findNetLineContaining(gobox.Stdout, "received"), "1 received") || !strings.Contains(findNetLineContaining(native.Stdout, "received"), "1 received") {
 			t.Fatalf("np -icmp receive mismatch gobox=%+v native=%+v", gobox, native)
 		}
 	})
@@ -1322,8 +1523,11 @@ func TestParity_NpCases(t *testing.T) {
 		_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")
 		defer closeFn()
 		res := runGoboxCLI(t, t.TempDir(), "", "np", "-tcp", "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
-		if res.ExitCode != 0 || !strings.Contains(res.Stdout, "1 packets received") {
+		if res.ExitCode != 0 {
 			t.Fatalf("np -p failed: %+v", res)
+		}
+		if !strings.Contains(findNetLineContaining(res.Stdout, "packets received"), "1 packets received") {
+			t.Fatalf("np -p missing receive summary: %+v", res)
 		}
 	})
 
@@ -1373,7 +1577,7 @@ func TestParity_NpCases(t *testing.T) {
 		if res.ExitCode != 0 {
 			t.Fatalf("np scan failed: %+v", res)
 		}
-		if !strings.Contains(res.Stdout, fmt.Sprintf("Port %d: open", port)) || !strings.Contains(res.Stdout, "1 open, 0 closed") {
+		if !strings.Contains(findNetLineContaining(res.Stdout, fmt.Sprintf("Port %d:", port)), "open") || !strings.Contains(findNetLineContaining(res.Stdout, "open, "), "1 open, 0 closed") {
 			t.Fatalf("np scan did not report the expected open-port summary: %+v", res)
 		}
 	})
@@ -1382,8 +1586,11 @@ func TestParity_NpCases(t *testing.T) {
 		_, port, remotePorts, closeFn := startTCPRemotePortRecorder(t)
 		defer closeFn()
 		res := runGoboxCLI(t, t.TempDir(), "", "np", "-tcp", "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
-		if res.ExitCode != 0 || !strings.Contains(res.Stdout, "1 packets received") {
+		if res.ExitCode != 0 {
 			t.Fatalf("np -tcp failed: %+v", res)
+		}
+		if !strings.Contains(findNetLineContaining(res.Stdout, "packets received"), "1 packets received") {
+			t.Fatalf("np -tcp missing receive summary: %+v", res)
 		}
 		select {
 		case got := <-remotePorts:
@@ -1403,8 +1610,11 @@ func TestParity_NpCases(t *testing.T) {
 		defer conn.Close()
 		_, port, _ := net.SplitHostPort(conn.LocalAddr().String())
 		res := runGoboxCLI(t, t.TempDir(), "", "np", "-udp", "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
-		if res.ExitCode != 0 || !strings.Contains(res.Stdout, "1 packets received") {
+		if res.ExitCode != 0 {
 			t.Fatalf("np -udp failed: %+v", res)
+		}
+		if !strings.Contains(findNetLineContaining(res.Stdout, "packets received"), "1 packets received") {
+			t.Fatalf("np -udp missing receive summary: %+v", res)
 		}
 		if strings.Contains(strings.ToLower(res.Stdout+res.Stderr), "connection failed") {
 			t.Fatalf("np -udp should succeed on a reachable udp socket without failure diagnostics: %+v", res)
@@ -1460,7 +1670,12 @@ func TestParity_IfstatCases(t *testing.T) {
 			args: []string{"ifstat", "-A", "-n", "1", "-p", "1"},
 			check: func(t *testing.T, out string) {
 				defaultOut := runGoboxCLI(t, t.TempDir(), "", "ifstat", "-n", "1", "-p", "1").Stdout
-				if len(nonEmptyLines(out)) < len(nonEmptyLines(defaultOut)) {
+				outHeader, outRows := ifstatHeaderAndRows(out)
+				baseHeader, baseRows := ifstatHeaderAndRows(defaultOut)
+				if outHeader != baseHeader {
+					t.Fatalf("ifstat -A should preserve default header\n-A:\n%s\n--- default ---\n%s", out, defaultOut)
+				}
+				if len(outRows) < len(baseRows) {
 					t.Fatalf("ifstat -A should not show fewer rows than default\n-A:\n%s\n--- default ---\n%s", out, defaultOut)
 				}
 			},
@@ -1476,8 +1691,9 @@ func TestParity_IfstatCases(t *testing.T) {
 				if out == base.Stdout {
 					t.Fatalf("ifstat -a did not change output relative to baseline\n--- base ---\n%s\n--- absolute ---\n%s", base.Stdout, out)
 				}
-				if !strings.Contains(out, "Interface") {
-					t.Fatalf("ifstat -a missing header: %q", out)
+				header, rows := ifstatHeaderAndRows(out)
+				if !strings.Contains(header, "Interface") || len(rows) == 0 {
+					t.Fatalf("ifstat -a missing header or rows: %q", out)
 				}
 			},
 		},
@@ -1492,8 +1708,12 @@ func TestParity_IfstatCases(t *testing.T) {
 				if out == base.Stdout {
 					t.Fatalf("ifstat -d did not change output relative to baseline\n--- base ---\n%s\n--- drop ---\n%s", base.Stdout, out)
 				}
-				if !strings.Contains(out, "rxdrop") || !strings.Contains(out, "txdrop") {
+				header, rows := ifstatHeaderAndRows(out)
+				if !strings.Contains(header, "rxdrop") || !strings.Contains(header, "txdrop") {
 					t.Fatalf("ifstat -d missing drop columns: %q", out)
+				}
+				if len(rows) == 0 || len(strings.Fields(rows[0])) < 7 {
+					t.Fatalf("ifstat -d expected data rows with drop columns: %q", out)
 				}
 			},
 		},
@@ -1508,8 +1728,12 @@ func TestParity_IfstatCases(t *testing.T) {
 				if out == base.Stdout {
 					t.Fatalf("ifstat -e did not change output relative to baseline\n--- base ---\n%s\n--- errors ---\n%s", base.Stdout, out)
 				}
-				if !strings.Contains(out, "rxerrs") || !strings.Contains(out, "txerrs") {
+				header, rows := ifstatHeaderAndRows(out)
+				if !strings.Contains(header, "rxerrs") || !strings.Contains(header, "txerrs") {
 					t.Fatalf("ifstat -e missing error columns: %q", out)
+				}
+				if len(rows) == 0 || len(strings.Fields(rows[0])) < 7 {
+					t.Fatalf("ifstat -e expected data rows with error columns: %q", out)
 				}
 			},
 		},
@@ -1517,8 +1741,8 @@ func TestParity_IfstatCases(t *testing.T) {
 			id:   "IFSTAT-005",
 			args: []string{"ifstat", "-i", "lo", "-n", "1", "-p", "1"},
 			check: func(t *testing.T, out string) {
-				lines := nonEmptyLines(out)
-				for _, line := range lines[1:] {
+				_, rows := ifstatHeaderAndRows(out)
+				for _, line := range rows {
 					if !strings.HasPrefix(strings.TrimSpace(line), "lo ") && strings.TrimSpace(line) != "lo" {
 						t.Fatalf("ifstat -i lo leaked other interfaces: %q", out)
 					}
@@ -1529,7 +1753,8 @@ func TestParity_IfstatCases(t *testing.T) {
 			id:   "IFSTAT-006",
 			args: []string{"ifstat", "-n", "2", "-p", "1"},
 			check: func(t *testing.T, out string) {
-				if len(nonEmptyLines(out)) < 3 {
+				header, rows := ifstatHeaderAndRows(out)
+				if !strings.Contains(header, "Interface") || len(rows) < 2 {
 					t.Fatalf("ifstat -n expected multiple samples: %q", out)
 				}
 			},
@@ -1538,7 +1763,8 @@ func TestParity_IfstatCases(t *testing.T) {
 			id:   "IFSTAT-007",
 			args: []string{"ifstat", "-n", "2", "-p", "1"},
 			check: func(t *testing.T, out string) {
-				if len(nonEmptyLines(out)) < 3 {
+				header, rows := ifstatHeaderAndRows(out)
+				if !strings.Contains(header, "Interface") || len(rows) < 2 {
 					t.Fatalf("ifstat -n/-p expected header plus repeated samples: %q", out)
 				}
 			},

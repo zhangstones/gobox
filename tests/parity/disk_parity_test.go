@@ -73,10 +73,10 @@ func TestParity_Md5sumCases(t *testing.T) {
 		if gobox.ExitCode != native.ExitCode {
 			t.Fatalf("md5sum --warn exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 		}
-		if !strings.Contains(strings.ToLower(gobox.Stdout+gobox.Stderr), "improperly formatted") {
+		if findLineContaining(strings.ToLower(gobox.Stdout+gobox.Stderr), "improperly formatted") == "" {
 			t.Fatalf("md5sum --warn missing gobox warning: %+v", gobox)
 		}
-		if !strings.Contains(strings.ToLower(native.Stdout+native.Stderr), "improperly formatted") {
+		if findLineContaining(strings.ToLower(native.Stdout+native.Stderr), "improperly formatted") == "" {
 			t.Fatalf("md5sum --warn missing native warning: %+v", native)
 		}
 	})
@@ -110,8 +110,16 @@ func TestParity_IostatCases(t *testing.T) {
 		if base.Stdout == gobox.Stdout {
 			t.Fatalf("iostat -H did not change output\n--- base ---\n%s\n--- human ---\n%s", base.Stdout, gobox.Stdout)
 		}
-		if !strings.Contains(gobox.Stdout, "/s") {
+		lines := nonEmptyLines(gobox.Stdout)
+		header := strings.Fields(lines[0])
+		if len(lines) < 2 || len(header) < 2 || header[0] != "Device" {
+			t.Fatalf("iostat -H missing header or rows: %+v", gobox)
+		}
+		if !strings.Contains(lines[0], "/s") {
 			t.Fatalf("iostat -H missing per-second units: %+v", gobox)
+		}
+		if row := lines[1]; !strings.Contains(row, "K/s") && !strings.Contains(row, "M/s") && !strings.Contains(row, "B/s") {
+			t.Fatalf("iostat -H missing humanized throughput units: %+v", gobox)
 		}
 	})
 
@@ -134,11 +142,16 @@ func TestParity_IostatCases(t *testing.T) {
 		if base.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("iostat --cgroup failed base=%+v cgroup=%+v", base, res)
 		}
-		if !strings.Contains(res.Stdout, "Device") {
+		lines := nonEmptyLines(res.Stdout)
+		header := strings.Fields(lines[0])
+		if len(lines) < 2 || len(header) < 2 || header[0] != "Device" {
 			t.Fatalf("iostat --cgroup missing header: %+v", res)
 		}
 		if base.Stdout == res.Stdout {
 			t.Fatalf("iostat --cgroup did not change output relative to diskstats baseline\n--- base ---\n%s\n--- cgroup ---\n%s", base.Stdout, res.Stdout)
+		}
+		if len(strings.Fields(lines[1])) < 7 {
+			t.Fatalf("iostat --cgroup expected structured device row: %q", lines[1])
 		}
 	})
 
@@ -153,10 +166,20 @@ func TestParity_IostatCases(t *testing.T) {
 		if res.ExitCode != 0 {
 			t.Fatalf("iostat --help failed: %+v", res)
 		}
+		out := res.Stdout + "\n" + res.Stderr
+		lastIdx := -1
 		for _, want := range []string{"Usage: gobox iostat", "Positionals:", "Columns:", "Examples:"} {
-			if !strings.Contains(res.Stdout, want) && !strings.Contains(res.Stderr, want) {
+			idx := strings.Index(out, want)
+			if idx == -1 {
 				t.Fatalf("iostat --help missing %q\nstdout=%q\nstderr=%q", want, res.Stdout, res.Stderr)
 			}
+			if idx <= lastIdx {
+				t.Fatalf("iostat --help section %q out of order\nstdout=%q\nstderr=%q", want, res.Stdout, res.Stderr)
+			}
+			lastIdx = idx
+		}
+		if strings.Contains(res.Stdout, "  -H\t") || strings.Contains(res.Stdout, "  -cgroup\t") {
+			t.Fatalf("iostat --help should use grouped help text, got %q", res.Stdout)
 		}
 	})
 }
@@ -219,11 +242,10 @@ func TestParity_IoperfFioCases(t *testing.T) {
 
 	assertReadWrite := func(t *testing.T, gobox, native parityResult, wantRead, wantWrite bool) {
 		t.Helper()
-		nativeLower := strings.ToLower(native.Stdout)
-		if wantRead && (!strings.Contains(gobox.Stdout, "READ:") || !strings.Contains(nativeLower, "read:")) {
+		if wantRead && (findLineWithPrefix(gobox.Stdout, "READ:") == "" || findLineWithPrefix(strings.ToUpper(native.Stdout), "READ:") == "") {
 			t.Fatalf("missing read stats gobox=%+v native=%+v", gobox, native)
 		}
-		if wantWrite && (!strings.Contains(gobox.Stdout, "WRITE:") || !strings.Contains(nativeLower, "write:")) {
+		if wantWrite && (findLineWithPrefix(gobox.Stdout, "WRITE:") == "" || findLineWithPrefix(strings.ToUpper(native.Stdout), "WRITE:") == "") {
 			t.Fatalf("missing write stats gobox=%+v native=%+v", gobox, native)
 		}
 	}
@@ -239,7 +261,7 @@ func TestParity_IoperfFioCases(t *testing.T) {
 			},
 			assert: func(t *testing.T, env, goboxFile, nativeFile string, gobox, native parityResult) {
 				assertReadWrite(t, gobox, native, false, true)
-				if !strings.Contains(gobox.Stdout, "bs=4k") || !strings.Contains(strings.ToLower(native.Stdout), "4096b-4096b") {
+				if findLineContaining(strings.ToLower(gobox.Stdout), "bs=4k") == "" || findLineContaining(strings.ToLower(native.Stdout), "4096b-4096b") == "" {
 					t.Fatalf("block size not reflected gobox=%+v native=%+v", gobox, native)
 				}
 			},
@@ -295,10 +317,10 @@ func TestParity_IoperfFioCases(t *testing.T) {
 				return []string{"--filename=" + nativeFile, "--rw=write", "--group_reporting=1", "--numjobs=2", "--size=32K"}
 			},
 			assert: func(t *testing.T, env, goboxFile, nativeFile string, gobox, native parityResult) {
-				if strings.Contains(gobox.Stdout, "job 0:") {
+				if findLineWithPrefix(gobox.Stdout, "job 0:") != "" {
 					t.Fatalf("gobox group reporting should aggregate output: %+v", gobox)
 				}
-				if !strings.Contains(native.Stdout, "Run status group 0") {
+				if findLineWithPrefix(native.Stdout, "Run status group 0") == "" {
 					t.Fatalf("fio group reporting missing group summary: %+v", native)
 				}
 			},
@@ -313,7 +335,7 @@ func TestParity_IoperfFioCases(t *testing.T) {
 			},
 			assert: func(t *testing.T, env, goboxFile, nativeFile string, gobox, native parityResult) {
 				assertReadWrite(t, gobox, native, false, true)
-				if !strings.Contains(gobox.Stdout, "iodepth=2") || !strings.Contains(native.Stdout, "IO depths") {
+				if findLineContaining(gobox.Stdout, "iodepth=2") == "" || findLineWithPrefix(strings.TrimSpace(native.Stdout), "IO depths") == "" {
 					t.Fatalf("iodepth not reflected gobox=%+v native=%+v", gobox, native)
 				}
 			},
@@ -344,10 +366,10 @@ func TestParity_IoperfFioCases(t *testing.T) {
 				return []string{"--filename=" + nativeFile, "--rw=write", "--numjobs=2", "--size=32K"}
 			},
 			assert: func(t *testing.T, env, goboxFile, nativeFile string, gobox, native parityResult) {
-				if !strings.Contains(gobox.Stdout, "job 0:") || !strings.Contains(gobox.Stdout, "job 1:") {
+				if findLineWithPrefix(gobox.Stdout, "job 0:") == "" || findLineWithPrefix(gobox.Stdout, "job 1:") == "" {
 					t.Fatalf("gobox numjobs output missing per-job sections: %+v", gobox)
 				}
-				if !strings.Contains(native.Stdout, "Starting 2 processes") {
+				if findLineWithPrefix(native.Stdout, "Starting 2 processes") == "" {
 					t.Fatalf("fio numjobs output missing job count: %+v", native)
 				}
 			},
@@ -365,7 +387,7 @@ func TestParity_IoperfFioCases(t *testing.T) {
 				return []string{"--filename=" + nativeFile, "--rw=read", "--size=32K", "--percentile_list=95"}
 			},
 			assert: func(t *testing.T, env, goboxFile, nativeFile string, gobox, native parityResult) {
-				if !strings.Contains(gobox.Stdout, "p95=") || !strings.Contains(native.Stdout, "95th=") {
+				if findLineContaining(strings.ToLower(gobox.Stdout), "p95=") == "" || findLineContaining(strings.ToLower(native.Stdout), "95th=") == "" {
 					t.Fatalf("percentile output mismatch gobox=%+v native=%+v", gobox, native)
 				}
 			},
@@ -585,10 +607,10 @@ func TestParity_Sha256sumCases(t *testing.T) {
 		if gobox.ExitCode != native.ExitCode {
 			t.Fatalf("sha256sum --warn exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 		}
-		if !strings.Contains(strings.ToLower(gobox.Stdout+gobox.Stderr), "improperly formatted") {
+		if findLineContaining(strings.ToLower(gobox.Stdout+gobox.Stderr), "improperly formatted") == "" {
 			t.Fatalf("sha256sum --warn missing gobox warning: %+v", gobox)
 		}
-		if !strings.Contains(strings.ToLower(native.Stdout+native.Stderr), "improperly formatted") {
+		if findLineContaining(strings.ToLower(native.Stdout+native.Stderr), "improperly formatted") == "" {
 			t.Fatalf("sha256sum --warn missing native warning: %+v", native)
 		}
 	})
@@ -638,6 +660,15 @@ func hasSetIntersection(left, right map[string]struct{}) bool {
 		}
 	}
 	return false
+}
+
+func findLineContaining(out, needle string) string {
+	for _, line := range nonEmptyLines(out) {
+		if strings.Contains(line, needle) {
+			return line
+		}
+	}
+	return ""
 }
 
 func TestParity_Md5InternalSanity(t *testing.T) {

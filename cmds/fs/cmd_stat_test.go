@@ -192,6 +192,15 @@ func TestStatCmdOptionsFilesystemFormat(t *testing.T) {
 
 }
 
+func TestStatFSTypeName(t *testing.T) {
+	if got := statFSTypeName(0x58465342); got != "xfs" {
+		t.Fatalf("expected xfs magic to map to xfs, got %q", got)
+	}
+	if got := statFSTypeName(0x1234); got != "1234" {
+		t.Fatalf("expected unknown fs type to fall back to hex, got %q", got)
+	}
+}
+
 func TestStatCmdOptionsFilesystemMissingPathErrors(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "file")

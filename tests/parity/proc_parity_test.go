@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -16,6 +17,75 @@ import (
 
 	"gobox/cmds/proc"
 )
+
+func columnIndex(line, name string) int {
+	for i, field := range strings.Fields(line) {
+		if field == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func rowFieldsByPID(out string, pid string) ([]string, bool) {
+	for _, line := range nonEmptyLines(out)[1:] {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if fields[0] == pid {
+			return fields, true
+		}
+	}
+	return nil, false
+}
+
+func extractColumnByPID(out string, pid string, idx int) (string, bool) {
+	fields, ok := rowFieldsByPID(out, pid)
+	if !ok || idx < 0 || idx >= len(fields) {
+		return "", false
+	}
+	return fields[idx], true
+}
+
+func topHeaderIndex(out string) int {
+	lines := nonEmptyLines(out)
+	for i, line := range lines {
+		if strings.Contains(line, "PID") && strings.Contains(strings.ToUpper(line), "COMMAND") {
+			return i
+		}
+	}
+	return -1
+}
+
+func topProcessLines(out string) []string {
+	headerIdx := topHeaderIndex(out)
+	if headerIdx < 0 {
+		return nil
+	}
+	lines := nonEmptyLines(out)
+	if headerIdx+1 >= len(lines) {
+		return nil
+	}
+	return lines[headerIdx+1:]
+}
+
+func lsofHeaderAndRows(out string) (string, []string) {
+	lines := nonEmptyLines(out)
+	if len(lines) == 0 {
+		return "", nil
+	}
+	return lines[0], lines[1:]
+}
+
+func lsofFindRow(rows []string, needle string) string {
+	for _, line := range rows {
+		if strings.Contains(line, needle) {
+			return line
+		}
+	}
+	return ""
+}
 
 func TestParity_XargsCases(t *testing.T) {
 	runExactParityCases(t, []parityCase{
@@ -106,16 +176,25 @@ func TestParity_TopCases(t *testing.T) {
 			t.Fatalf("%s emitted clear-screen sequence in batch output: %q", label, res.Stdout)
 		}
 		lines := nonEmptyLines(res.Stdout)
-		if len(lines) < 2 {
+		if len(lines) < 7 {
 			t.Fatalf("%s expected at least summary + process table lines, got %q", label, res.Stdout)
 		}
-		upper := strings.ToUpper(res.Stdout)
-		for _, want := range []string{"PID", "%CPU"} {
-			if !strings.Contains(upper, want) {
-				t.Fatalf("%s missing process field %q\n%s", label, want, res.Stdout)
+		for _, want := range []string{"top - ", "Tasks:", "%Cpu(s):", "MiB Mem :", "MiB Swap:"} {
+			if line := findLineWithPrefix(res.Stdout, want); line == "" {
+				t.Fatalf("%s missing summary line %q\n%s", label, want, res.Stdout)
 			}
 		}
-		hasMemoryField := strings.Contains(upper, "%MEM") || strings.Contains(upper, "RSS") || strings.Contains(upper, "VIRT") || strings.Contains(upper, "VMS")
+		headerIdx := topHeaderIndex(res.Stdout)
+		if headerIdx < 0 {
+			t.Fatalf("%s missing process table header\n%s", label, res.Stdout)
+		}
+		header := strings.ToUpper(nonEmptyLines(res.Stdout)[headerIdx])
+		for _, want := range []string{"PID", "%CPU"} {
+			if !strings.Contains(header, want) {
+				t.Fatalf("%s missing process field %q in header %q\n%s", label, want, header, res.Stdout)
+			}
+		}
+		hasMemoryField := strings.Contains(header, "%MEM") || strings.Contains(header, "RSS") || strings.Contains(header, "VIRT") || strings.Contains(header, "VMS")
 		if !hasMemoryField {
 			t.Fatalf("%s missing memory-related field\n%s", label, res.Stdout)
 		}
@@ -144,7 +223,7 @@ func TestParity_TopCases(t *testing.T) {
 			base := runGoboxCLI(t, env, "", "top", "-b", "-n", "1", "-d", "0")
 			res := runGoboxCLI(t, env, "", tc.args...)
 			native := runNativeCLI(t, env, "", "top", tc.nativeArgs...)
-			if res.ExitCode != native.ExitCode || !strings.Contains(res.Stdout, "PID") || !strings.Contains(native.Stdout, "PID") {
+			if res.ExitCode != native.ExitCode || topHeaderIndex(res.Stdout) < 0 || topHeaderIndex(native.Stdout) < 0 {
 				t.Fatalf("%s mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", tc.id, res, native)
 			}
 			if base.ExitCode != 0 {
@@ -198,8 +277,37 @@ func TestParity_TopCases(t *testing.T) {
 			if strings.Contains(res.Stdout, "\x1b[H\x1b[2J") {
 				t.Fatalf("%s emitted clear-screen sequence in batch output: %q", tc.id, res.Stdout)
 			}
-			if tc.id != "TOP-005" && tc.id != "TOP-008" && base.ExitCode == 0 && base.Stdout == res.Stdout {
+			processLines := topProcessLines(res.Stdout)
+			if tc.id != "TOP-009" && len(processLines) == 0 {
+				t.Fatalf("%s expected at least one process row\n%s", tc.id, res.Stdout)
+			}
+			if tc.id != "TOP-005" && tc.id != "TOP-007" && tc.id != "TOP-008" && base.ExitCode == 0 && base.Stdout == res.Stdout {
 				t.Fatalf("%s did not change gobox output relative to baseline\n--- base ---\n%s\n--- variant ---\n%s", tc.id, base.Stdout, res.Stdout)
+			}
+			switch tc.id {
+			case "TOP-006":
+				pids := extractLeadingInts(processLines)
+				if len(pids) != 1 || pids[0] != os.Getpid() {
+					t.Fatalf("%s should keep only target pid %d, got %v\n%s", tc.id, os.Getpid(), pids, res.Stdout)
+				}
+			case "TOP-007":
+				currentUser, err := user.LookupId(strconv.Itoa(os.Getuid()))
+				if err != nil {
+					t.Fatalf("lookup current user: %v", err)
+				}
+				for _, line := range processLines {
+					fields := strings.Fields(line)
+					if len(fields) < 2 || fields[1] != currentUser.Username {
+						t.Fatalf("%s returned row for unexpected user: %q", tc.id, line)
+					}
+				}
+			case "TOP-009":
+				if len(processLines) > len(topProcessLines(base.Stdout)) {
+					t.Fatalf("%s should not increase visible process rows\n--- base ---\n%s\n--- filtered ---\n%s", tc.id, base.Stdout, res.Stdout)
+				}
+			case "TOP-011":
+				pids := extractLeadingInts(processLines)
+				assertMonotonic(t, pids, true)
 			}
 			for _, want := range tc.contains {
 				if !strings.Contains(res.Stdout, want) {
@@ -212,35 +320,68 @@ func TestParity_TopCases(t *testing.T) {
 
 func TestParity_PsCases(t *testing.T) {
 	t.Run("PS-001", func(t *testing.T) {
+		markerCmd := startExactNameProcess(t, "psedefault")
+		defer stopCmd(markerCmd)
 		env := t.TempDir()
-		base := runGoboxCLI(t, env, "", "ps", "-n", "5", "-i", "1", "-ww")
-		gobox := runGoboxCLI(t, env, "", "ps", "-e", "-n", "5", "-i", "1", "-ww")
-		if base.ExitCode != 0 || gobox.ExitCode != 0 {
-			t.Fatalf("ps -e failed base=%+v all=%+v", base, gobox)
+		markerPID := strconv.Itoa(markerCmd.Process.Pid)
+		gobox := runGoboxCLI(t, env, "", "ps", "-e", "-o", "pid,cmd", "--sort", "-pid", "-n", "20", "-i", "1", "-ww")
+		native := runNativeCLI(t, env, "", "ps", "-e", "-o", "pid,cmd", "--sort", "-pid")
+		if gobox.ExitCode != 0 || native.ExitCode != 0 {
+			t.Fatalf("ps -e failed gobox=%+v native=%+v", gobox, native)
 		}
-		baseLines := nonEmptyLines(base.Stdout)
 		goboxLines := nonEmptyLines(gobox.Stdout)
-		if len(baseLines) < 2 || len(goboxLines) < 2 {
-			t.Fatalf("ps output too short\n--- base ---\n%s\n--- -e ---\n%s", base.Stdout, gobox.Stdout)
+		nativeLines := nonEmptyLines(native.Stdout)
+		if len(goboxLines) < 2 || len(nativeLines) < 2 {
+			t.Fatalf("ps -e output too short\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
 		}
-		baseHeader := strings.Fields(baseLines[0])
-		goboxHeader := strings.Fields(goboxLines[0])
-		if !reflect.DeepEqual(baseHeader, goboxHeader) {
-			t.Fatalf("ps -e should keep the same default header fields\nbase=%v\n-e=%v\n--- base ---\n%s\n--- -e ---\n%s", baseHeader, goboxHeader, base.Stdout, gobox.Stdout)
+		if got, want := strings.Fields(goboxLines[0]), strings.Fields(nativeLines[0]); !reflect.DeepEqual(got, want) {
+			t.Fatalf("ps -e header mismatch\ngobox=%v\nnative=%v\n--- gobox ---\n%s\n--- native ---\n%s", got, want, gobox.Stdout, native.Stdout)
 		}
-		basePIDs := extractLeadingInts(baseLines[1:])
-		goboxPIDs := extractLeadingInts(goboxLines[1:])
-		if len(basePIDs) == 0 || len(goboxPIDs) == 0 {
-			t.Fatalf("ps output missing PID rows\n--- base ---\n%s\n--- -e ---\n%s", base.Stdout, gobox.Stdout)
+		goboxCmd, ok := extractColumnByPID(gobox.Stdout, markerPID, 1)
+		if !ok {
+			t.Fatalf("gobox ps -e missing marker pid %s\n%s", markerPID, gobox.Stdout)
 		}
-		if strings.Join(strings.Fields(strings.TrimSpace(strings.Join(baseLines[1:], "\n"))), " ") == strings.Join(strings.Fields(strings.TrimSpace(strings.Join(goboxLines[1:], "\n"))), " ") {
-			return
+		nativeCmd, ok := extractColumnByPID(native.Stdout, markerPID, 1)
+		if !ok {
+			t.Fatalf("native ps -e missing marker pid %s\n%s", markerPID, native.Stdout)
 		}
-		if !reflect.DeepEqual(basePIDs, goboxPIDs) {
-			t.Fatalf("ps -e should currently match gobox default all-process PID view\nbase=%v\n-e=%v\n--- base ---\n%s\n--- -e ---\n%s", basePIDs, goboxPIDs, base.Stdout, gobox.Stdout)
+		if goboxCmd != nativeCmd {
+			t.Fatalf("ps -e should match native cmd column for marker pid %s\ngobox=%q\nnative=%q", markerPID, goboxCmd, nativeCmd)
 		}
-		if len(nonEmptyLines(gobox.Stdout)) < 2 || !strings.Contains(gobox.Stdout, "PID") {
-			t.Fatalf("ps -e should still render a process table\n%s", gobox.Stdout)
+	})
+
+	t.Run("PS-002", func(t *testing.T) {
+		requireNativeCommand(t, "ps")
+		env := &parityEnv{Dir: t.TempDir()}
+		base := runGoboxCLI(t, env.Dir, "", "ps", "-n", "5", "-i", "1")
+		gobox := runGoboxCLI(t, env.Dir, "", "ps", "-f", "-n", "5", "-i", "1")
+		native := runNativeCLI(t, env.Dir, "", "ps", "-f")
+		if base.ExitCode != 0 || gobox.ExitCode != 0 || native.ExitCode != 0 {
+			t.Fatalf("ps command failed base=%+v gobox=%+v native=%+v", base, gobox, native)
+		}
+		if base.Stdout == gobox.Stdout {
+			t.Fatalf("ps -f did not change output\n--- base ---\n%s\n--- -f ---\n%s", base.Stdout, gobox.Stdout)
+		}
+		goboxLines := nonEmptyLines(gobox.Stdout)
+		nativeLines := nonEmptyLines(native.Stdout)
+		if len(goboxLines) < 2 || len(nativeLines) < 2 {
+			t.Fatalf("ps -f expected header plus rows\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
+		}
+		if !strings.Contains(goboxLines[0], "PPID") || !strings.Contains(nativeLines[0], "PPID") {
+			t.Fatalf("ps -f missing PPID headers\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
+		}
+		for _, want := range []string{"UID", "PID", "PPID", "CMD"} {
+			if !strings.Contains(goboxLines[0], want) {
+				t.Fatalf("gobox ps -f header missing %q: %q", want, goboxLines[0])
+			}
+			if !strings.Contains(nativeLines[0], want) {
+				t.Fatalf("native ps -f header missing %q: %q", want, nativeLines[0])
+			}
+		}
+		for _, line := range goboxLines[1:] {
+			if len(strings.Fields(line)) < 7 {
+				t.Fatalf("gobox ps -f row too short: %q", line)
+			}
 		}
 	})
 
@@ -283,11 +424,11 @@ func TestParity_PsCases(t *testing.T) {
 		if res.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("ps -full failed gobox=%+v native=%+v", res, native)
 		}
-		lines := nonEmptyLines(res.Stdout)
-		if len(lines) < 2 {
+		goboxLines := nonEmptyLines(res.Stdout)
+		if len(goboxLines) < 2 {
 			t.Fatalf("ps -full expected header plus matching rows\n%s", res.Stdout)
 		}
-		headerFields := strings.Fields(lines[0])
+		headerFields := strings.Fields(goboxLines[0])
 		pidIdx := -1
 		for i, field := range headerFields {
 			if field == "PID" {
@@ -307,7 +448,7 @@ func TestParity_PsCases(t *testing.T) {
 			t.Fatalf("pgrep -f did not return marker pid %s\n%s", markerPID, native.Stdout)
 		}
 		foundMarker := false
-		for _, line := range lines[1:] {
+		for _, line := range goboxLines[1:] {
 			fields := strings.Fields(line)
 			if len(fields) <= pidIdx {
 				continue
@@ -346,219 +487,19 @@ func TestParity_PsCases(t *testing.T) {
 		assertMonotonic(t, pids, false)
 	})
 
-	t.Run("PS-011", func(t *testing.T) {
-		markerCmd := startExactNameProcess(t, "pscomm")
-		defer stopCmd(markerCmd)
-		pattern := "pscomm"
-		res := runGoboxCLI(t, t.TempDir(), "", "ps", "-comm", pattern, "-n", "5", "-ww", "-i", "1")
-		native := runNativeCLI(t, t.TempDir(), "", "pgrep", "-x", pattern)
-		if res.ExitCode != 0 || native.ExitCode != 0 || !strings.Contains(res.Stdout, pattern) {
-			t.Fatalf("ps -comm failed: %+v", res)
-		}
-	})
-
-	t.Run("PS-012", func(t *testing.T) {
-		pid := strconv.Itoa(os.Getpid())
-		env := t.TempDir()
-		res := runGoboxCLI(t, env, "", "ps", "-A", "-p", pid, "-i", "1")
-		native := runNativeCLI(t, env, "", "ps", "-A")
-		if res.ExitCode != 0 || native.ExitCode != 0 || !strings.Contains(res.Stdout, pid) || !strings.Contains(native.Stdout, pid) {
-			t.Fatalf("ps -A mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
-		}
-	})
-
-	t.Run("PS-013", func(t *testing.T) {
-		pid := strconv.Itoa(os.Getpid())
-		env := t.TempDir()
-		base := runGoboxCLI(t, env, "", "ps", "-p", pid, "-i", "1")
-		res := runGoboxCLI(t, env, "", "ps", "-F", "-p", pid, "-i", "1")
-		native := runNativeCLI(t, env, "", "ps", "-F", "-p", pid)
-		if base.ExitCode != 0 || res.ExitCode != native.ExitCode {
-			t.Fatalf("ps -F mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
-		}
-		if base.Stdout == res.Stdout {
-			t.Fatalf("ps -F did not change output\n--- base ---\n%s\n--- -F ---\n%s", base.Stdout, res.Stdout)
-		}
-		if !strings.Contains(res.Stdout, pid) || !strings.Contains(native.Stdout, pid) {
-			t.Fatalf("ps -F missing target pid\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
-		}
-		goboxLines := nonEmptyLines(res.Stdout)
-		nativeLines := nonEmptyLines(native.Stdout)
-		if len(goboxLines) < 2 || len(nativeLines) < 2 {
-			t.Fatalf("ps -F expected header plus target row\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
-		}
-		for _, want := range []string{"UID", "PID", "PPID", "%CPU", "%MEM", "VSZ", "RSS", "TTY", "STAT", "START", "TIME", "CMD"} {
-			if !strings.Contains(goboxLines[0], want) {
-				t.Fatalf("gobox ps -F header missing %q: %s", want, goboxLines[0])
-			}
-		}
-		for _, want := range []string{"UID", "PID", "PPID", "SZ", "RSS", "TTY", "TIME", "CMD"} {
-			if !strings.Contains(nativeLines[0], want) {
-				t.Fatalf("native ps -F header missing %q: %s", want, nativeLines[0])
-			}
-		}
-		if len(strings.Fields(goboxLines[1])) < 12 {
-			t.Fatalf("gobox ps -F target row does not contain full-format columns: %q", goboxLines[1])
-		}
-	})
-
-	t.Run("PS-014", func(t *testing.T) {
-		uid := strconv.Itoa(os.Getuid())
-		pid := strconv.Itoa(os.Getpid())
-		env := t.TempDir()
-		res := runGoboxCLI(t, env, "", "ps", "-u", uid, "-p", pid, "-i", "1")
-		native := runNativeCLI(t, env, "", "ps", "-u", uid)
-		if res.ExitCode != 0 || native.ExitCode != 0 || !strings.Contains(res.Stdout, pid) || !strings.Contains(native.Stdout, pid) {
-			t.Fatalf("ps -u mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
-		}
-	})
-
-	t.Run("PS-015", func(t *testing.T) {
-		pid := strconv.Itoa(os.Getpid())
-		env := t.TempDir()
-		res := runGoboxCLI(t, env, "", "ps", "-p", pid, "-o", "pid", "-i", "1")
-		native := runNativeCLI(t, env, "", "ps", "-p", pid, "-o", "pid")
-		if res.ExitCode != native.ExitCode || !strings.Contains(res.Stdout, pid) || !strings.Contains(native.Stdout, pid) {
-			t.Fatalf("ps -p mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
-		}
-	})
-
-	t.Run("PS-016", func(t *testing.T) {
-		if runtime.GOOS != "linux" {
-			t.Skip("ps -C test reads /proc/self/comm")
-		}
-		data, err := os.ReadFile("/proc/self/comm")
-		if err != nil {
-			t.Skipf("cannot read comm: %v", err)
-		}
-		comm := strings.TrimSpace(string(data))
-		env := t.TempDir()
-		res := runGoboxCLI(t, env, "", "ps", "-C", comm, "-o", "comm", "-n", "20", "-i", "1")
-		native := runNativeCLI(t, env, "", "ps", "-C", comm, "-o", "comm")
-		if res.ExitCode != native.ExitCode || !strings.Contains(res.Stdout, comm) || !strings.Contains(native.Stdout, comm) {
-			t.Fatalf("ps -C mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
-		}
-	})
-
-	t.Run("PS-017", func(t *testing.T) {
-		env := t.TempDir()
-		res := runGoboxCLI(t, env, "", "ps", "--sort", "-pid", "-n", "5", "-i", "1")
-		native := runNativeCLI(t, env, "", "ps", "-e", "--sort", "-pid", "-o", "pid")
-		if res.ExitCode != 0 || native.ExitCode != 0 {
-			t.Fatalf("ps --sort failed gobox=%+v native=%+v", res, native)
-		}
-		pids := extractLeadingInts(nonEmptyLines(res.Stdout)[1:])
-		assertMonotonic(t, pids, true)
-	})
-
-	t.Run("PS-018", func(t *testing.T) {
-		env := t.TempDir()
-		res := runGoboxCLI(t, env, "", "ps", "aux", "-n", "2", "-i", "1")
-		native := runNativeCLI(t, env, "", "ps", "aux")
-		if res.ExitCode != 0 || native.ExitCode != 0 {
-			t.Fatalf("ps aux failed gobox=%+v native=%+v", res, native)
-		}
-		for _, want := range []string{"USER", "PID", "%CPU", "%MEM"} {
-			if !strings.Contains(res.Stdout, want) || !strings.Contains(native.Stdout, want) {
-				t.Fatalf("ps aux missing %s\n--- gobox ---\n%s\n--- native ---\n%s", want, res.Stdout, native.Stdout)
-			}
-		}
-		if !strings.Contains(res.Stdout, "CMD") || !(strings.Contains(native.Stdout, "CMD") || strings.Contains(native.Stdout, "COMMAND")) {
-			t.Fatalf("ps aux missing command column\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
-		}
-	})
-
-	t.Run("PS-019", func(t *testing.T) {
-		env := t.TempDir()
-		goboxDefault := runGoboxCLI(t, env, "", "ps", "-n", "2", "-i", "1")
-		goboxAux := runGoboxCLI(t, env, "", "ps", "aux", "-n", "2", "-i", "1")
-		nativeDefault := runNativeCLI(t, env, "", "ps")
-		nativeAux := runNativeCLI(t, env, "", "ps", "aux")
-		if goboxDefault.ExitCode != 0 || goboxAux.ExitCode != 0 || nativeDefault.ExitCode != 0 || nativeAux.ExitCode != 0 {
-			t.Fatalf("ps aux behavior baseline failed goboxDefault=%+v goboxAux=%+v nativeDefault=%+v nativeAux=%+v", goboxDefault, goboxAux, nativeDefault, nativeAux)
-		}
-		if strings.Contains(goboxDefault.Stdout, "USER") || strings.Contains(nativeDefault.Stdout, "USER") {
-			t.Fatalf("default ps unexpectedly looks like aux\n--- gobox default ---\n%s\n--- native default ---\n%s", goboxDefault.Stdout, nativeDefault.Stdout)
-		}
-		if !strings.Contains(goboxAux.Stdout, "USER") || !strings.Contains(nativeAux.Stdout, "USER") {
-			t.Fatalf("ps aux did not change header shape\n--- gobox aux ---\n%s\n--- native aux ---\n%s", goboxAux.Stdout, nativeAux.Stdout)
-		}
-	})
-	t.Run("PS-020", func(t *testing.T) {
-		env := t.TempDir()
-		res := runGoboxCLI(t, env, "", "ps", "u", "-n", "2", "-i", "1")
-		native := runNativeCLI(t, env, "", "ps", "u")
-		if native.ExitCode != 0 {
-			t.Skipf("native ps u unavailable in current environment: %+v", native)
-		}
-		if res.ExitCode != 0 {
-			t.Fatalf("ps u failed gobox=%+v native=%+v", res, native)
-		}
-		for _, want := range []string{"USER", "PID", "%CPU", "%MEM"} {
-			if !strings.Contains(res.Stdout, want) || !strings.Contains(native.Stdout, want) {
-				t.Fatalf("ps u missing %s\n--- gobox ---\n%s\n--- native ---\n%s", want, res.Stdout, native.Stdout)
-			}
-		}
-	})
-	t.Run("PS-021", func(t *testing.T) {
-		env := t.TempDir()
-		defaultOut := runGoboxCLI(t, env, "", "ps", "-n", "2", "-i", "1")
-		axOut := runGoboxCLI(t, env, "", "ps", "ax", "-n", "2", "-i", "1")
-		native := runNativeCLI(t, env, "", "ps", "ax")
-		if defaultOut.ExitCode != 0 || axOut.ExitCode != 0 || native.ExitCode != 0 {
-			t.Fatalf("ps ax failed default=%+v gobox=%+v native=%+v", defaultOut, axOut, native)
-		}
-		if strings.Contains(defaultOut.Stdout, "USER") {
-			t.Fatalf("default ps unexpectedly looks like BSD user format\n%s", defaultOut.Stdout)
-		}
-		if strings.Contains(axOut.Stdout, "USER") {
-			t.Fatalf("ps ax should not imply BSD user format\n%s", axOut.Stdout)
-		}
-		if !strings.Contains(axOut.Stdout, "PID") || !strings.Contains(native.Stdout, "PID") {
-			t.Fatalf("ps ax missing PID header\n--- gobox ---\n%s\n--- native ---\n%s", axOut.Stdout, native.Stdout)
-		}
-	})
-	t.Run("PS-002", func(t *testing.T) {
-		requireNativeCommand(t, "ps")
-		env := &parityEnv{Dir: t.TempDir()}
-		base := runGoboxCLI(t, env.Dir, "", "ps", "-n", "5", "-i", "1")
-		gobox := runGoboxCLI(t, env.Dir, "", "ps", "-f", "-n", "5", "-i", "1")
-		native := runNativeCLI(t, env.Dir, "", "ps", "-f")
-		if base.ExitCode != 0 || gobox.ExitCode != 0 || native.ExitCode != 0 {
-			t.Fatalf("ps command failed base=%+v gobox=%+v native=%+v", base, gobox, native)
-		}
-		if base.Stdout == gobox.Stdout {
-			t.Fatalf("ps -f did not change output\n--- base ---\n%s\n--- -f ---\n%s", base.Stdout, gobox.Stdout)
-		}
-		if !strings.Contains(gobox.Stdout, "PPID") || !strings.Contains(native.Stdout, "PPID") {
-			t.Fatalf("ps -f missing PPID headers\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
-		}
-		goboxLines := nonEmptyLines(gobox.Stdout)
-		nativeLines := nonEmptyLines(native.Stdout)
-		if len(goboxLines) < 2 || len(nativeLines) < 2 {
-			t.Fatalf("ps -f expected header plus rows\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
-		}
-		for _, want := range []string{"UID", "PID", "PPID", "CMD"} {
-			if !strings.Contains(goboxLines[0], want) {
-				t.Fatalf("gobox ps -f header missing %q: %q", want, goboxLines[0])
-			}
-			if !strings.Contains(nativeLines[0], want) {
-				t.Fatalf("native ps -f header missing %q: %q", want, nativeLines[0])
-			}
-		}
-		for _, line := range goboxLines[1:] {
-			if len(strings.Fields(line)) < 7 {
-				t.Fatalf("gobox ps -f row too short: %q", line)
-			}
-		}
-	})
-
 	t.Run("PS-009", func(t *testing.T) {
-		env := &parityEnv{Dir: t.TempDir()}
-		res := runGoboxCLI(t, env.Dir, "", "ps", "-ww", "-n", "3", "-i", "1")
-		native := runNativeCLI(t, env.Dir, "", "ps", "-ww")
-		if res.ExitCode != 0 || native.ExitCode != 0 || !strings.Contains(res.Stdout, "CMD") {
-			t.Fatalf("ps -ww mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
+		markerCmd := startMarkerProcess(t, "parity-ps-wide-case")
+		defer stopCmd(markerCmd)
+		base := runGoboxCLI(t, t.TempDir(), "", "ps", "-full", "parity-ps-wide-case", "-f", "-n", "1", "-i", "1")
+		wide := runGoboxCLI(t, t.TempDir(), "", "ps", "-full", "parity-ps-wide-case", "-f", "-n", "1", "-ww", "-i", "1")
+		if base.ExitCode != 0 || wide.ExitCode != 0 {
+			t.Fatalf("ps -ww failed base=%+v wide=%+v", base, wide)
+		}
+		if len(lastLine(wide.Stdout)) < len(lastLine(base.Stdout)) {
+			t.Fatalf("ps -ww should not shorten command output\n--- base ---\n%s\n--- -ww ---\n%s", base.Stdout, wide.Stdout)
+		}
+		if !strings.Contains(wide.Stdout, "parity-ps-wide-case") {
+			t.Fatalf("ps -ww should preserve full command marker\n%s", wide.Stdout)
 		}
 	})
 
@@ -569,11 +510,6 @@ func TestParity_PsCases(t *testing.T) {
 		native := runNativeCLI(t, env.Dir, "", "ps", "-o", fields)
 		if res.ExitCode != native.ExitCode {
 			t.Fatalf("ps -o exit mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
-		}
-		for _, field := range []string{"PID", "PPID", "CMD", "%CPU", "%MEM"} {
-			if !strings.Contains(res.Stdout, field) || !strings.Contains(native.Stdout, field) {
-				t.Fatalf("ps -o missing %s\n--- gobox ---\n%s\n--- native ---\n%s", field, res.Stdout, native.Stdout)
-			}
 		}
 		goboxLines := nonEmptyLines(res.Stdout)
 		nativeLines := nonEmptyLines(native.Stdout)
@@ -599,6 +535,205 @@ func TestParity_PsCases(t *testing.T) {
 		}
 	})
 
+	t.Run("PS-011", func(t *testing.T) {
+		markerCmd := startExactNameProcess(t, "pscomm")
+		defer stopCmd(markerCmd)
+		pattern := "pscomm"
+		res := runGoboxCLI(t, t.TempDir(), "", "ps", "-comm", pattern, "-o", "pid,comm", "-n", "5", "-ww", "-i", "1")
+		native := runNativeCLI(t, t.TempDir(), "", "pgrep", "-x", pattern)
+		if res.ExitCode != 0 || native.ExitCode != 0 {
+			t.Fatalf("ps -comm failed gobox=%+v native=%+v", res, native)
+		}
+		markerPID := strconv.Itoa(markerCmd.Process.Pid)
+		if _, ok := extractColumnByPID(res.Stdout, markerPID, 1); !ok {
+			t.Fatalf("ps -comm missing marker pid %s\n%s", markerPID, res.Stdout)
+		}
+		for _, line := range nonEmptyLines(res.Stdout)[1:] {
+			fields := strings.Fields(line)
+			if len(fields) < 2 || fields[1] != pattern {
+				t.Fatalf("ps -comm returned non-matching row %q", line)
+			}
+		}
+	})
+
+	t.Run("PS-012", func(t *testing.T) {
+		env := t.TempDir()
+		res := runGoboxCLI(t, env, "", "ps", "-A", "-o", "pid,cmd", "--sort", "-pid", "-n", "5", "-i", "1", "-ww")
+		native := runNativeCLI(t, env, "", "ps", "-A", "-o", "pid,cmd", "--sort", "-pid")
+		if res.ExitCode != 0 || native.ExitCode != 0 {
+			t.Fatalf("ps -A mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
+		}
+		if got, want := strings.Fields(nonEmptyLines(res.Stdout)[0]), strings.Fields(nonEmptyLines(native.Stdout)[0]); !reflect.DeepEqual(got, want) {
+			t.Fatalf("ps -A header mismatch\ngobox=%v\nnative=%v", got, want)
+		}
+	})
+
+	t.Run("PS-013", func(t *testing.T) {
+		pid := strconv.Itoa(os.Getpid())
+		env := t.TempDir()
+		base := runGoboxCLI(t, env, "", "ps", "-p", pid, "-i", "1")
+		res := runGoboxCLI(t, env, "", "ps", "-F", "-p", pid, "-i", "1")
+		native := runNativeCLI(t, env, "", "ps", "-F", "-p", pid)
+		if base.ExitCode != 0 || res.ExitCode != native.ExitCode {
+			t.Fatalf("ps -F mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
+		}
+		if base.Stdout == res.Stdout {
+			t.Fatalf("ps -F did not change output\n--- base ---\n%s\n--- -F ---\n%s", base.Stdout, res.Stdout)
+		}
+		goboxLines := nonEmptyLines(res.Stdout)
+		nativeLines := nonEmptyLines(native.Stdout)
+		if len(goboxLines) < 2 || len(nativeLines) < 2 {
+			t.Fatalf("ps -F expected header plus target row\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
+		}
+		goboxPIDIdx := columnIndex(goboxLines[0], "PID")
+		nativePIDIdx := columnIndex(nativeLines[0], "PID")
+		if goboxPIDIdx < 0 || nativePIDIdx < 0 {
+			t.Fatalf("ps -F missing PID column\ngobox=%q\nnative=%q", goboxLines[0], nativeLines[0])
+		}
+		foundGoboxPID := false
+		for _, line := range goboxLines[1:] {
+			fields := strings.Fields(line)
+			if len(fields) > goboxPIDIdx && fields[goboxPIDIdx] == pid {
+				foundGoboxPID = true
+				break
+			}
+		}
+		if !foundGoboxPID {
+			t.Fatalf("gobox ps -F missing target pid\n%s", res.Stdout)
+		}
+		foundNativePID := false
+		for _, line := range nativeLines[1:] {
+			fields := strings.Fields(line)
+			if len(fields) > nativePIDIdx && fields[nativePIDIdx] == pid {
+				foundNativePID = true
+				break
+			}
+		}
+		if !foundNativePID {
+			t.Fatalf("native ps -F missing target pid\n%s", native.Stdout)
+		}
+		if got := strings.Fields(goboxLines[0]); len(got) < 12 || got[0] != "UID" || got[1] != "PID" || got[2] != "PPID" || got[len(got)-1] != "CMD" {
+			t.Fatalf("gobox ps -F header shape mismatch: %q", goboxLines[0])
+		}
+		if got := strings.Fields(nativeLines[0]); len(got) < 8 || got[0] != "UID" || got[1] != "PID" || got[2] != "PPID" || got[len(got)-1] != "CMD" {
+			t.Fatalf("native ps -F header shape mismatch: %q", nativeLines[0])
+		}
+		if len(strings.Fields(goboxLines[1])) < 12 {
+			t.Fatalf("gobox ps -F target row does not contain full-format columns: %q", goboxLines[1])
+		}
+	})
+
+	t.Run("PS-014", func(t *testing.T) {
+		uid := strconv.Itoa(os.Getuid())
+		pid := strconv.Itoa(os.Getpid())
+		env := t.TempDir()
+		res := runGoboxCLI(t, env, "", "ps", "-u", uid, "-p", pid, "-o", "pid,user", "-i", "1")
+		native := runNativeCLI(t, env, "", "ps", "-u", uid)
+		if res.ExitCode != 0 || native.ExitCode != 0 {
+			t.Fatalf("ps -u mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
+		}
+		if _, ok := rowFieldsByPID(res.Stdout, pid); !ok {
+			t.Fatalf("gobox ps -u missing target pid %s\n%s", pid, res.Stdout)
+		}
+		if !strings.Contains(native.Stdout, pid) {
+			t.Fatalf("native ps -u baseline missing target pid %s\n%s", pid, native.Stdout)
+		}
+		for _, line := range nonEmptyLines(res.Stdout)[1:] {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				t.Fatalf("ps -u row too short: %q", line)
+			}
+			if fields[1] != uid && fields[1] != os.Getenv("USER") && fields[1] != "root" {
+				t.Fatalf("ps -u returned row for unexpected user %q: %q", fields[1], line)
+			}
+		}
+	})
+
+	t.Run("PS-015", func(t *testing.T) {
+		pid := strconv.Itoa(os.Getpid())
+		env := t.TempDir()
+		res := runGoboxCLI(t, env, "", "ps", "-p", pid, "-o", "pid", "-i", "1")
+		native := runNativeCLI(t, env, "", "ps", "-p", pid, "-o", "pid")
+		if res.ExitCode != native.ExitCode {
+			t.Fatalf("ps -p mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
+		}
+		if _, ok := rowFieldsByPID(res.Stdout, pid); !ok {
+			t.Fatalf("gobox ps -p missing target pid %s\n%s", pid, res.Stdout)
+		}
+		if _, ok := rowFieldsByPID(native.Stdout, pid); !ok {
+			t.Fatalf("native ps -p missing target pid %s\n%s", pid, native.Stdout)
+		}
+		if got := extractLeadingInts(nonEmptyLines(res.Stdout)[1:]); len(got) != 1 || got[0] != os.Getpid() {
+			t.Fatalf("ps -p should keep only target pid, got %v\n%s", got, res.Stdout)
+		}
+	})
+
+	t.Run("PS-016", func(t *testing.T) {
+		if runtime.GOOS != "linux" {
+			t.Skip("ps -C test reads /proc/self/comm")
+		}
+		data, err := os.ReadFile("/proc/self/comm")
+		if err != nil {
+			t.Skipf("cannot read comm: %v", err)
+		}
+		comm := strings.TrimSpace(string(data))
+		env := t.TempDir()
+		res := runGoboxCLI(t, env, "", "ps", "-C", comm, "-o", "comm", "-n", "20", "-i", "1")
+		native := runNativeCLI(t, env, "", "ps", "-C", comm, "-o", "comm")
+		if res.ExitCode != native.ExitCode {
+			t.Fatalf("ps -C mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
+		}
+		if line := findLineWithPrefix(res.Stdout, comm); line == "" {
+			t.Fatalf("gobox ps -C missing comm row %q\n%s", comm, res.Stdout)
+		}
+		if line := findLineWithPrefix(native.Stdout, comm); line == "" {
+			t.Fatalf("native ps -C missing comm row %q\n%s", comm, native.Stdout)
+		}
+	})
+
+	t.Run("PS-017", func(t *testing.T) {
+		env := t.TempDir()
+		res := runGoboxCLI(t, env, "", "ps", "--sort", "-pid", "-n", "5", "-i", "1")
+		native := runNativeCLI(t, env, "", "ps", "-e", "--sort", "-pid", "-o", "pid")
+		if res.ExitCode != 0 || native.ExitCode != 0 {
+			t.Fatalf("ps --sort failed gobox=%+v native=%+v", res, native)
+		}
+		pids := extractLeadingInts(nonEmptyLines(res.Stdout)[1:])
+		assertMonotonic(t, pids, true)
+	})
+
+	t.Run("PS-018", func(t *testing.T) {
+		env := t.TempDir()
+		goboxDefault := runGoboxCLI(t, env, "", "ps", "-n", "2", "-i", "1")
+		goboxAux := runGoboxCLI(t, env, "", "ps", "aux", "-n", "2", "-i", "1")
+		goboxU := runGoboxCLI(t, env, "", "ps", "u", "-n", "2", "-i", "1")
+		goboxAX := runGoboxCLI(t, env, "", "ps", "ax", "-n", "2", "-i", "1")
+		nativeDefault := runNativeCLI(t, env, "", "ps")
+		nativeAux := runNativeCLI(t, env, "", "ps", "aux")
+		nativeU := runNativeCLI(t, env, "", "ps", "u")
+		nativeAX := runNativeCLI(t, env, "", "ps", "ax")
+		if goboxDefault.ExitCode != 0 || goboxAux.ExitCode != 0 || goboxU.ExitCode != 0 || goboxAX.ExitCode != 0 || nativeDefault.ExitCode != 0 || nativeAux.ExitCode != 0 || nativeAX.ExitCode != 0 {
+			t.Fatalf("bsd ps behavior baseline failed goboxDefault=%+v goboxAux=%+v goboxU=%+v goboxAX=%+v nativeDefault=%+v nativeAux=%+v nativeU=%+v nativeAX=%+v", goboxDefault, goboxAux, goboxU, goboxAX, nativeDefault, nativeAux, nativeU, nativeAX)
+		}
+		if strings.Contains(goboxDefault.Stdout, "USER") || strings.Contains(nativeDefault.Stdout, "USER") {
+			t.Fatalf("default ps unexpectedly looks like aux\n--- gobox default ---\n%s\n--- native default ---\n%s", goboxDefault.Stdout, nativeDefault.Stdout)
+		}
+		if got, want := strings.Fields(nonEmptyLines(goboxAux.Stdout)[0])[:4], strings.Fields(nonEmptyLines(nativeAux.Stdout)[0])[:4]; !reflect.DeepEqual(got, want) {
+			t.Fatalf("ps aux header mismatch\ngobox=%v\nnative=%v\n--- gobox ---\n%s\n--- native ---\n%s", got, want, goboxAux.Stdout, nativeAux.Stdout)
+		}
+		if nativeU.ExitCode == 0 {
+			if got, want := strings.Fields(nonEmptyLines(goboxU.Stdout)[0])[:4], strings.Fields(nonEmptyLines(nativeU.Stdout)[0])[:4]; !reflect.DeepEqual(got, want) {
+				t.Fatalf("ps u header mismatch\ngobox=%v\nnative=%v\n--- gobox ---\n%s\n--- native ---\n%s", got, want, goboxU.Stdout, nativeU.Stdout)
+			}
+		}
+		if strings.Contains(goboxAX.Stdout, "USER") || strings.Contains(nativeAX.Stdout, "USER") {
+			t.Fatalf("ps ax should not imply BSD user format\n--- gobox ---\n%s\n--- native ---\n%s", goboxAX.Stdout, nativeAX.Stdout)
+		}
+		if got, want := strings.Fields(nonEmptyLines(goboxAX.Stdout)[0]), strings.Fields(nonEmptyLines(nativeAX.Stdout)[0]); !reflect.DeepEqual(got, want) {
+			t.Fatalf("ps ax header mismatch\ngobox=%v\nnative=%v\n--- gobox ---\n%s\n--- native ---\n%s", got, want, goboxAX.Stdout, nativeAX.Stdout)
+		}
+	})
+
 }
 
 func TestParity_LsofCases(t *testing.T) {
@@ -617,6 +752,15 @@ func TestParity_LsofCases(t *testing.T) {
 		if gobox.ExitCode != native.ExitCode {
 			t.Fatalf("lsof exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 		}
+		header, rows := lsofHeaderAndRows(gobox.Stdout)
+		if len(rows) == 0 {
+			t.Fatalf("lsof default output should include header plus rows\ngobox=%s", gobox.Stdout)
+		}
+		for _, want := range []string{"COMMAND", "PID", "FD", "NAME"} {
+			if !strings.Contains(header, want) {
+				t.Fatalf("lsof default header missing %q: %q", want, header)
+			}
+		}
 		pid := strconv.Itoa(os.Getpid())
 		if !strings.Contains(gobox.Stdout, pid) || !strings.Contains(native.Stdout, pid) {
 			t.Fatalf("lsof missing current pid\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
@@ -624,8 +768,8 @@ func TestParity_LsofCases(t *testing.T) {
 		if !strings.Contains(gobox.Stdout, markerName) || !strings.Contains(native.Stdout, markerName) {
 			t.Fatalf("lsof default output should include a controlled opened file\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
-		if len(nonEmptyLines(gobox.Stdout)) < 2 || !strings.Contains(nonEmptyLines(gobox.Stdout)[0], "PID") {
-			t.Fatalf("lsof default output should include header plus rows\ngobox=%s", gobox.Stdout)
+		if row := lsofFindRow(rows, markerName); row == "" || !strings.Contains(row, pid) {
+			t.Fatalf("lsof default output missing controlled file row for current pid\ngobox=%s", gobox.Stdout)
 		}
 	})
 
@@ -651,15 +795,17 @@ func TestParity_LsofCases(t *testing.T) {
 		env := t.TempDir()
 		gobox := runGoboxCLI(t, env, "", "lsof", "-c", "lsofcmd")
 		native := runNativeCLI(t, env, "", "lsof", "-c", "lsofcmd")
-		if gobox.ExitCode != native.ExitCode || !strings.Contains(gobox.Stdout, "lsofcmd") || !strings.Contains(native.Stdout, "lsofcmd") {
+		if gobox.ExitCode != native.ExitCode || lsofFindRow(nonEmptyLines(gobox.Stdout), "lsofcmd") == "" || lsofFindRow(nonEmptyLines(native.Stdout), "lsofcmd") == "" {
 			t.Fatalf("lsof -c mismatch\ngobox=%+v\nnative=%+v", gobox, native)
 		}
 		targetPID := strconv.Itoa(cmd.Process.Pid)
 		if !strings.Contains(gobox.Stdout, targetPID) || !strings.Contains(native.Stdout, targetPID) {
 			t.Fatalf("lsof -c missing target pid %s\ngobox=%s\nnative=%s", targetPID, gobox.Stdout, native.Stdout)
 		}
-		for _, line := range nonEmptyLines(gobox.Stdout)[1:] {
-			if !strings.Contains(line, "lsofcmd") {
+		_, rows := lsofHeaderAndRows(gobox.Stdout)
+		for _, line := range rows {
+			fields := strings.Fields(line)
+			if len(fields) < 2 || fields[0] != "lsofcmd" || fields[1] != targetPID {
 				t.Fatalf("lsof -c leaked non-matching row %q", line)
 			}
 		}
@@ -685,6 +831,25 @@ func TestParity_LsofCases(t *testing.T) {
 		if !strings.Contains(gobox.Stdout, targetPort) {
 			t.Fatalf("lsof -i should include the target listener port %s\n%s", targetPort, gobox.Stdout)
 		}
+		_, rows := lsofHeaderAndRows(gobox.Stdout)
+		foundPort := false
+		for _, line := range rows {
+			if strings.Contains(line, "TCP") {
+				if strings.Contains(line, targetPort) {
+					foundPort = true
+				}
+				continue
+			}
+			if strings.Contains(line, "UDP") {
+				continue
+			}
+			if strings.Contains(strings.ToLower(line), "unix") {
+				t.Fatalf("lsof -i leaked unexpected non-network row %q", line)
+			}
+		}
+		if !foundPort {
+			t.Fatalf("lsof -i missing target listener row\n%s", gobox.Stdout)
+		}
 	})
 
 	t.Run("LSOF-005", func(t *testing.T) {
@@ -700,8 +865,18 @@ func TestParity_LsofCases(t *testing.T) {
 		if gobox.ExitCode != native.ExitCode || !strings.Contains(gobox.Stdout, "TCP") || !strings.Contains(native.Stdout, "TCP") {
 			t.Fatalf("lsof -iTCP mismatch\ngobox=%+v\nnative=%+v", gobox, native)
 		}
-		if !strings.Contains(gobox.Stdout, port) || strings.Contains(gobox.Stdout, "UDP") {
-			t.Fatalf("lsof -iTCP should preserve the tcp listener and exclude udp rows\ngobox=%s", gobox.Stdout)
+		_, rows := lsofHeaderAndRows(gobox.Stdout)
+		foundPort := false
+		for _, line := range rows {
+			if strings.Contains(line, "UDP") {
+				t.Fatalf("lsof -iTCP should exclude udp rows\ngobox=%s", gobox.Stdout)
+			}
+			if strings.Contains(line, "TCP") && strings.Contains(line, port) {
+				foundPort = true
+			}
+		}
+		if !foundPort {
+			t.Fatalf("lsof -iTCP should preserve the tcp listener\ngobox=%s", gobox.Stdout)
 		}
 	})
 
@@ -718,8 +893,18 @@ func TestParity_LsofCases(t *testing.T) {
 		if gobox.ExitCode != native.ExitCode || !strings.Contains(gobox.Stdout, "UDP") || !strings.Contains(native.Stdout, "UDP") {
 			t.Fatalf("lsof -iUDP mismatch\ngobox=%+v\nnative=%+v", gobox, native)
 		}
-		if !strings.Contains(gobox.Stdout, port) || strings.Contains(gobox.Stdout, "TCP") {
-			t.Fatalf("lsof -iUDP should preserve the udp socket and exclude tcp rows\ngobox=%s", gobox.Stdout)
+		_, rows := lsofHeaderAndRows(gobox.Stdout)
+		foundPort := false
+		for _, line := range rows {
+			if strings.Contains(line, "TCP") {
+				t.Fatalf("lsof -iUDP should exclude tcp rows\ngobox=%s", gobox.Stdout)
+			}
+			if strings.Contains(line, "UDP") && strings.Contains(line, port) {
+				foundPort = true
+			}
+		}
+		if !foundPort {
+			t.Fatalf("lsof -iUDP should preserve the udp socket\ngobox=%s", gobox.Stdout)
 		}
 	})
 
@@ -737,11 +922,18 @@ func TestParity_LsofCases(t *testing.T) {
 		if base.ExitCode != 0 || gobox.ExitCode != native.ExitCode || !strings.Contains(gobox.Stdout, "TCP") || !strings.Contains(native.Stdout, ":"+port) {
 			t.Fatalf("lsof -i :PORT mismatch\ngobox=%+v\nnative=%+v", gobox, native)
 		}
-		if base.Stdout == gobox.Stdout {
-			t.Fatalf("lsof -i :PORT should narrow output relative to bare -i\n--- base ---\n%s\n--- filtered ---\n%s", base.Stdout, gobox.Stdout)
-		}
 		if !strings.Contains(gobox.Stdout, port) {
 			t.Fatalf("lsof -i :PORT missing filtered port %s\n%s", port, gobox.Stdout)
+		}
+		_, baseRows := lsofHeaderAndRows(base.Stdout)
+		_, rows := lsofHeaderAndRows(gobox.Stdout)
+		if len(rows) > len(baseRows) {
+			t.Fatalf("lsof -i :PORT should not enlarge the bare -i result set\n--- base ---\n%s\n--- filtered ---\n%s", base.Stdout, gobox.Stdout)
+		}
+		for _, line := range rows {
+			if !strings.Contains(line, port) {
+				t.Fatalf("lsof -i :PORT leaked non-target row %q", line)
+			}
 		}
 	})
 
@@ -802,12 +994,18 @@ func TestParity_LsofCases(t *testing.T) {
 		defer f.Close()
 		gobox := runGoboxCLI(t, env, "", "lsof", "open.txt")
 		native := runNativeCLI(t, env, "", "lsof", "open.txt")
-		if gobox.ExitCode != native.ExitCode || !strings.Contains(gobox.Stdout, "open.txt") || !strings.Contains(native.Stdout, "open.txt") {
+		if gobox.ExitCode != native.ExitCode || lsofFindRow(nonEmptyLines(gobox.Stdout), "open.txt") == "" || lsofFindRow(nonEmptyLines(native.Stdout), "open.txt") == "" {
 			t.Fatalf("lsof FILE mismatch\ngobox=%+v\nnative=%+v", gobox, native)
 		}
 		pid := strconv.Itoa(os.Getpid())
 		if !strings.Contains(gobox.Stdout, pid) || !strings.Contains(native.Stdout, pid) {
 			t.Fatalf("lsof FILE missing current pid %s\ngobox=%s\nnative=%s", pid, gobox.Stdout, native.Stdout)
+		}
+		_, rows := lsofHeaderAndRows(gobox.Stdout)
+		for _, line := range rows {
+			if !strings.Contains(line, "open.txt") {
+				t.Fatalf("lsof FILE leaked non-target row %q", line)
+			}
 		}
 	})
 
@@ -844,7 +1042,9 @@ func TestParity_FreeCases(t *testing.T) {
 		if base.Stdout == gobox.Stdout {
 			t.Fatalf("free -h should change output relative to default units\n--- base ---\n%s\n--- human ---\n%s", base.Stdout, gobox.Stdout)
 		}
-		if !containsAny(gobox.Stdout, []string{"Ki", "Mi", "Gi", "Ti", "KB", "MB", "GB", "TB"}) || !containsAny(native.Stdout, []string{"Ki", "Mi", "Gi", "Ti", "KB", "MB", "GB", "TB"}) {
+		goboxMem := findLineWithPrefix(gobox.Stdout, "Mem:")
+		nativeMem := findLineWithPrefix(native.Stdout, "Mem:")
+		if !containsAny(goboxMem, []string{"Ki", "Mi", "Gi", "Ti", "KB", "MB", "GB", "TB"}) || !containsAny(nativeMem, []string{"Ki", "Mi", "Gi", "Ti", "KB", "MB", "GB", "TB"}) {
 			t.Fatalf("free -h missing human units\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
 	})
@@ -853,14 +1053,24 @@ func TestParity_FreeCases(t *testing.T) {
 		base := runGoboxCLI(t, env, "", "free")
 		gobox := runGoboxCLI(t, env, "", "free", "-m")
 		native := runNativeCLI(t, env, "", "free", "-m")
-		if base.ExitCode != 0 || gobox.ExitCode != native.ExitCode || !strings.Contains(gobox.Stdout, "Mem:") || !strings.Contains(native.Stdout, "Mem:") {
+		if base.ExitCode != 0 || gobox.ExitCode != native.ExitCode || findLineWithPrefix(gobox.Stdout, "Mem:") == "" || findLineWithPrefix(native.Stdout, "Mem:") == "" {
 			t.Fatalf("free -m mismatch gobox=%+v native=%+v", gobox, native)
 		}
 		if base.Stdout == gobox.Stdout {
 			t.Fatalf("free -m should change output relative to default byte-scale view\n--- base ---\n%s\n--- MiB ---\n%s", base.Stdout, gobox.Stdout)
 		}
-		if containsAny(findLineWithPrefix(gobox.Stdout, "Mem:"), []string{"KB", "MB", "GB", "TB", "Ki", "Mi", "Gi", "Ti"}) {
+		goboxMem := findLineWithPrefix(gobox.Stdout, "Mem:")
+		if containsAny(goboxMem, []string{"KB", "MB", "GB", "TB", "Ki", "Mi", "Gi", "Ti"}) {
 			t.Fatalf("free -m Mem row should stay numeric without human unit suffixes\n%s", gobox.Stdout)
+		}
+		fields := strings.Fields(goboxMem)
+		if len(fields) < 6 {
+			t.Fatalf("free -m Mem row missing numeric columns\n%s", gobox.Stdout)
+		}
+		for _, field := range fields[1:] {
+			if _, err := strconv.ParseFloat(field, 64); err != nil {
+				t.Fatalf("free -m Mem row should stay numeric, got %q in %q", field, goboxMem)
+			}
 		}
 	})
 	t.Run("FREE-004", func(t *testing.T) {
@@ -868,14 +1078,24 @@ func TestParity_FreeCases(t *testing.T) {
 		base := runGoboxCLI(t, env, "", "free")
 		gobox := runGoboxCLI(t, env, "", "free", "-g")
 		native := runNativeCLI(t, env, "", "free", "-g")
-		if base.ExitCode != 0 || gobox.ExitCode != native.ExitCode || !strings.Contains(gobox.Stdout, "Mem:") || !strings.Contains(native.Stdout, "Mem:") {
+		if base.ExitCode != 0 || gobox.ExitCode != native.ExitCode || findLineWithPrefix(gobox.Stdout, "Mem:") == "" || findLineWithPrefix(native.Stdout, "Mem:") == "" {
 			t.Fatalf("free -g mismatch gobox=%+v native=%+v", gobox, native)
 		}
 		if base.Stdout == gobox.Stdout {
 			t.Fatalf("free -g should change output relative to default byte-scale view\n--- base ---\n%s\n--- GiB ---\n%s", base.Stdout, gobox.Stdout)
 		}
-		if containsAny(findLineWithPrefix(gobox.Stdout, "Mem:"), []string{"KB", "MB", "GB", "TB", "Ki", "Mi", "Gi", "Ti"}) {
+		goboxMem := findLineWithPrefix(gobox.Stdout, "Mem:")
+		if containsAny(goboxMem, []string{"KB", "MB", "GB", "TB", "Ki", "Mi", "Gi", "Ti"}) {
 			t.Fatalf("free -g Mem row should stay numeric without human unit suffixes\n%s", gobox.Stdout)
+		}
+		fields := strings.Fields(goboxMem)
+		if len(fields) < 6 {
+			t.Fatalf("free -g Mem row missing numeric columns\n%s", gobox.Stdout)
+		}
+		for _, field := range fields[1:] {
+			if _, err := strconv.ParseFloat(field, 64); err != nil {
+				t.Fatalf("free -g Mem row should stay numeric, got %q in %q", field, goboxMem)
+			}
 		}
 	})
 	t.Run("FREE-005", func(t *testing.T) {

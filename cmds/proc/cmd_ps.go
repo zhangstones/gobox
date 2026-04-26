@@ -123,6 +123,8 @@ func PsCmd(args []string) error {
 		if len(customFields) == 0 {
 			customFields = []string{"user", "pid", "pcpu", "pmem", "vsz", "rss", "tty", "stat", "start", "time", "args"}
 		}
+	} else if (bsdMode.allUsers || bsdMode.includeNoTTY) && len(customFields) == 0 && !*full && !*extendedFull && !*longFormat {
+		customFields = []string{"pid", "tty", "stat", "time", "bsdargs"}
 	}
 	showFullCommand := *fullFilter != "" || *full || *extendedFull || *longFormat || bsdMode.userFormat
 	ttyWidth := 0
@@ -755,6 +757,10 @@ func psFieldHeader(field string) string {
 		return "PPID"
 	case "args":
 		return "CMD"
+	case "bsdargs":
+		return "COMMAND"
+	case "command":
+		return "COMMAND"
 	case "comm":
 		return "COMMAND"
 	case "pcpu":
@@ -932,7 +938,7 @@ func renderPSField(pi procInfo, field string, maxCmd int, memTotal int64) string
 		return strconv.Itoa(pi.pid)
 	case "ppid":
 		return strconv.Itoa(pi.ppid)
-	case "args":
+	case "args", "bsdargs", "command", "cmd":
 		return renderPSCommand(pi.cmdline, pi.exe, maxCmd)
 	case "comm":
 		return renderPSCommand(pi.exe, pi.cmdline, maxCmd)

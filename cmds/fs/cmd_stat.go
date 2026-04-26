@@ -10,6 +10,20 @@ import (
 	"time"
 )
 
+var statFSTypeNames = map[int64]string{
+	0x01021994: "tmpfs",
+	0x00009fa0: "proc",
+	0x00001cd1: "devtmpfs",
+	0x0000ef53: "ext2/ext3",
+	0x0027e0eb: "cgroup",
+	0x63677270: "cgroup2fs",
+	0x62656572: "sysfs",
+	0x73717368: "squashfs",
+	0x794c7630: "overlay",
+	0x9123683e: "btrfs",
+	0x58465342: "xfs",
+}
+
 func StatCmd(args []string) error {
 	fsFlags := flag.NewFlagSet("stat", flag.ContinueOnError)
 	deref := fsFlags.Bool("L", false, "follow links")
@@ -114,8 +128,15 @@ func printStatFS(path, format string, terse bool) error {
 		fmt.Printf("%s %d %d %d\n", path, st.Bsize, st.Blocks, st.Bfree)
 	} else {
 		fmt.Printf("  File: %s\n", path)
-		fmt.Printf("    ID: %x Namelen: %d Type: %x\n", st.Fsid, st.Namelen, st.Type)
+		fmt.Printf("    ID: %x Namelen: %d Type: %s\n", st.Fsid, st.Namelen, statFSTypeName(st.Type))
 		fmt.Printf("Block size: %d Blocks: %d Free: %d Available: %d\n", st.Bsize, st.Blocks, st.Bfree, st.Bavail)
 	}
 	return nil
+}
+
+func statFSTypeName(fsType int64) string {
+	if name, ok := statFSTypeNames[fsType]; ok {
+		return name
+	}
+	return fmt.Sprintf("%x", fsType)
 }

@@ -108,6 +108,16 @@
 - 关键字段值
 - 退出码
 
+额外要求：
+
+- 不能退化成“只检查某个字段名或表头关键字存在”
+- 至少要验证以下之一：
+  - 过滤后的结果集语义
+  - 列位置或列集合变化
+  - 排序键单调性
+  - 受控目标记录是否保留/排除
+- 对 `ps`、`df`、`netstat`、`ifstat`、`iostat` 这类命令，优先比较“目标语义”而不是全量文本外观
+
 ### 3.3 Behavioral parity
 
 适用条件：
@@ -129,6 +139,7 @@
 - 不能仅以 “输出包含某个表头/关键字” 作为 behavioral parity 的唯一断言
 - 不能把“参数可解析且命令成功”当作参数已生效
 - Normalize 不能抹平参数应当造成的语义差异
+- `base != variant` 只能作为辅助证据，不能单独作为参数生效证明
 
 ### 3.4 Contract-only tests
 
@@ -211,6 +222,12 @@ type ParityCase struct {
 - `NormalizeHostPort`
 
 不同命令选择不同 normalizer，避免“一刀切”把信号抹掉。
+
+额外要求：
+
+- Normalize 只能消除非关键噪音，不能消除参数语义差异
+- 如果 Normalize 之后一个原本有差异的 case 变成“看起来一致”，必须重新检查是否把真实行为差异抹掉了
+- 对过滤、排序、格式切换类参数，优先先做结构化断言，再决定是否需要 Normalize 文本
 
 ## 6. 环境控制原则
 
@@ -336,46 +353,191 @@ type GoboxNativeResult struct {
 - 输出中包含关键指标
 - 未实现的环境能力要明确 skip，而不是静默通过
 
-## 10. 命令级推荐比较方式
+## 10. 弱断言与无效 parity 的禁止规则
 
-### 10.1 文本命令
+以下写法默认视为弱 case，不能作为主断言单独存在：
 
-- `grep`：Exact parity 为主，含 context / file-list / recursive / quiet 模式
-- `sed`：Exact parity
-- `head`：Exact parity
-- `tail`：Exact parity + Behavioral parity（`-f` / `--retry` / `--pid`）
-- `sort`：Exact parity
-- `uniq`：Exact parity
-- `wc`：Exact parity
-- `xargs`：Exact parity 为主，`-P` 增加行为约束
+- 仅断言 `stdout`/`stderr` 包含某个关键字
+- 仅断言输出包含某个表头、字段名或 help 文案
+- 仅断言命令 `ExitCode == 0`
+- 仅断言参数可解析
+- 仅断言输出非空
+- 仅断言输出与 baseline 不同，但没有解释“为什么不同”
 
-### 10.2 文件系统命令
+以下写法默认视为无效 parity：
 
-- `find`：Exact parity（稳定子集），时间过滤使用 controlled timestamps
-- `du`：Structured parity（不同系统 block size 噪音较大）
+- 使用 Normalize 抹掉本应由参数引入的语义差异
+- 用“命令成功执行”代替“参数真的生效”
+- 用“组合参数整体能跑通”代替“每个子参数都生效”
 
-### 10.3 网络命令
+强制要求：
 
-- `curl`：Behavioral parity + Contract tests
-- `nc`：Behavioral parity + Contract tests
-- `nslookup/dig`：Behavioral parity（本地 DNS / controlled endpoint 优先）
-- `tw`：Contract tests
-- `ifstat`：Structured parity / Contract tests
-- `netstat`：Structured parity
-- `np`：Behavioral parity / Contract tests
+- 每个 parity case 至少要回答两个问题：
+  1. 参数是否被正确解析
+  2. 参数是否改变了目标语义
+- 如果一个 case 只回答了第 1 个问题，该 case 不能视为覆盖完成
 
-### 10.4 进程命令
+## 11. 参数生效证明规则
 
-- `ps`：Structured parity
-- `top`：Contract tests（单迭代模式为主）
+每个参数 case 都必须明确其“被测语义位”，不要把多个独立语义混成一个模糊断言。
 
-### 10.5 磁盘命令
+按参数类型，最低证据标准如下：
 
-- `md5sum`：Exact parity
-- `iostat`：Structured parity / Contract tests
-- `ioperf`：Contract tests
+1. 过滤参数
+   - 必须证明结果集被收窄、扩展或重定向
+   - 必须证明保留下来的每一行都满足过滤条件
+   - 适用示例：`ps -p`、`netstat -t`、`lsof -iTCP`
 
-## 11. `CMD-DESIGN` 驱动策略
+2. 排序参数
+   - 必须提取排序列并验证单调性
+   - 不能只验证 header 中出现排序字段名
+   - 对 `%CPU`、`%MEM` 等显示列，应按真实比较值验证，而不是按格式化文本做脆弱比较
+
+3. 格式参数
+   - 必须验证列集合、列顺序、列含义或输出模式变化
+   - 不能只验证“多了一列名字”
+   - 适用示例：`ps -f`、`ps -F`、`df -T`
+
+4. 范围/数量参数
+   - 必须验证输出条数、轮次、采样次数、迭代上限或窗口范围
+   - 适用示例：`head -n`、`tail -n`、`top -n`
+
+5. 行为参数
+   - 必须验证请求、连接、重试、超时、跟随、重定向、并发或副作用语义
+   - 不能只验证 summary 文案存在
+   - 适用示例：`curl --bench`、`nc`、`tail -f`
+
+6. 兼容 no-op 参数
+   - 只有在设计明确允许时，才可以把参数视为兼容 no-op
+   - 测试必须明确说明为什么允许 no-op
+   - 同时必须验证该参数没有破坏原有输出契约
+
+## 12. 断言方式选择顺序
+
+新增或修改 parity case 时，应按以下优先级选择断言：
+
+1. 能比较行为，就不要只比较文本
+2. 能比较结构，就不要只比较关键字
+3. 能比较字段，就不要只比较整行
+4. 能比较结果集，就不要只比较 header
+5. 只有在输出天然非结构化、且关键词本身就是契约的一部分时，才允许关键词断言作为主断言
+
+可将证据强度分成三档：
+
+- 强证据
+  - 行集合
+  - 过滤后的全量行约束
+  - 排序单调性
+  - 列索引后的字段值
+  - 可观察行为副作用
+
+- 中证据
+  - 指定 section 的结构
+  - 固定前缀行
+  - 行数变化
+  - 分组或摘要块出现/消失
+
+- 弱证据
+  - 任意位置子串存在
+  - help 文本提到参数
+  - stdout 非空
+  - baseline 不同但未解释原因
+
+规则：
+
+- 新增 parity case 时，主断言不得只使用弱证据
+- 若只能使用弱证据，必须在 case 注释中写明原因，并补一个中证据或强证据断言
+
+## 13. 环境敏感命令的稳定性约束
+
+以下命令受宿主机、容器、发行版、内核或运行时背景噪音影响较大：
+
+- `ps`
+- `top`
+- `df`
+- `netstat`
+- `ifstat`
+- `iostat`
+- 以及其它读取系统全局状态的命令
+
+对这类命令，禁止默认使用“全量逐行完全一致”作为成功标准。
+
+应优先遵循以下规则：
+
+- 不比较全局全集，优先比较受控夹具和目标记录
+- 不要求 mount set、process set、route set、interface set 在所有环境完全相等
+- 不把 native 某次运行的偶然文本形状直接上升为规范
+- 将 native 视为语义参考，而不是所有场景下的文本真值源
+
+当 native 输出本身受环境影响较大时，case 应退化为以下更稳定的比较：
+
+- gobox 自身契约是否满足
+- native 关键语义是否存在
+- gobox 与 native 是否满足合理的交集、子集或方向性关系
+
+## 14. 组合参数、别名参数与聚合参数规则
+
+长短参数、组合参数和聚合参数不能只测“整体能跑通”。
+
+强制要求：
+
+1. 长短参数别名
+   - 必须至少有一条输出等价 case
+   - 示例：`--route` 与 `-r`
+
+2. 组合短参数
+   - 必须至少有一条“组合形式 == 拆分形式”的等价 case
+   - 示例：`-tnlp` == `-t -n -l -p`
+
+3. 组合语义
+   - 不能因为组合形式通过，就认定每个子参数都已支持
+   - 至少还要有单参数或局部组合 case，证明关键子参数真的生效
+
+4. 聚合风格参数
+   - 对 BSD 风格聚合参数，如 `ps aux`，必须拆开验证每个字母的独立语义
+   - 不允许把整个 token 当作一个“魔法开关”处理并仅做黑盒通过验证
+
+## 15. 文档—测试—实现一致性规则
+
+三者必须闭环：
+
+- `docs/CMD-DESIGN.md` 描述支持什么
+- `docs/TEST-CASES.md` 说明如何覆盖
+- 测试代码证明实现真的满足该语义
+
+强制要求：
+
+- `CMD-DESIGN` 标记为“支持”的参数，`TEST-CASES` 必须有映射
+- `TEST-CASES` 中的 case，必须能在本设计文档中找到合格的比较方式
+- 如果某个 case 只能证明“参数可解析”，则 `CMD-DESIGN` 不能把它表述成“已完整支持”
+- 新增参数支持时，应同步更新：
+  - `docs/CMD-DESIGN.md`
+  - `docs/TEST-CASES.md`
+  - 对应 unit/parity/smoke 测试
+- 修复 parity 弱 case 时，如果暴露出文档承诺过度，应先增强测试，再决定修实现还是收缩文档承诺
+
+## 16. Parity Case Review Checklist
+
+每个新增或修改的 parity case，在评审时至少检查以下问题：
+
+- 这个 case 测的是哪个参数语义位
+- 主断言属于强证据、中证据还是弱证据
+- 是否只靠 `Contains` 或 help 文案支撑
+- 是否证明了“参数真的生效”
+- 是否依赖宿主机不稳定的全局状态
+- 是否验证了受控夹具，而不是随机背景噪音
+- baseline 的意义是否清晰
+- 长短参数、组合参数、聚合参数是否被拆清楚
+- Normalize 是否可能掩盖真实差异
+- 失败输出是否足够定位问题
+
+评审默认规则：
+
+- 若一个新 case 的主断言只有一条 `Contains`，默认不通过 review
+- 若一个 case 同时存在“过弱主断言”和“无说明的重 Normalize”，默认不通过 review
+- 若一个 case 证明不了参数语义，只证明命令成功运行，默认不计入覆盖完成度
+
+## 17. `CMD-DESIGN` 驱动策略
 
 `docs/TEST-CASES.md` 作为 `docs/CMD-DESIGN.md` 的测试映射表，要求：
 
@@ -390,7 +552,7 @@ type GoboxNativeResult struct {
 5. `🆕 gobox扩展` 条目必须有 contract case
 6. 测试代码中的 `Case ID` 必须能直接追溯到 `docs/TEST-CASES.md`
 
-## 12. 落地阶段与提交节奏
+## 18. 落地阶段与提交节奏
 
 ### 阶段 1：设计与案例矩阵
 
@@ -443,7 +605,7 @@ type GoboxNativeResult struct {
 - 修复暴露的问题
 - 再提交一次代码
 
-## 13. 失败输出要求
+## 19. 失败输出要求
 
 Parity 测试失败时，必须尽量输出：
 
@@ -458,7 +620,7 @@ Parity 测试失败时，必须尽量输出：
 
 避免只输出 “not equal” 这类不可诊断信息。
 
-## 14. CI 与回归约束
+## 20. CI 与回归约束
 
 建议将 parity 测试纳入以下执行层次：
 
@@ -468,7 +630,7 @@ Parity 测试失败时，必须尽量输出：
 
 若某类 parity 测试存在环境依赖，应通过 `t.Skip()` 控制，而不是从默认回归中摘除。
 
-## 15. 当前仓库落地约定
+## 21. 当前仓库落地约定
 
 结合当前仓库状态，初版落地采用以下约定：
 
@@ -478,7 +640,7 @@ Parity 测试失败时，必须尽量输出：
 4. 优先让 `docs/CMD-DESIGN.md` 中所有命令参数都能在 `docs/TEST-CASES.md` 找到映射
 5. 所有 parity 测试最终都纳入 `go test ./...` 可执行范围
 
-## 16. 完成标准
+## 22. 完成标准
 
 认为 parity 测试体系“完成首版落地”，至少需要满足：
 

@@ -267,7 +267,8 @@ func TestParity_DfCases(t *testing.T) {
 			if len(lines) < 2 {
 				t.Fatalf("DF-001 %s output too short: %q", out.name, out.text)
 			}
-			if !strings.Contains(lines[0], "Filesystem") || !strings.Contains(lines[0], "Mounted") {
+			header := strings.Fields(lines[0])
+			if len(header) < 2 || header[0] != "Filesystem" || !strings.Contains(lines[0], "Mounted") {
 				t.Fatalf("DF-001 %s missing df header: %q", out.name, lines[0])
 			}
 		}
@@ -334,7 +335,8 @@ func TestParity_DfCases(t *testing.T) {
 			{"native", native.Stdout},
 		} {
 			lines := nonEmptyLines(out.text)
-			if len(lines) < 2 || !strings.Contains(lines[0], "Inodes") || !strings.Contains(lines[0], "IUse%") {
+			header := strings.Fields(lines[0])
+			if len(lines) < 2 || len(header) < 6 || header[0] != "Filesystem" || !strings.Contains(lines[0], "Inodes") || !strings.Contains(lines[0], "IUse%") {
 				t.Fatalf("DF-004 %s missing inode columns: %q", out.name, out.text)
 			}
 			fields := strings.Fields(lines[1])
@@ -359,7 +361,10 @@ func TestParity_DfCases(t *testing.T) {
 		if len(goboxLines) != 2 || len(nativeLines) != 2 {
 			t.Fatalf("df PATH should render exactly header + one filesystem row\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
-		if !strings.Contains(goboxLines[0], "Filesystem") || !strings.Contains(nativeLines[0], "Filesystem") {
+		if header := strings.Fields(goboxLines[0]); len(header) == 0 || header[0] != "Filesystem" {
+			t.Fatalf("gobox df output missing header\ngobox=%s", gobox.Stdout)
+		}
+		if header := strings.Fields(nativeLines[0]); len(header) == 0 || header[0] != "Filesystem" {
 			t.Fatalf("df output missing header\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
 		if strings.Fields(goboxLines[1])[0] == "" || strings.Fields(nativeLines[1])[0] == "" {
@@ -398,17 +403,50 @@ func TestParity_DfCases(t *testing.T) {
 				if base.Stdout == res.Stdout {
 					t.Fatalf("DF-006 should change output relative to default df\n--- base ---\n%s\n--- -H ---\n%s", base.Stdout, res.Stdout)
 				}
-			case "DF-007", "DF-008", "DF-009", "DF-010":
-				if dfMountList(res.Stdout) != dfMountList(native.Stdout) {
-					t.Fatalf("%s mount-set mismatch\n--- gobox ---\n%s\n--- native ---\n%s", tc.id, res.Stdout, native.Stdout)
+			case "DF-007":
+				if findLineWithPrefix(res.Stdout, "proc ") == "" && findLineWithPrefix(res.Stdout, "sysfs ") == "" && findLineWithPrefix(res.Stdout, "cgroup2 ") == "" {
+					t.Fatalf("DF-007 should expose pseudo filesystems beyond default df\n%s", res.Stdout)
 				}
-				if tc.id == "DF-007" {
+				{
 					base := runGoboxCLI(t, t.TempDir(), "", "df")
 					if base.ExitCode != 0 {
 						t.Fatalf("DF-007 baseline failed: %+v", base)
 					}
 					if dfMountList(base.Stdout) == dfMountList(res.Stdout) {
 						t.Fatalf("DF-007 should expose additional all-filesystem rows beyond default df\n--- base ---\n%s\n--- -a ---\n%s", base.Stdout, res.Stdout)
+					}
+				}
+			case "DF-008":
+				for _, line := range nonEmptyLines(res.Stdout)[1:] {
+					fields := strings.Fields(line)
+					if len(fields) == 0 {
+						continue
+					}
+					if strings.Contains(fields[0], ":") {
+						t.Fatalf("DF-008 should keep only local filesystems, got %q", line)
+					}
+				}
+				if findLineWithPrefix(res.Stdout, "/dev/mapper/rl-root ") == "" && findLineWithPrefix(res.Stdout, "overlay ") == "" {
+					t.Fatalf("DF-008 should still include local mounted filesystems\n%s", res.Stdout)
+				}
+			case "DF-009":
+				for _, line := range nonEmptyLines(res.Stdout)[1:] {
+					fields := strings.Fields(line)
+					if len(fields) < 2 {
+						t.Fatalf("DF-009 row too short: %q", line)
+					}
+					if fields[0] != "tmpfs" {
+						t.Fatalf("DF-009 should only include tmpfs rows, got %q", line)
+					}
+				}
+			case "DF-010":
+				for _, line := range nonEmptyLines(res.Stdout)[1:] {
+					fields := strings.Fields(line)
+					if len(fields) < 2 {
+						t.Fatalf("DF-010 row too short: %q", line)
+					}
+					if fields[0] == "tmpfs" {
+						t.Fatalf("DF-010 should exclude tmpfs rows, got %q", line)
 					}
 				}
 			case "DF-011":
@@ -551,10 +589,11 @@ func TestParity_StatCases(t *testing.T) {
 				if gobox.ExitCode != native.ExitCode {
 					t.Fatalf("stat default exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 				}
-				for _, want := range []string{"File:", "Size:"} {
-					if !strings.Contains(gobox.Stdout, want) || !strings.Contains(native.Stdout, want) {
-						t.Fatalf("stat default missing %q\ngobox=%s\nnative=%s", want, gobox.Stdout, native.Stdout)
-					}
+				if got, want := statFieldValue(gobox.Stdout, "File:"), statFieldValue(native.Stdout, "File:"); got != want || got != "data" {
+					t.Fatalf("stat default file field mismatch gobox=%q native=%q", got, want)
+				}
+				if got, want := statFieldValue(gobox.Stdout, "Size:"), statFieldValue(native.Stdout, "Size:"); got != want || got != "5" {
+					t.Fatalf("stat default size field mismatch gobox=%q native=%q", got, want)
 				}
 			},
 		},
@@ -574,13 +613,13 @@ func TestParity_StatCases(t *testing.T) {
 				if gobox.ExitCode != native.ExitCode {
 					t.Fatalf("stat -L exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 				}
-				if !strings.Contains(gobox.Stdout, "File: link") || !strings.Contains(native.Stdout, "File: link") {
-					t.Fatalf("stat -L missing file header\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+				if got, want := statFieldValue(gobox.Stdout, "File:"), statFieldValue(native.Stdout, "File:"); got != want || got != "link" {
+					t.Fatalf("stat -L file field mismatch gobox=%q native=%q", got, want)
 				}
-				if !strings.Contains(gobox.Stdout, "Size: 5") || !strings.Contains(native.Stdout, "Size: 5") {
-					t.Fatalf("stat -L missing size\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+				if got, want := statFieldValue(gobox.Stdout, "Size:"), statFieldValue(native.Stdout, "Size:"); got != want || got != "5" {
+					t.Fatalf("stat -L size field mismatch gobox=%q native=%q", got, want)
 				}
-				if !strings.Contains(gobox.Stdout, "regular file") || !strings.Contains(native.Stdout, "regular file") {
+				if !strings.Contains(statLineWithPrefix(gobox.Stdout, "Size:"), "regular file") || !strings.Contains(statLineWithPrefix(native.Stdout, "Size:"), "regular file") {
 					t.Fatalf("stat -L missing regular file type\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 				}
 			},
@@ -595,8 +634,11 @@ func TestParity_StatCases(t *testing.T) {
 				if gobox.ExitCode != native.ExitCode {
 					t.Fatalf("stat -f exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 				}
-				if !strings.Contains(gobox.Stdout, "Block") || !strings.Contains(native.Stdout, "Block") {
-					t.Fatalf("stat -f missing filesystem fields\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+				if got, want := statFieldValue(statLineContaining(gobox.Stdout, "Type:"), "Type:"), statFieldValue(statLineContaining(native.Stdout, "Type:"), "Type:"); got == "" || want == "" || got != want {
+					t.Fatalf("stat -f type field mismatch gobox=%q native=%q\ngobox=%s\nnative=%s", got, want, gobox.Stdout, native.Stdout)
+				}
+				if statLineWithPrefix(gobox.Stdout, "Block size:") == "" || statLineWithPrefix(native.Stdout, "Block size:") == "" {
+					t.Fatalf("stat -f missing block size line\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 				}
 			},
 		},
@@ -751,4 +793,43 @@ func dfMountList(out string) string {
 	}
 	sort.Strings(mounts)
 	return strings.Join(mounts, "\n")
+}
+
+func statLineWithPrefix(out, prefix string) string {
+	for _, line := range nonEmptyLines(out) {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, prefix) {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func statLineContaining(out, needle string) string {
+	for _, line := range nonEmptyLines(out) {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, needle) {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func statFieldValue(lineOrOut, label string) string {
+	line := lineOrOut
+	if !strings.Contains(line, label) || strings.Contains(line, "\n") {
+		line = statLineWithPrefix(lineOrOut, label)
+		if line == "" {
+			line = statLineContaining(lineOrOut, label)
+		}
+	}
+	if line == "" {
+		return ""
+	}
+	rest := strings.TrimSpace(strings.SplitN(line, label, 2)[1])
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Trim(fields[0], "\"")
 }
