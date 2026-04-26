@@ -2,7 +2,7 @@
 
 ## 说明
 
-本文件将 `docs/CMD-DESIGN.md` 中的每个命令、每个参数映射为至少一个必要测试案例。
+本文件将 `docs/CMD-SPECS.md` 中的每个命令、每个参数映射为至少一个必要测试案例。
 
 字段说明：
 
@@ -15,10 +15,18 @@
 
 编写约定：
 
+- 参数语义、兼容性标签、参考 baseline 与差异边界统一以 `docs/CMD-SPECS.md` 为准；本文件不重复定义产品规格
 - 本文件只维护“参数到 case 的映射关系”和“case 想证明的核心语义”，不重复展开 `docs/TEST-DESIGN.md` 中的通用测试规范
 - 所有 case 的断言强度、弱 case 禁止规则、参数生效证明规则、环境敏感命令约束、组合参数规则，统一以 `docs/TEST-DESIGN.md` 为准
 - 若某条 `Core Assertion` 只能写成“关键字存在”“命令成功”或“输出不同”，则该 case 说明不完整，必须回到 `docs/TEST-DESIGN.md` 对照补强
 - `Core Assertion` 应直接描述“要证明的语义”，而不是“打算怎么写测试代码”
+
+维护顺序约束：
+
+1. 若涉及命令纳入范围、设计边界或非目标变更，先更新 `docs/CMD-DESIGN.md`
+2. 再更新 `docs/CMD-SPECS.md`
+3. 再检查并更新 `docs/TEST-CASES.md`
+4. 最后同步对应 unit/parity/smoke 测试代码
 
 ---
 
@@ -26,7 +34,7 @@
 
 ## 覆盖清单
 
-以下命令已按 `docs/CMD-DESIGN.md` 当前条目建立参数级 case；自动化测试按 exact、structured、behavior、contract 四类分别落地，无法稳定自动化的环境依赖项需在测试中显式说明或跳过。
+以下命令已按 `docs/CMD-SPECS.md` 当前条目建立参数级 case；自动化测试按 exact、structured、behavior、contract 四类分别落地，无法稳定自动化的环境依赖项需在测试中显式说明或跳过。
 
 - 文件系统：`find`、`du`、`df`、`readpath`、`stat`、`truncate`
 - 文本处理：`head`、`tail`、`grep`、`sed`、`sort`、`uniq`、`wc`、`hex`、`base64`、`strings`、`diff`
@@ -613,4 +621,4 @@
 2. 若因环境限制无法可靠执行 native baseline，测试代码中必须：
    - 明确标记为 `contract`
    - 或在运行时 `Skip` 并说明原因。
-3. 后续若 `docs/CMD-DESIGN.md` 增减条目，必须同步更新此文件。
+3. 后续若 `docs/CMD-SPECS.md` 增减条目，必须同步更新此文件。

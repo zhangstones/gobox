@@ -15,8 +15,9 @@
 
 - Any parity case that only checks keyword existence is a weak case and must be upgraded or removed.
 - Every parameter under cleanup must be described consistently in:
-  - implementation behavior
   - `docs/CMD-DESIGN.md`
+  - implementation behavior
+  - `docs/CMD-SPECS.md`
   - `docs/TEST-CASES.md`
   - unit tests and parity tests
 - Cleanup order for each command:
@@ -175,4 +176,3 @@
       - `go test ./cmds/fs ./cmds/proc ./cmds/disk -count=1`
       - `go test ./cmds/net -count=1`
       - `go test ./tests/smoke -count=1`
-

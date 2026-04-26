@@ -116,7 +116,8 @@ When adding new features, changing behavior, or fixing bugs that affect user-vis
 4. Ensure help text, README, and docs are consistent with each other
 
 Recommended docs under `docs/`:
-- `docs/CMD-DESIGN.md`: command support matrix, compatibility level (`✅/⚠️/🆕`), and intended user-visible behavior. Read this first when changing command flags or semantics.
+- `docs/CMD-DESIGN.md`: command design principles, scope boundaries, and non-goals. Read this when deciding whether a command or flag should exist at all.
+- `docs/CMD-SPECS.md`: command support matrix, compatibility level (`✅/⚠️/🆕`), and intended user-visible behavior. Read this first when changing command flags or semantics.
 - `docs/TEST-DESIGN.md`: testing strategy and layering guidance for unit, parity, and smoke tests. Read this when deciding how a new behavior should be validated.
 - `docs/TEST-CASES.md`: case-first coverage matrix that maps command features to concrete test IDs. Update this alongside new behavior and make test names traceable back to case IDs.
 
@@ -166,7 +167,8 @@ Linux commands read from `/proc` filesystem.
 The command surface is broader than the examples in this file. Treat this document as implementation guidance, not as the canonical command list.
 
 For current command support and planned work:
-- See `docs/CMD-DESIGN.md` for supported commands and compatibility scope
+- See `docs/CMD-DESIGN.md` for command inclusion principles and scope boundaries
+- See `docs/CMD-SPECS.md` for supported commands and compatibility scope
 - See `PLAN.md` for deferred or planned command work
 
 ## Git Commit Guidelines

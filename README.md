@@ -129,7 +129,8 @@ gobox <command> [args...]
 
 ## 文档
 
-- 命令设计与兼容性矩阵：`docs/CMD-DESIGN.md`
+- 命令设计规范：`docs/CMD-DESIGN.md`
+- 命令设计与兼容性矩阵：`docs/CMD-SPECS.md`
 - parity 测试设计：`docs/TEST-DESIGN.md`
 - parity 测试用例矩阵：`docs/TEST-CASES.md`
 

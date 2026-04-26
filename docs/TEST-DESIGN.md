@@ -2,14 +2,13 @@
 
 ## 1. 目标
 
-为 `docs/CMD-DESIGN.md` 中列出的命令和参数建立一套可持续维护的“原生命令对比测试”体系，用于验证：
+为 `docs/CMD-SPECS.md` 中列出的命令和参数建立一套可持续维护的“原生命令对比测试”体系，用于验证：
 
-1. `gobox` 与原生命令在已声明为 `✅ 一致` 的条目上，核心语义、退出码和常见输出契约能够被测试证明。
-2. `gobox` 与原生命令在已声明为 `✅ 常用一致` 的条目上，高频使用路径能够被测试证明，但不把边角格式细节误写成“完全 native 同形”。
-3. `gobox` 在已声明为 `⚠️ 部分一致` 的条目上，差异被限制在文档描述范围内。
-4. `gobox` 的扩展能力（`🆕 gobox扩展`）在没有直接原生命令映射时，仍然具备稳定、可回归的行为约束。
-5. `docs/CMD-DESIGN.md` 能作为测试矩阵来源，而不是纯说明文档。
-6. Parity 测试可以直接纳入 `go test ./...`，作为后续命令兼容性回归基线。
+1. `docs/CMD-SPECS.md` 中声明的用户可见语义，能够被自动化测试稳定证明。
+2. 不同一致性标签对应的测试强度、断言方式和允许差异范围保持一致。
+3. gobox 扩展能力在没有直接原生命令映射时，仍然具备稳定、可回归的行为约束。
+4. `docs/CMD-SPECS.md` 能作为测试矩阵来源，而不是纯说明文档。
+5. Parity 测试可以直接纳入 `go test ./...`，作为后续命令兼容性回归基线。
 
 本设计把这类测试统一称为：
 
@@ -18,19 +17,21 @@
 
 ## 2. 设计原则
 
+命令是否应该纳入、哪些能力明确不做，以 `docs/CMD-DESIGN.md` 为准；标签语义以 `docs/CMD-SPECS.md` 的“`一致性标签定义`”章节为准；本文不重复定义产品语义，只补充不同标签对应的最低测试证明强度。
+
 ### 2.1 双层验证
 
 测试体系分成两层：
 
 1. **规范对齐测试（spec alignment tests）**
-   - 只验证 `gobox` 自身是否符合 `docs/CMD-DESIGN.md`
+   - 只验证 `gobox` 自身是否符合 `docs/CMD-SPECS.md`
    - 适合 gobox 扩展参数或原生命令无直接等价物的能力
    - 输出要求稳定，不依赖宿主机原生命令差异
 
 2. **原生命令对比测试（native parity tests）**
    - 直接对比 `gobox <cmd>` 与系统原生命令 `<cmd>`
    - 比较 `stdout` / `stderr` / `exit code` / 关键语义
-   - 适合 `docs/CMD-DESIGN.md` 中标记为 `✅ 一致` 或 `✅ 常用一致` 的条目；前者要求更强，后者允许在文档声明范围内保留格式或环境细节差异
+   - 适合 `docs/CMD-SPECS.md` 中标记为 `✅ 一致` 或 `✅ 常用一致` 的条目；前者要求更强，后者允许在文档声明范围内保留格式或环境细节差异
 
 ### 2.2 按命令类型分层比较
 
@@ -56,9 +57,9 @@
    - 适合：`ioperf`, `tw --bench`, `curl --bench`, `nc --bench` 等 gobox 扩展
    - 只验证 gobox 的参数解析和核心行为约束
 
-### 2.3 将 `CMD-DESIGN` 当作测试矩阵来源
+### 2.3 将 `CMD-SPECS` 作为唯一规格源
 
-`docs/CMD-DESIGN.md` 中每个命令、每个参数都应映射到至少一个测试案例。
+`docs/CMD-SPECS.md` 中每个命令、每个参数都应映射到至少一个测试案例。
 
 规则：
 
@@ -69,12 +70,17 @@
 
 推荐映射关系：
 
-| `CMD-DESIGN` 标签 | 推荐主测试类型 | 最低证明目标 |
+| `CMD-SPECS` 标签 | 推荐主测试类型 | 最低证明目标 |
 |---|---|---|
 | `✅ 一致` | exact / structured / behavioral | 证明核心语义、退出码和常见输出契约成立 |
 | `✅ 常用一致` | structured / behavioral | 证明高频路径成立，并写清不承诺完全同形的范围 |
 | `⚠️ 部分一致` | structured / behavioral / contract | 证明差异存在但仍被限制在文档声明边界内 |
 | `🆕 gobox扩展` | contract | 证明 gobox 自身契约稳定，不伪装成 native 一一兼容 |
+
+说明：
+
+- 标签“是什么意思”只看 `docs/CMD-SPECS.md`
+- 本表只回答“这些标签至少要怎么测”
 
 ### 2.4 Case-first 实施
 
@@ -108,7 +114,7 @@
 
 - `✅ 一致` 不等于一律使用 exact parity
 - 只有在输入、环境和输出形态都足够稳定时，才使用 exact parity
-- 对环境敏感命令，即使 `CMD-DESIGN` 标记为 `✅ 一致`，也可以改用 structured parity 或 behavioral parity 证明其核心语义
+- 对环境敏感命令，即使 `CMD-SPECS` 标记为 `✅ 一致`，也可以改用 structured parity 或 behavioral parity 证明其核心语义
 
 ### 3.2 Structured parity
 
@@ -349,13 +355,13 @@ type GoboxNativeResult struct {
 - 是否包含目标记录
 - 过滤结果是否一致
 - 排序是否正确
-- 差异是否仍在 `CMD-DESIGN` 文档允许范围内
+- 差异是否仍在 `CMD-SPECS` 文档允许范围内
 
-适用标签：
+适用场景：
 
-- `✅ 一致`：用于无法稳定逐字节比较、但核心语义仍可被强断言证明的条目
-- `✅ 常用一致`：用于高频结果集、列语义、过滤/排序行为对齐的条目
-- `⚠️ 部分一致`：用于显式验证“差异边界没有越界”的条目
+- 环境敏感命令的 `✅ 一致`
+- 大多数 `✅ 常用一致`
+- 需要验证差异边界是否越界的 `⚠️ 部分一致`
 
 ### 9.3 Behavioral
 
@@ -367,10 +373,10 @@ type GoboxNativeResult struct {
 - 是否发生重试/重定向/超时
 - 是否命中正确的 server / DNS / 端口
 
-适用标签：
+适用场景：
 
-- `✅ 常用一致`：常见于网络类、交互类、环境依赖类命令
-- `⚠️ 部分一致`：常见于只能证明关键行为、不承诺完整外观一致的条目
+- 网络类、交互类、环境依赖较强的 `✅ 常用一致`
+- 只能证明关键行为而不承诺完整外观一致的 `⚠️ 部分一致`
 
 ### 9.4 Contract
 
@@ -407,8 +413,8 @@ type GoboxNativeResult struct {
 
 补充规则：
 
-- 若 `CMD-DESIGN` 将某条目标记为 `✅ 一致`，主断言通常应达到强证据；若只能提供中证据，需说明为什么 exact 不稳定
-- 若 `CMD-DESIGN` 将某条目标记为 `✅ 常用一致`，至少要证明高频路径成立，不能只证明“命令能跑”
+- 若 `CMD-SPECS` 将某条目标记为 `✅ 一致`，主断言通常应达到强证据；若只能提供中证据，需说明为什么 exact 不稳定
+- 若 `CMD-SPECS` 将某条目标记为 `✅ 常用一致`，至少要证明高频路径成立，不能只证明“命令能跑”
 
 ## 11. 参数生效证明规则
 
@@ -534,18 +540,18 @@ type GoboxNativeResult struct {
 
 三者必须闭环：
 
-- `docs/CMD-DESIGN.md` 描述支持什么
+- `docs/CMD-SPECS.md` 描述支持什么
 - `docs/TEST-CASES.md` 说明如何覆盖
 - 测试代码证明实现真的满足该语义
 
 强制要求：
 
-- `CMD-DESIGN` 标记为“支持”的参数，`TEST-CASES` 必须有映射
-- `CMD-DESIGN` 中 `✅ 一致`、`✅ 常用一致`、`⚠️ 部分一致`、`🆕 gobox扩展` 四类标签，在 `TEST-CASES` 里的验证强度必须匹配，不能把 `✅ 一致` 降成 gobox-only contract，也不能把 `🆕 gobox扩展` 伪装成 native parity
+- `CMD-SPECS` 标记为“支持”的参数，`TEST-CASES` 必须有映射
+- `CMD-SPECS` 中 `✅ 一致`、`✅ 常用一致`、`⚠️ 部分一致`、`🆕 gobox扩展` 四类标签，在 `TEST-CASES` 里的验证强度必须匹配，不能把 `✅ 一致` 降成 gobox-only contract，也不能把 `🆕 gobox扩展` 伪装成 native parity
 - `TEST-CASES` 中的 case，必须能在本设计文档中找到合格的比较方式
-- 如果某个 case 只能证明“参数可解析”，则 `CMD-DESIGN` 不能把它表述成“已完整支持”
+- 如果某个 case 只能证明“参数可解析”，则 `CMD-SPECS` 不能把它表述成“已完整支持”
 - 新增参数支持时，应同步更新：
-  - `docs/CMD-DESIGN.md`
+  - `docs/CMD-SPECS.md`
   - `docs/TEST-CASES.md`
   - 对应 unit/parity/smoke 测试
 - 修复 parity 弱 case 时，如果暴露出文档承诺过度，应先增强测试，再决定修实现还是收缩文档承诺
@@ -571,9 +577,9 @@ type GoboxNativeResult struct {
 - 若一个 case 同时存在“过弱主断言”和“无说明的重 Normalize”，默认不通过 review
 - 若一个 case 证明不了参数语义，只证明命令成功运行，默认不计入覆盖完成度
 
-## 17. `CMD-DESIGN` 驱动策略
+## 17. `CMD-SPECS` 驱动策略
 
-`docs/TEST-CASES.md` 作为 `docs/CMD-DESIGN.md` 的测试映射表，要求：
+`docs/TEST-CASES.md` 作为 `docs/CMD-SPECS.md` 的测试映射表，要求：
 
 1. 每个命令每个参数至少 1 个案例
 2. 每个案例必须标注：
@@ -672,7 +678,7 @@ Parity 测试失败时，必须尽量输出：
 1. 使用函数接口直接调用命令实现，不构建临时 `gobox` 二进制
 2. 将 parity helpers 与 case 文件集中到 `tests/parity/`
 3. 允许保留少量 root 级 parity 测试作为迁移过渡，但最终以 `tests/parity/` 为主
-4. 优先让 `docs/CMD-DESIGN.md` 中所有命令参数都能在 `docs/TEST-CASES.md` 找到映射
+4. 优先让 `docs/CMD-SPECS.md` 中所有命令参数都能在 `docs/TEST-CASES.md` 找到映射
 5. 所有 parity 测试最终都纳入 `go test ./...` 可执行范围
 
 ## 22. 完成标准
@@ -680,7 +686,7 @@ Parity 测试失败时，必须尽量输出：
 认为 parity 测试体系“完成首版落地”，至少需要满足：
 
 1. `docs/TEST-DESIGN.md` 明确说明四类测试模型、执行器、skip 策略与目录结构
-2. `docs/TEST-CASES.md` 覆盖 `docs/CMD-DESIGN.md` 当前所有命令参数
+2. `docs/TEST-CASES.md` 覆盖 `docs/CMD-SPECS.md` 当前所有命令参数
 3. 自动化测试代码中已落地全部 `Case ID`，或对确实无法稳定自动化的环境依赖项显式 `Skip`
 4. `go test ./...` 通过
 5. 若发现实现与文档不符，优先修实现；若实现短期不改，则必须同步收缩文档承诺与测试口径
