@@ -7,6 +7,23 @@ import (
 	"time"
 )
 
+func TestTopCmdHelpPrefersCanonicalSortFlag(t *testing.T) {
+	out, err := captureProcOutput(t, func() error {
+		return TopCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("TopCmd help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox top [OPTIONS]", "--sort FIELD", "-o FIELD"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+	if strings.Contains(out, " -sort") || strings.Contains(out, "\n-sort") {
+		t.Fatalf("expected help to hide non-canonical -sort form, got %q", out)
+	}
+}
+
 func TestNormalizeTopOrderBy(t *testing.T) {
 	for _, tc := range []struct {
 		in   string

@@ -412,7 +412,7 @@ func TestWcCmdLines(t *testing.T) {
 
 func TestPsCmdMinimal(t *testing.T) {
 	stdout, _, err := captureOutput(t, func() error {
-		return proc.PsCmd([]string{"-n", "5", "-i", "0", "-sort", "pid", "-r"})
+		return proc.PsCmd([]string{"-n", "5", "-i", "0", "--sort", "pid", "-r"})
 	})
 	if err != nil {
 		t.Fatalf("PsCmd returned error: %v", err)
@@ -511,7 +511,7 @@ func TestNetstatCmdRuns(t *testing.T) {
 
 	port := ln.Addr().(*stdnet.TCPAddr).Port
 	stdout, _, err := captureOutput(t, func() error {
-		return net.NetstatCmd([]string{"-t", "-l", "-n", "-port", strconv.Itoa(port)})
+		return net.NetstatCmd([]string{"-t", "-l", "-n", "--port", strconv.Itoa(port)})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd returned error: %v", err)
@@ -537,7 +537,7 @@ func TestNetstatCmdExtendedLongFlagsSmoke(t *testing.T) {
 
 	port := ln.Addr().(*stdnet.TCPAddr).Port
 	stdout, _, err := captureOutput(t, func() error {
-		return net.NetstatCmd([]string{"--tcp", "--listening", "--programs", "--extend", "--timers", "--numeric", "--wide", "-port", strconv.Itoa(port)})
+		return net.NetstatCmd([]string{"--tcp", "--listening", "--programs", "--extend", "--timers", "--numeric", "--wide", "--port", strconv.Itoa(port)})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd long flags returned error: %v", err)
@@ -678,7 +678,7 @@ func TestNpCmdBasic(t *testing.T) {
 
 	port := ln.Addr().(*stdnet.TCPAddr).Port
 	stdout, stderr, err := captureOutput(t, func() error {
-		return net.NpCmd([]string{"-tcp", "-p", strconv.Itoa(port), "-c", "1", "-W", "1", "127.0.0.1"})
+		return net.NpCmd([]string{"--tcp", "-p", strconv.Itoa(port), "-c", "1", "-W", "1", "127.0.0.1"})
 	})
 	if err != nil {
 		t.Fatalf("NpCmd returned error: %v", err)

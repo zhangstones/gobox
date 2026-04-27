@@ -239,7 +239,7 @@ func TestParity_IostatCases(t *testing.T) {
 			}
 			lastIdx = idx
 		}
-		if strings.Contains(res.Stdout, "  -H\t") || strings.Contains(res.Stdout, "  -cgroup\t") {
+		if strings.Contains(res.Stdout, "  -H\t") || strings.Contains(res.Stdout, "  --cgroup\t") {
 			t.Fatalf("iostat --help should use grouped help text, got %q", res.Stdout)
 		}
 	})

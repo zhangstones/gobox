@@ -71,7 +71,7 @@ func TestPsCmdHelpPrefersCanonicalFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PsCmd help failed: %v", err)
 	}
-	for _, want := range []string{"--sort FIELD", "-maxcmd N", "-ww", "Compatibility:"} {
+	for _, want := range []string{"--sort FIELD", "--maxcmd N", "--long", "--full REGEXP", "--comm PATTERN", "--hide-idle", "-ww", "Compatibility:"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected help to contain %q, got %q", want, output)
 		}
@@ -122,7 +122,7 @@ func TestPsCmdLengthLimitAppliesWithoutTTY(t *testing.T) {
 	filter := filepath.Base(exePath)
 
 	output, err := captureProcOutput(t, func() error {
-		return PsCmd([]string{"-full", filter, "-n", "1", "-maxcmd", "8", "-i", "1", "--sort", "pid", "-r"})
+		return PsCmd([]string{"--full", filter, "-n", "1", "--maxcmd", "8", "-i", "1", "--sort", "pid", "-r"})
 	})
 	if err != nil {
 		t.Fatalf("PsCmd failed: %v", err)
@@ -138,21 +138,10 @@ func TestPsCmdLengthLimitAppliesWithoutTTY(t *testing.T) {
 	}
 	cmd := strings.Join(fields[4:], " ")
 	if len([]rune(cmd)) > 8 {
-		t.Fatalf("expected command to respect -maxcmd 8, got %q", cmd)
+		t.Fatalf("expected command to respect --maxcmd 8, got %q", cmd)
 	}
 	if !strings.Contains(cmd, "...") {
 		t.Fatalf("expected truncated command with ellipsis, got %q", cmd)
-	}
-}
-
-func TestNormalizePSArgsKeepsLegacyMaxCmdAlias(t *testing.T) {
-	args, bsdMode := normalizePSArgs([]string{"-l", "12", "--sort", "pid"})
-	if bsdMode.userFormat || bsdMode.allUsers || bsdMode.includeNoTTY {
-		t.Fatalf("unexpected bsd mode detection: %+v", bsdMode)
-	}
-	got := strings.Join(args, " ")
-	if got != "-maxcmd 12 --sort pid" {
-		t.Fatalf("expected legacy -l N to normalize to -maxcmd N, got %q", got)
 	}
 }
 
@@ -238,7 +227,7 @@ func TestPsCmdNameFilterMatchesPgrepStyleRegex(t *testing.T) {
 	filter := regexp.QuoteMeta(base[:3]) + ".*"
 
 	output, err := captureProcOutput(t, func() error {
-		return PsCmd([]string{"-full", filter, "-n", "20", "-i", "1"})
+		return PsCmd([]string{"--full", filter, "-n", "20", "-i", "1"})
 	})
 	if err != nil {
 		t.Fatalf("PsCmd failed: %v", err)
@@ -257,6 +246,24 @@ func TestPsCmdNameFilterMatchesPgrepStyleRegex(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected at least one row to match regex %q, got %q", filter, output)
+	}
+}
+
+func TestPsCmdLongFormatShowsLongColumns(t *testing.T) {
+	output, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"--long", "-n", "3", "-i", "1"})
+	})
+	if err != nil {
+		t.Fatalf("PsCmd failed: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected header and at least one process line, got %q", output)
+	}
+	for _, want := range []string{"PID", "PPID", "STAT", "TTY", "TIME", "CMD"} {
+		if !strings.Contains(lines[0], want) {
+			t.Fatalf("expected long-format header with %s, got %q", want, lines[0])
+		}
 	}
 }
 
@@ -283,7 +290,7 @@ func TestPsCmdWideWideDisablesTruncation(t *testing.T) {
 	filter := filepath.Base(exePath)
 
 	output, err := captureProcOutput(t, func() error {
-		return PsCmd([]string{"-full", filter, "-n", "1", "-maxcmd", "4", "-ww", "-i", "1", "--sort", "pid", "-r"})
+		return PsCmd([]string{"--full", filter, "-n", "1", "--maxcmd", "4", "-ww", "-i", "1", "--sort", "pid", "-r"})
 	})
 	if err != nil {
 		t.Fatalf("PsCmd failed: %v", err)

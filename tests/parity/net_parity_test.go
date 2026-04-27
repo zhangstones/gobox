@@ -247,7 +247,7 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		defer ln.Close()
 		port := ln.Addr().(*net.TCPAddr).Port
-		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-port", fmt.Sprintf("%d", port))
+		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "--port", fmt.Sprintf("%d", port))
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-an")
 		if res.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("netstat failed gobox=%+v native=%+v", res, native)
@@ -255,7 +255,7 @@ func TestParity_NetstatCases(t *testing.T) {
 		wantPort := strconv.Itoa(port)
 		header, rows := netstatHeaderAndRows(res.Stdout)
 		if len(strings.Fields(header)) < 6 || len(rows) == 0 {
-			t.Fatalf("netstat -port missing structured output\n%s", res.Stdout)
+			t.Fatalf("netstat --port missing structured output\n%s", res.Stdout)
 		}
 		var matches []string
 		for _, line := range rows {
@@ -264,22 +264,22 @@ func TestParity_NetstatCases(t *testing.T) {
 			}
 		}
 		if len(matches) != 1 {
-			t.Fatalf("netstat -port should isolate exactly one target row, got %d\n%s", len(matches), res.Stdout)
+			t.Fatalf("netstat --port should isolate exactly one target row, got %d\n%s", len(matches), res.Stdout)
 		}
 		row := matches[0]
 		if proto := netstatProto(row); proto != "TCP" && proto != "TCP6" {
-			t.Fatalf("netstat -port should retain tcp listener, got %q in %q", proto, row)
+			t.Fatalf("netstat --port should retain tcp listener, got %q in %q", proto, row)
 		}
 		if state := netstatState(row); state != "LISTEN" {
-			t.Fatalf("netstat -port should retain listening row, got %q in %q", state, row)
+			t.Fatalf("netstat --port should retain listening row, got %q in %q", state, row)
 		}
 		for _, line := range rows {
 			if line != row && netstatPort(line) == wantPort {
-				t.Fatalf("netstat -port leaked duplicate target rows: %q", line)
+				t.Fatalf("netstat --port leaked duplicate target rows: %q", line)
 			}
 		}
 		if !strings.Contains(native.Stdout, fmt.Sprintf(":%d", port)) {
-			t.Fatalf("netstat -port missing listener\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
+			t.Fatalf("netstat --port missing listener\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
 		}
 	})
 
@@ -287,9 +287,9 @@ func TestParity_NetstatCases(t *testing.T) {
 		if runtime.GOOS != "linux" {
 			t.Skip("linux only")
 		}
-		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-sort", "pid", "-p")
+		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "--sort", "pid", "-p")
 		if res.ExitCode != 0 {
-			t.Fatalf("netstat -sort pid failed: %+v", res)
+			t.Fatalf("netstat --sort pid failed: %+v", res)
 		}
 		pids := extractNetstatPIDs(res.Stdout)
 		assertMonotonic(t, pids, false)
@@ -305,9 +305,9 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		defer ln.Close()
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-an")
-		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-state", "LISTEN")
+		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "--state", "LISTEN")
 		if res.ExitCode != 0 || native.ExitCode != 0 {
-			t.Fatalf("netstat -state failed gobox=%+v native=%+v", res, native)
+			t.Fatalf("netstat --state failed gobox=%+v native=%+v", res, native)
 		}
 		if !strings.Contains(native.Stdout, "LISTEN") {
 			t.Fatalf("native netstat baseline missing LISTEN rows: %+v", native)
@@ -323,10 +323,10 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		for _, line := range nonEmptyLines(res.Stdout)[1:] {
 			if netstatState(line) != "LISTEN" {
-				t.Fatalf("netstat -state LISTEN leaked non-LISTEN row: %q", line)
+				t.Fatalf("netstat --state LISTEN leaked non-LISTEN row: %q", line)
 			}
 			if _, ok := nativeListen[netstatSocketKey(line)]; !ok {
-				t.Fatalf("netstat -state LISTEN returned row missing from native LISTEN subset: %q\n--- native ---\n%s", line, native.Stdout)
+				t.Fatalf("netstat --state LISTEN returned row missing from native LISTEN subset: %q\n--- native ---\n%s", line, native.Stdout)
 			}
 		}
 	})
@@ -341,7 +341,7 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		defer ln.Close()
 		port := ln.Addr().(*net.TCPAddr).Port
-		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-l", "-port", fmt.Sprintf("%d", port))
+		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-l", "--port", fmt.Sprintf("%d", port))
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-ln")
 		if res.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("netstat -l failed gobox=%+v native=%+v", res, native)
@@ -374,8 +374,8 @@ func TestParity_NetstatCases(t *testing.T) {
 		defer ln.Close()
 		env := t.TempDir()
 		port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
-		base := runGoboxCLI(t, env, "", "netstat", "-port", port)
-		res := runGoboxCLI(t, env, "", "netstat", "-n", "-port", port)
+		base := runGoboxCLI(t, env, "", "netstat", "--port", port)
+		res := runGoboxCLI(t, env, "", "netstat", "-n", "--port", port)
 		if base.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("netstat -n baseline failed base=%+v numeric=%+v", base, res)
 		}
@@ -399,8 +399,8 @@ func TestParity_NetstatCases(t *testing.T) {
 		defer ln.Close()
 		env := t.TempDir()
 		port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
-		base := runGoboxCLI(t, env, "", "netstat", "-port", port)
-		res := runGoboxCLI(t, env, "", "netstat", "-a", "-port", port)
+		base := runGoboxCLI(t, env, "", "netstat", "--port", port)
+		res := runGoboxCLI(t, env, "", "netstat", "-a", "--port", port)
 		if base.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("netstat -a baseline failed base=%+v all=%+v", base, res)
 		}
@@ -423,7 +423,7 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		defer ln.Close()
 		port := ln.Addr().(*net.TCPAddr).Port
-		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-port", strconv.Itoa(port))
+		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "--port", strconv.Itoa(port))
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-tln")
 		if res.ExitCode != 0 || native.ExitCode != 0 || !strings.Contains(native.Stdout, strconv.Itoa(port)) {
 			t.Fatalf("netstat -t mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
@@ -458,7 +458,7 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		defer conn.Close()
 		port := conn.LocalAddr().(*net.UDPAddr).Port
-		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-u", "-port", strconv.Itoa(port))
+		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-u", "--port", strconv.Itoa(port))
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-uln")
 		if res.ExitCode != 0 || native.ExitCode != 0 || !strings.Contains(native.Stdout, strconv.Itoa(port)) {
 			t.Fatalf("netstat -u mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
@@ -519,8 +519,8 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		defer ln.Close()
 		port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
-		base := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-l", "-port", port)
-		withProg := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-l", "-p", "-port", port)
+		base := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-l", "--port", port)
+		withProg := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-l", "-p", "--port", port)
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-tnlp")
 		if base.ExitCode != 0 || withProg.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("netstat -p baseline failed base=%+v withProg=%+v native=%+v", base, withProg, native)
@@ -552,7 +552,7 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		defer ln.Close()
 		port := ln.Addr().(*net.TCPAddr).Port
-		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-4", "-port", strconv.Itoa(port))
+		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-4", "--port", strconv.Itoa(port))
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-4ln")
 		if res.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("netstat -4 mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
@@ -573,7 +573,7 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		_, port, closeFn := startTCPEchoServer(t, "[::1]:0")
 		defer closeFn()
-		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-6", "-port", port)
+		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-6", "--port", port)
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-6ln")
 		if res.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("netstat -6 mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
@@ -598,8 +598,8 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		defer ln.Close()
 		port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
-		base := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-l", "-port", port)
-		extended := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-l", "-e", "-port", port)
+		base := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-l", "--port", port)
+		extended := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-l", "-e", "--port", port)
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-tnle")
 		if base.ExitCode != 0 || extended.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("netstat -e baseline failed base=%+v extended=%+v native=%+v", base, extended, native)
@@ -632,8 +632,8 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		defer ln.Close()
 		port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
-		base := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-l", "-port", port)
-		withTimers := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-l", "-o", "-port", port)
+		base := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-l", "--port", port)
+		withTimers := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-l", "-o", "--port", port)
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-tnlo")
 		if base.ExitCode != 0 || withTimers.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("netstat -o baseline failed base=%+v withTimers=%+v native=%+v", base, withTimers, native)
@@ -662,8 +662,8 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		defer ln.Close()
 		port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
-		base := runGoboxCLI(t, t.TempDir(), "", "netstat", "-n", "-l", "-port", port)
-		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-W", "-n", "-l", "-port", port)
+		base := runGoboxCLI(t, t.TempDir(), "", "netstat", "-n", "-l", "--port", port)
+		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-W", "-n", "-l", "--port", port)
 		if base.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("netstat -W baseline failed base=%+v wide=%+v", base, res)
 		}
@@ -686,8 +686,8 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		defer ln.Close()
 		port := ln.Addr().(*net.TCPAddr).Port
-		base := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-l", "-port", strconv.Itoa(port))
-		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-tnlp", "-port", strconv.Itoa(port))
+		base := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-l", "--port", strconv.Itoa(port))
+		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "-tnlp", "--port", strconv.Itoa(port))
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-tnlp")
 		if base.ExitCode != 0 || res.ExitCode != native.ExitCode {
 			t.Fatalf("netstat combined flags mismatch\n--- base ---\n%+v\n--- gobox ---\n%+v\n--- native ---\n%+v", base, res, native)
@@ -796,7 +796,7 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")
 		defer closeFn()
-		gobox := runGoboxSubprocess(t, t.TempDir(), []string{"netstat", "-c", "-n", "-l", "-port", port}, 1350*time.Millisecond)
+		gobox := runGoboxSubprocess(t, t.TempDir(), []string{"netstat", "-c", "-n", "-l", "--port", port}, 1350*time.Millisecond)
 		native := runNativeFollow(t, t.TempDir(), "netstat", []string{"-c", "-n", "-l"}, nil, 1350*time.Millisecond)
 		if strings.Count(gobox.Stdout, "Proto") < 2 {
 			t.Fatalf("gobox netstat -c did not render multiple cycles: %q", gobox.Stdout)
@@ -816,8 +816,8 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		defer ln.Close()
 		port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
-		short := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-l", "-p", "-e", "-o", "-n", "-W", "-port", port)
-		long := runGoboxCLI(t, t.TempDir(), "", "netstat", "--tcp", "--listening", "--programs", "--extend", "--timers", "--numeric", "--wide", "-port", port)
+		short := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-l", "-p", "-e", "-o", "-n", "-W", "--port", port)
+		long := runGoboxCLI(t, t.TempDir(), "", "netstat", "--tcp", "--listening", "--programs", "--extend", "--timers", "--numeric", "--wide", "--port", port)
 		if short.ExitCode != 0 || long.ExitCode != 0 {
 			t.Fatalf("netstat short/long flag parity failed short=%+v long=%+v", short, long)
 		}
@@ -1595,7 +1595,7 @@ func TestParity_NpCases(t *testing.T) {
 		}
 		_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")
 		defer closeFn()
-		res := runGoboxCLI(t, t.TempDir(), "", "np", "-tcp", "-I", loopbackName, "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
+		res := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-I", loopbackName, "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
 		if res.ExitCode != 0 {
 			t.Fatalf("np -I failed: %+v", res)
 		}
@@ -1606,7 +1606,7 @@ func TestParity_NpCases(t *testing.T) {
 
 	t.Run("NP-002", func(t *testing.T) {
 		port := closedTCPPort(t)
-		res := runGoboxCLI(t, t.TempDir(), "", "np", "-tcp", "-p", port, "-W", "1", "-c", "1", "-i", "0", "-q", "127.0.0.1")
+		res := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-p", port, "-W", "1", "-c", "1", "-i", "0", "-q", "127.0.0.1")
 		if res.ExitCode != 0 {
 			t.Fatalf("np -W failed: %+v", res)
 		}
@@ -1617,19 +1617,19 @@ func TestParity_NpCases(t *testing.T) {
 
 	t.Run("NP-003", func(t *testing.T) {
 		gateway := defaultIPv4Gateway(t)
-		gobox := runGoboxCLI(t, t.TempDir(), "", "np", "-arp", "-c", "1", "-W", "1", gateway)
+		gobox := runGoboxCLI(t, t.TempDir(), "", "np", "--arp", "-c", "1", "-W", "1", gateway)
 		native := runNativeCLI(t, t.TempDir(), "", "arping", "-c", "1", "-w", "1", gateway)
 		if gobox.ExitCode != native.ExitCode {
-			t.Fatalf("np -arp exit mismatch gobox=%+v native=%+v", gobox, native)
+			t.Fatalf("np --arp exit mismatch gobox=%+v native=%+v", gobox, native)
 		}
 		if gobox.ExitCode != 0 {
 			if !strings.Contains(strings.ToLower(gobox.Stderr), "operation not permitted") || !strings.Contains(strings.ToLower(native.Stderr), "operation not permitted") {
-				t.Fatalf("np -arp permission failure mismatch gobox=%+v native=%+v", gobox, native)
+				t.Fatalf("np --arp permission failure mismatch gobox=%+v native=%+v", gobox, native)
 			}
 			return
 		}
 		if !strings.Contains(gobox.Stdout, gateway) || !strings.Contains(native.Stdout, "Received 1 response") {
-			t.Fatalf("np -arp output mismatch gobox=%+v native=%+v", gobox, native)
+			t.Fatalf("np --arp output mismatch gobox=%+v native=%+v", gobox, native)
 		}
 	})
 
@@ -1637,8 +1637,8 @@ func TestParity_NpCases(t *testing.T) {
 		_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")
 		defer closeFn()
 		env := t.TempDir()
-		base := runGoboxCLI(t, env, "", "np", "-tcp", "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
-		res := runGoboxCLI(t, t.TempDir(), "", "np", "-tcp", "-p", port, "-c", "2", "-i", "1000", "-q", "127.0.0.1")
+		base := runGoboxCLI(t, env, "", "np", "--tcp", "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
+		res := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-p", port, "-c", "2", "-i", "1000", "-q", "127.0.0.1")
 		if base.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("np -c failed base=%+v count2=%+v", base, res)
 		}
@@ -1651,13 +1651,13 @@ func TestParity_NpCases(t *testing.T) {
 	})
 
 	t.Run("NP-005", func(t *testing.T) {
-		gobox := runGoboxCLI(t, t.TempDir(), "", "np", "-icmp", "-flood", "-c", "3", "-q", "-W", "1", "127.0.0.1")
+		gobox := runGoboxCLI(t, t.TempDir(), "", "np", "--icmp", "--flood", "-c", "3", "-q", "-W", "1", "127.0.0.1")
 		native := runNativeCLI(t, t.TempDir(), "", "ping", "-f", "-c", "3", "-q", "-W", "1", "127.0.0.1")
 		if gobox.ExitCode != 0 || native.ExitCode != 0 {
-			t.Fatalf("np -flood failed gobox=%+v native=%+v", gobox, native)
+			t.Fatalf("np --flood failed gobox=%+v native=%+v", gobox, native)
 		}
 		if !strings.Contains(findNetLineContaining(gobox.Stdout, "packets transmitted"), "3 packets transmitted") || !strings.Contains(findNetLineContaining(native.Stdout, "packets transmitted"), "3 packets transmitted") {
-			t.Fatalf("np -flood packet count mismatch gobox=%+v native=%+v", gobox, native)
+			t.Fatalf("np --flood packet count mismatch gobox=%+v native=%+v", gobox, native)
 		}
 	})
 
@@ -1665,7 +1665,7 @@ func TestParity_NpCases(t *testing.T) {
 		_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")
 		defer closeFn()
 		start := time.Now()
-		res := runGoboxCLI(t, t.TempDir(), "", "np", "-tcp", "-p", port, "-c", "2", "-i", "100000", "-q", "127.0.0.1")
+		res := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-p", port, "-c", "2", "-i", "100000", "-q", "127.0.0.1")
 		elapsed := time.Since(start)
 		if res.ExitCode != 0 || elapsed < 100*time.Millisecond {
 			t.Fatalf("np -i failed elapsed=%s result=%+v", elapsed, res)
@@ -1673,13 +1673,13 @@ func TestParity_NpCases(t *testing.T) {
 	})
 
 	t.Run("NP-007", func(t *testing.T) {
-		gobox := runGoboxCLI(t, t.TempDir(), "", "np", "-icmp", "-c", "1", "-i", "0", "-q", "-W", "1", "127.0.0.1")
+		gobox := runGoboxCLI(t, t.TempDir(), "", "np", "--icmp", "-c", "1", "-i", "0", "-q", "-W", "1", "127.0.0.1")
 		native := runNativeCLI(t, t.TempDir(), "", "ping", "-c", "1", "-q", "-W", "1", "127.0.0.1")
 		if gobox.ExitCode != 0 || native.ExitCode != 0 {
-			t.Fatalf("np -icmp failed gobox=%+v native=%+v", gobox, native)
+			t.Fatalf("np --icmp failed gobox=%+v native=%+v", gobox, native)
 		}
 		if !strings.Contains(findNetLineContaining(gobox.Stdout, "received"), "1 received") || !strings.Contains(findNetLineContaining(native.Stdout, "received"), "1 received") {
-			t.Fatalf("np -icmp receive mismatch gobox=%+v native=%+v", gobox, native)
+			t.Fatalf("np --icmp receive mismatch gobox=%+v native=%+v", gobox, native)
 		}
 	})
 
@@ -1687,7 +1687,7 @@ func TestParity_NpCases(t *testing.T) {
 		_, port, closeFn := startDelayedCloseServer(t, 150*time.Millisecond)
 		defer closeFn()
 		start := time.Now()
-		res := runGoboxCLI(t, t.TempDir(), "", "np", "-tcp", "-p", port, "-l", "1", "-c", "1", "-q", "127.0.0.1")
+		res := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-p", port, "-l", "1", "-c", "1", "-q", "127.0.0.1")
 		elapsed := time.Since(start)
 		if res.ExitCode != 0 || elapsed < 100*time.Millisecond {
 			t.Fatalf("np -l failed elapsed=%s result=%+v", elapsed, res)
@@ -1697,7 +1697,7 @@ func TestParity_NpCases(t *testing.T) {
 	t.Run("NP-009", func(t *testing.T) {
 		_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")
 		defer closeFn()
-		res := runGoboxCLI(t, t.TempDir(), "", "np", "-tcp", "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
+		res := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
 		if res.ExitCode != 0 {
 			t.Fatalf("np -p failed: %+v", res)
 		}
@@ -1710,8 +1710,8 @@ func TestParity_NpCases(t *testing.T) {
 		_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")
 		defer closeFn()
 		env := t.TempDir()
-		verbose := runGoboxCLI(t, env, "", "np", "-tcp", "-p", port, "-c", "1", "-i", "0", "127.0.0.1")
-		res := runGoboxCLI(t, env, "", "np", "-tcp", "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
+		verbose := runGoboxCLI(t, env, "", "np", "--tcp", "-p", port, "-c", "1", "-i", "0", "127.0.0.1")
+		res := runGoboxCLI(t, env, "", "np", "--tcp", "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
 		if verbose.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("np -q failed verbose=%+v quiet=%+v", verbose, res)
 		}
@@ -1727,7 +1727,7 @@ func TestParity_NpCases(t *testing.T) {
 		sourcePort := atoiForTest(t, closedTCPPort(t))
 		_, port, remotePorts, closeFn := startTCPRemotePortRecorder(t)
 		defer closeFn()
-		res := runGoboxCLI(t, t.TempDir(), "", "np", "-tcp", "-p", port, "-s", strconv.Itoa(sourcePort), "-c", "1", "-i", "0", "-q", "127.0.0.1")
+		res := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-p", port, "-s", strconv.Itoa(sourcePort), "-c", "1", "-i", "0", "-q", "127.0.0.1")
 		if res.ExitCode != 0 {
 			t.Fatalf("np -s failed: %+v", res)
 		}
@@ -1748,7 +1748,7 @@ func TestParity_NpCases(t *testing.T) {
 		}
 		defer ln.Close()
 		port := ln.Addr().(*net.TCPAddr).Port
-		res := runGoboxCLI(t, t.TempDir(), "", "np", "-scan", fmt.Sprintf("%d", port), "127.0.0.1")
+		res := runGoboxCLI(t, t.TempDir(), "", "np", "--scan", fmt.Sprintf("%d", port), "127.0.0.1")
 		if res.ExitCode != 0 {
 			t.Fatalf("np scan failed: %+v", res)
 		}
@@ -1760,20 +1760,20 @@ func TestParity_NpCases(t *testing.T) {
 	t.Run("NP-013", func(t *testing.T) {
 		_, port, remotePorts, closeFn := startTCPRemotePortRecorder(t)
 		defer closeFn()
-		res := runGoboxCLI(t, t.TempDir(), "", "np", "-tcp", "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
+		res := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
 		if res.ExitCode != 0 {
-			t.Fatalf("np -tcp failed: %+v", res)
+			t.Fatalf("np --tcp failed: %+v", res)
 		}
 		if !strings.Contains(findNetLineContaining(res.Stdout, "packets received"), "1 packets received") {
-			t.Fatalf("np -tcp missing receive summary: %+v", res)
+			t.Fatalf("np --tcp missing receive summary: %+v", res)
 		}
 		select {
 		case got := <-remotePorts:
 			if got <= 0 {
-				t.Fatalf("np -tcp recorder captured invalid remote port %d", got)
+				t.Fatalf("np --tcp recorder captured invalid remote port %d", got)
 			}
 		case <-time.After(time.Second):
-			t.Fatal("np -tcp did not establish a TCP connection")
+			t.Fatal("np --tcp did not establish a TCP connection")
 		}
 	})
 
@@ -1784,23 +1784,23 @@ func TestParity_NpCases(t *testing.T) {
 		}
 		defer conn.Close()
 		_, port, _ := net.SplitHostPort(conn.LocalAddr().String())
-		res := runGoboxCLI(t, t.TempDir(), "", "np", "-udp", "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
+		res := runGoboxCLI(t, t.TempDir(), "", "np", "--udp", "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
 		if res.ExitCode != 0 {
-			t.Fatalf("np -udp failed: %+v", res)
+			t.Fatalf("np --udp failed: %+v", res)
 		}
 		if !strings.Contains(findNetLineContaining(res.Stdout, "packets received"), "1 packets received") {
-			t.Fatalf("np -udp missing receive summary: %+v", res)
+			t.Fatalf("np --udp missing receive summary: %+v", res)
 		}
 		if strings.Contains(strings.ToLower(res.Stdout+res.Stderr), "connection failed") {
-			t.Fatalf("np -udp should succeed on a reachable udp socket without failure diagnostics: %+v", res)
+			t.Fatalf("np --udp should succeed on a reachable udp socket without failure diagnostics: %+v", res)
 		}
 	})
 
 	t.Run("NP-015", func(t *testing.T) {
 		port := closedTCPPort(t)
 		env := t.TempDir()
-		base := runGoboxCLI(t, env, "", "np", "-tcp", "-p", port, "-c", "1", "-i", "0", "-W", "1", "-q", "127.0.0.1")
-		res := runGoboxCLI(t, env, "", "np", "-tcp", "-p", port, "-c", "1", "-i", "0", "-W", "1", "-v", "127.0.0.1")
+		base := runGoboxCLI(t, env, "", "np", "--tcp", "-p", port, "-c", "1", "-i", "0", "-W", "1", "-q", "127.0.0.1")
+		res := runGoboxCLI(t, env, "", "np", "--tcp", "-p", port, "-c", "1", "-i", "0", "-W", "1", "-v", "127.0.0.1")
 		if base.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("np -v failed base=%+v verbose=%+v", base, res)
 		}
@@ -1816,8 +1816,8 @@ func TestParity_NpCases(t *testing.T) {
 		_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")
 		defer closeFn()
 		env := t.TempDir()
-		base := runGoboxCLI(t, env, "", "np", "-tcp", "-p", port, "-c", "4", "-i", "0", "-q", "127.0.0.1")
-		res := runGoboxCLI(t, env, "", "np", "-tcp", "-p", port, "-w", "2", "-c", "4", "-i", "0", "-q", "127.0.0.1")
+		base := runGoboxCLI(t, env, "", "np", "--tcp", "-p", port, "-c", "4", "-i", "0", "-q", "127.0.0.1")
+		res := runGoboxCLI(t, env, "", "np", "--tcp", "-p", port, "-w", "2", "-c", "4", "-i", "0", "-q", "127.0.0.1")
 		if base.ExitCode != 0 || res.ExitCode != 0 || !strings.Contains(res.Stdout, "packets transmitted") {
 			t.Fatalf("np -w failed base=%+v workers=%+v", base, res)
 		}

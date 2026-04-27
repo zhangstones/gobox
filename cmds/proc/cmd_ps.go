@@ -108,7 +108,7 @@ func PsCmd(args []string) error {
 		maxCmdExplicit = true
 	}
 	if *fullFilter != "" && *commFilter != "" {
-		return fmt.Errorf("-full and -comm cannot be used together")
+		return fmt.Errorf("--full and --comm cannot be used together")
 	}
 
 	var customFields []string
@@ -163,7 +163,7 @@ func PsCmd(args []string) error {
 		if *fullFilter != "" {
 			fullRe, err := regexp.Compile(*fullFilter)
 			if err != nil {
-				return fmt.Errorf("invalid -full pattern: %w", err)
+				return fmt.Errorf("invalid --full pattern: %w", err)
 			}
 			filtered := infos[:0]
 			for _, pi := range infos {
@@ -177,7 +177,7 @@ func PsCmd(args []string) error {
 		if *commFilter != "" {
 			commRe, err := regexp.Compile("^(?:" + *commFilter + ")$")
 			if err != nil {
-				return fmt.Errorf("invalid -comm pattern: %w", err)
+				return fmt.Errorf("invalid --comm pattern: %w", err)
 			}
 			filtered := infos[:0]
 			for _, pi := range infos {
@@ -258,20 +258,20 @@ func printPSUsage() {
 	fmt.Fprintln(os.Stderr, "  -u USERS          show only comma-separated users or UIDs")
 	fmt.Fprintln(os.Stderr, "  -p PIDS           show only comma-separated process IDs")
 	fmt.Fprintln(os.Stderr, "  -C NAMES          show only comma-separated command names")
-	fmt.Fprintln(os.Stderr, "  -comm PATTERN     exact process-name filter (pgrep -x style)")
-	fmt.Fprintln(os.Stderr, "  -full REGEXP      full command-line regexp filter (pgrep -f style)")
+	fmt.Fprintln(os.Stderr, "  --comm PATTERN    exact process-name filter (pgrep -x style)")
+	fmt.Fprintln(os.Stderr, "  --full REGEXP     full command-line regexp filter (pgrep -f style)")
 	fmt.Fprintln(os.Stderr, "  -o FIELDS         custom output fields, e.g. pid,ppid,cmd,pcpu,pmem")
 	fmt.Fprintln(os.Stderr, "  --sort FIELD      sort by: pid|cpu|rss|vms|cmd|exe|ppid|user|start|etime|time")
 	fmt.Fprintln(os.Stderr, "  -r                reverse sort order")
 	fmt.Fprintln(os.Stderr, "  -n N              show only N entries (0 = all)")
 	fmt.Fprintln(os.Stderr, "  -i MS             CPU sample interval in milliseconds")
 	fmt.Fprintln(os.Stderr, "  -ww               do not truncate command width")
-	fmt.Fprintln(os.Stderr, "  -maxcmd N         max command length (0 = unlimited)")
-	fmt.Fprintln(os.Stderr, "  -hide-idle        hide processes with zero sampled CPU")
+	fmt.Fprintln(os.Stderr, "  --maxcmd N        max command length (0 = unlimited)")
+	fmt.Fprintln(os.Stderr, "  --hide-idle       hide processes with zero sampled CPU")
+	fmt.Fprintln(os.Stderr, "  --long            long format")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Compatibility:")
 	fmt.Fprintln(os.Stderr, "  ps aux            BSD-style process table")
-	fmt.Fprintln(os.Stderr, "  -l N              accepted as a legacy alias for -maxcmd N")
 }
 
 func normalizePSArgs(args []string) ([]string, psBSDMode) {
@@ -291,19 +291,6 @@ func normalizePSArgs(args []string) ([]string, psBSDMode) {
 			}
 			continue
 		}
-		if arg == "-l" {
-			if i+1 < len(args) && isInteger(args[i+1]) {
-				out = append(out, "-maxcmd", args[i+1])
-				i++
-			} else {
-				out = append(out, "-long")
-			}
-			continue
-		}
-		if strings.HasPrefix(arg, "-l=") {
-			out = append(out, "-maxcmd="+strings.TrimPrefix(arg, "-l="))
-			continue
-		}
 		out = append(out, arg)
 	}
 	return out, mode
@@ -321,14 +308,6 @@ func isBSDPSMode(s string) bool {
 		}
 	}
 	return true
-}
-
-func isInteger(s string) bool {
-	if s == "" {
-		return false
-	}
-	_, err := strconv.Atoi(s)
-	return err == nil
 }
 
 func applyPSBSDSelection(infos []procInfo, mode psBSDMode) []procInfo {

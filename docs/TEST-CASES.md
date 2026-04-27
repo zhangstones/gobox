@@ -377,9 +377,9 @@
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
-| NETSTAT-001 | `-port int` | structured | `netstat` | local listener | 端口过滤命中预期监听项 |
-| NETSTAT-002 | `-sort string` | structured | gobox-only | local listeners | 排序字段语义正确 |
-| NETSTAT-003 | `-state string` | structured | `netstat` | local listener + state filter | 状态列表过滤正确 |
+| NETSTAT-001 | `--port int` | structured | `netstat` | local listener | 端口过滤命中预期监听项 |
+| NETSTAT-002 | `--sort string` | structured | gobox-only | local listeners | 排序字段语义正确 |
+| NETSTAT-003 | `--state string` | structured | `netstat` | local listener + state filter | 状态列表过滤正确 |
 | NETSTAT-004 | `-l, --listening` | structured | `netstat -l` | local listener | 仅输出监听 socket |
 | NETSTAT-005 | `-n, --numeric` | contract | gobox-only | local sockets | gobox 当前默认已是数字地址/端口，`-n` 应保持与默认输出一致 |
 | NETSTAT-006 | `-a, --all` | contract | gobox-only | local sockets | gobox 当前默认 socket 选择已覆盖 `-a` 兼容语义，输出应与默认一致 |
@@ -450,18 +450,18 @@
 |---|---|---|---|---|---|
 | NP-001 | `-I string` | contract | gobox-only | local target | 指定网卡参数可进入拨号器 |
 | NP-002 | `-W int` | behavior | `ping -W` | timeout target | 超时语义稳定 |
-| NP-003 | `-arp` | behavior | `arping` | default gateway | ARP 模式可执行并收到响应 |
+| NP-003 | `--arp` | behavior | `arping` | default gateway | ARP 模式可执行并收到响应 |
 | NP-004 | `-c int` | behavior | `ping -c` | local target | 次数受控 |
-| NP-005 | `-flood` | contract | `ping -f` | local target | flood 模式可执行 |
+| NP-005 | `--flood` | contract | `ping -f` | local target | flood 模式可执行 |
 | NP-006 | `-i int` | contract | gobox-only | local target | 微秒间隔参数生效 |
-| NP-007 | `-icmp` | behavior | `ping` | local target | ICMP 模式可执行 |
+| NP-007 | `--icmp` | behavior | `ping` | local target | ICMP 模式可执行 |
 | NP-008 | `-l int` | contract | gobox-only | local TCP target | 长连接模式生效 |
 | NP-009 | `-p int` | behavior | `nc -p`/TCP target | local TCP/UDP target | 目标端口生效 |
 | NP-010 | `-q` | behavior | `ping -q` | local target | `-q` 必须相对默认模式收敛为 summary-only 输出 |
 | NP-011 | `-s int` | contract | gobox-only | local target | 源端口绑定生效 |
-| NP-012 | `-scan` | behavior | gobox-only | local open/closed ports | 扫描结果必须报告目标端口状态和汇总计数 |
-| NP-013 | `-tcp` | behavior | `nc` | local TCP server | TCP 模式可执行 |
-| NP-014 | `-udp` | behavior | `nc -u` | local UDP server | UDP 模式可执行 |
+| NP-012 | `--scan` | behavior | gobox-only | local open/closed ports | 扫描结果必须报告目标端口状态和汇总计数 |
+| NP-013 | `--tcp` | behavior | `nc` | local TCP server | TCP 模式可执行 |
+| NP-014 | `--udp` | behavior | `nc -u` | local UDP server | UDP 模式可执行 |
 | NP-015 | `-v` | behavior | `ping -v` | local target | `-v` 必须相对 quiet 模式增加逐次诊断输出 |
 | NP-016 | `-w int` | behavior | gobox-only | local target | `-w` 必须相对单 worker 基线改变执行/报告路径 |
 
@@ -476,14 +476,14 @@
 | PS-001 | `-e` | contract | `ps -e` | current process | 显式 all-process 选择生效，且默认 `CMD` 列保持与原生 `ps -e` 一样的 `comm` 风格展示 |
 | PS-002 | `-f` | structured | `ps -f` | current process | 切换到 full-format 并包含 `UID`/`PPID`/`STIME`/`TTY`/`TIME`/`CMD` 等核心列，`CMD` 保持单行 |
 | PS-003 | `-i int` | contract | gobox-only | current process | 采样间隔参数可执行 |
-| PS-004 | `-maxcmd N` | contract | gobox-only | long cmdline process | 显式命令长度上限生效 |
+| PS-004 | `--maxcmd N` | contract | gobox-only | long cmdline process | 显式命令长度上限生效 |
 | PS-005 | `-n int` | contract | gobox-only | current processes | 限制输出行数 |
-| PS-006 | `-full string` | structured | `pgrep -f` | current process | 完整命令行正则匹配符合 `pgrep -f`，输出的 `CMD` 也应保留完整命令行便于核对 |
+| PS-006 | `--full string` | structured | `pgrep -f` | current process | 完整命令行正则匹配符合 `pgrep -f`，输出的 `CMD` 也应保留完整命令行便于核对 |
 | PS-007 | `-r` | structured | `ps -r` | current processes | 排序方向反转 |
 | PS-008 | `--sort FIELD` | contract | gobox-only | current processes | 排序字段生效 |
 | PS-009 | `-ww` | contract | `ps -ww` | long cmdline process | `ps` 默认宽度策略可被 `-ww` 关闭，长命令保持完整单行 |
 | PS-010 | `-o FIELD1,FIELD2` | structured | `ps -o` | current process | 自定义列输出正确 |
-| PS-011 | `-comm string` | structured | `pgrep -x` | current process | 进程名精确匹配符合 `pgrep -x` |
+| PS-011 | `--comm string` | structured | `pgrep -x` | current process | 进程名精确匹配符合 `pgrep -x` |
 | PS-012 | `-A` | structured | `ps -A` | current process | all-process alias 可看到当前进程 |
 | PS-013 | `-F` | behavior | `ps -F` | current process | `-F` 必须相对基础 `-p PID` 增加 full-format 列并保留目标 PID |
 | PS-014 | `-u USER` | structured | `ps -u` | current user | 用户过滤命中当前进程集合 |
@@ -491,6 +491,8 @@
 | PS-016 | `-C NAME` | structured | `ps -C` | current process name | 命令名过滤命中目标进程 |
 | PS-017 | `--sort -FIELD` | structured | `ps --sort` | current processes | GNU 风格降序排序参数生效 |
 | PS-018 | BSD `aux` semantics | behavior | `ps aux` | current process | BSD 风格下默认选择“自己且有 TTY”的进程；`a` 放开 only-yourself 限制，`x` 放开 must-have-tty 限制，`u` 切换到 user-oriented 列布局 |
+| PS-019 | `--long` | structured | `ps -l` | current process | long 格式输出必须包含 `PID/PPID/STAT/TTY/TIME/CMD` 等核心列 |
+| PS-020 | `--hide-idle` | contract | gobox-only | idle process | 过滤掉采样 CPU 为 0 的进程 |
 
 ### top
 
@@ -499,7 +501,7 @@
 | TOP-001 | `-d int` | behavior | `top -d` | single iteration | 刷新间隔参数可用且单轮模式下不会异常退出 |
 | TOP-002 | `-n int` | behavior | `top -n` | single iteration | 指定迭代次数后退出 |
 | TOP-003 | `-r` | structured | `top -r` | single iteration | 排序方向切换且关键排序方向符合预期 |
-| TOP-004 | `-sort string` | contract | gobox-only | single iteration | 排序字段生效 |
+| TOP-004 | `--sort string` | contract | gobox-only | single iteration | 排序字段生效 |
 | TOP-005 | `-b` | contract | `top -b` | single iteration | batch 模式不输出清屏控制符 |
 | TOP-006 | `-p PID` | structured | `top -p` | current process | PID 过滤命中当前进程 |
 | TOP-007 | `-u USER` | structured | `top -u` | current user | 用户过滤可执行并输出进程表 |

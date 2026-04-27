@@ -169,7 +169,7 @@ func TestNetstatCmdPortFilterMatchesExactPort(t *testing.T) {
 
 	port := ln.Addr().(*net.TCPAddr).Port
 	output, err := captureNetOutput(t, func() error {
-		return NetstatCmd([]string{"-port", strconv.Itoa(port)})
+		return NetstatCmd([]string{"--port", strconv.Itoa(port)})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd failed: %v", err)
@@ -205,7 +205,7 @@ func TestNetstatCmdStateFilterSupportsStateList(t *testing.T) {
 
 	port := ln.Addr().(*net.TCPAddr).Port
 	output, err := captureNetOutput(t, func() error {
-		return NetstatCmd([]string{"-state", "LISTEN,ESTABLISHED", "-port", strconv.Itoa(port)})
+		return NetstatCmd([]string{"--state", "LISTEN,ESTABLISHED", "--port", strconv.Itoa(port)})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd failed: %v", err)
@@ -240,7 +240,7 @@ func TestNetstatCmdSortByPID(t *testing.T) {
 	}
 
 	output, err := captureNetOutput(t, func() error {
-		return NetstatCmd([]string{"-sort", "pid", "-p"})
+		return NetstatCmd([]string{"--sort", "pid", "-p"})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd failed: %v", err)
@@ -312,7 +312,7 @@ func TestNetstatCmdCombinedShortFlags(t *testing.T) {
 
 	port := ln.Addr().(*net.TCPAddr).Port
 	output, err := captureNetOutput(t, func() error {
-		return NetstatCmd([]string{"-tnlp", "-port", strconv.Itoa(port)})
+		return NetstatCmd([]string{"-tnlp", "--port", strconv.Itoa(port)})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd combined flags failed: %v", err)
@@ -518,7 +518,7 @@ func TestNetstatCmdPortFilterDoesNotDoRangeMatch(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	output, err := captureNetOutput(t, func() error {
-		return NetstatCmd([]string{"-port", strconv.Itoa(missPort)})
+		return NetstatCmd([]string{"--port", strconv.Itoa(missPort)})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd failed: %v", err)
@@ -542,7 +542,7 @@ func TestNetstatCmdListeningOnly(t *testing.T) {
 
 	port := ln.Addr().(*net.TCPAddr).Port
 	output, err := captureNetOutput(t, func() error {
-		return NetstatCmd([]string{"-l", "-port", strconv.Itoa(port)})
+		return NetstatCmd([]string{"-l", "--port", strconv.Itoa(port)})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd failed: %v", err)
@@ -590,7 +590,7 @@ func TestNetstatCmdTCPUDPAndUnixFilters(t *testing.T) {
 	defer unixLn.Close()
 
 	tcpOut, err := captureNetOutput(t, func() error {
-		return NetstatCmd([]string{"-t", "-port", strconv.Itoa(tcpPort)})
+		return NetstatCmd([]string{"-t", "--port", strconv.Itoa(tcpPort)})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd -t failed: %v", err)
@@ -600,7 +600,7 @@ func TestNetstatCmdTCPUDPAndUnixFilters(t *testing.T) {
 	}
 
 	udpOut, err := captureNetOutput(t, func() error {
-		return NetstatCmd([]string{"-u", "-port", strconv.Itoa(udpPort)})
+		return NetstatCmd([]string{"-u", "--port", strconv.Itoa(udpPort)})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd -u failed: %v", err)
@@ -694,13 +694,13 @@ func TestNetstatCmdShortAndLongFlagsMatchForTCPListener(t *testing.T) {
 
 	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
 	shortOut, err := captureNetOutput(t, func() error {
-		return NetstatCmd([]string{"-t", "-l", "-p", "-e", "-o", "-n", "-W", "-port", port})
+		return NetstatCmd([]string{"-t", "-l", "-p", "-e", "-o", "-n", "-W", "--port", port})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd short flags failed: %v", err)
 	}
 	longOut, err := captureNetOutput(t, func() error {
-		return NetstatCmd([]string{"--tcp", "--listening", "--programs", "--extend", "--timers", "--numeric", "--wide", "-port", port})
+		return NetstatCmd([]string{"--tcp", "--listening", "--programs", "--extend", "--timers", "--numeric", "--wide", "--port", port})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd long flags failed: %v", err)
@@ -723,13 +723,13 @@ func TestNetstatCmdLongUDPFlagMatchesShort(t *testing.T) {
 
 	port := strconv.Itoa(conn.LocalAddr().(*net.UDPAddr).Port)
 	shortOut, err := captureNetOutput(t, func() error {
-		return NetstatCmd([]string{"-u", "-port", port})
+		return NetstatCmd([]string{"-u", "--port", port})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd -u failed: %v", err)
 	}
 	longOut, err := captureNetOutput(t, func() error {
-		return NetstatCmd([]string{"--udp", "-port", port})
+		return NetstatCmd([]string{"--udp", "--port", port})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd --udp failed: %v", err)
@@ -844,18 +844,18 @@ func TestNetstatCmdCompatibilityFlagsPreserveFilteredOutput(t *testing.T) {
 
 	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
 	baseOut, err := captureNetOutput(t, func() error {
-		return NetstatCmd([]string{"-t", "-l", "-port", port})
+		return NetstatCmd([]string{"-t", "-l", "--port", port})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd base flags failed: %v", err)
 	}
 	for _, args := range [][]string{
-		{"-t", "-l", "-a", "-port", port},
-		{"-t", "-l", "--all", "-port", port},
-		{"-t", "-l", "-n", "-port", port},
-		{"-t", "-l", "--numeric", "-port", port},
-		{"-t", "-l", "-W", "-port", port},
-		{"-t", "-l", "--wide", "-port", port},
+		{"-t", "-l", "-a", "--port", port},
+		{"-t", "-l", "--all", "--port", port},
+		{"-t", "-l", "-n", "--port", port},
+		{"-t", "-l", "--numeric", "--port", port},
+		{"-t", "-l", "-W", "--port", port},
+		{"-t", "-l", "--wide", "--port", port},
 	} {
 		out, err := captureNetOutput(t, func() error { return NetstatCmd(args) })
 		if err != nil {
@@ -880,7 +880,7 @@ func TestNetstatCmdIPv4AndIPv6Filters(t *testing.T) {
 
 	ipv4Port := strconv.Itoa(ipv4Ln.Addr().(*net.TCPAddr).Port)
 	ipv4Out, err := captureNetOutput(t, func() error {
-		return NetstatCmd([]string{"-4", "-l", "-port", ipv4Port})
+		return NetstatCmd([]string{"-4", "-l", "--port", ipv4Port})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd -4 failed: %v", err)
@@ -897,7 +897,7 @@ func TestNetstatCmdIPv4AndIPv6Filters(t *testing.T) {
 
 	ipv6Port := strconv.Itoa(ipv6Ln.Addr().(*net.TCPAddr).Port)
 	ipv6Out, err := captureNetOutput(t, func() error {
-		return NetstatCmd([]string{"-6", "-l", "-port", ipv6Port})
+		return NetstatCmd([]string{"-6", "-l", "--port", ipv6Port})
 	})
 	if err != nil {
 		t.Fatalf("NetstatCmd -6 failed: %v", err)
@@ -932,7 +932,7 @@ func TestNetstatCmdLongContinuousFlagRuns(t *testing.T) {
 	go func() {
 		defer close(done)
 		_, runErr = captureNetOutput(t, func() error {
-			return NetstatCmd([]string{"--continuous", "--tcp", "--listening", "-port", port})
+			return NetstatCmd([]string{"--continuous", "--tcp", "--listening", "--port", port})
 		})
 	}()
 

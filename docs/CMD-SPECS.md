@@ -396,9 +396,9 @@
 | `gobox netstat -c` | `netstat -c` | ⚠️ 部分一致 | 持续刷新输出 |
 | `gobox netstat -tnlp` | `netstat -tnlp` | ✅ 常用一致 | 支持常见短参数合并 |
 | `gobox netstat --help` | `netstat --help` | 🆕 gobox设计 | 帮助输出按功能分组，短长参数合并为单行展示 |
-| `gobox netstat -port int` | 端口过滤 | 🆕 gobox扩展 | 按本地或远端端口精确过滤 |
-| `gobox netstat -sort string` | 排序功能 | 🆕 gobox扩展 | 排序字段：recvq\|sendq\|local\|remote\|pid |
-| `gobox netstat -state string` | 状态过滤 | 🆕 gobox扩展 | 按连接状态过滤，支持状态列表 |
+| `gobox netstat --port int` | 端口过滤 | 🆕 gobox扩展 | 按本地或远端端口精确过滤 |
+| `gobox netstat --sort string` | 排序功能 | 🆕 gobox扩展 | 排序字段：recvq\|sendq\|local\|remote\|pid |
+| `gobox netstat --state string` | 状态过滤 | 🆕 gobox扩展 | 按连接状态过滤，支持状态列表 |
 
 ### tw
 
@@ -455,18 +455,18 @@
 |------------|---------------|------------|----------|
 | `gobox np -I string` | `ping -I` | ✅ 常用一致 | 使用的网络接口；拨号/探测路径遵循指定接口 |
 | `gobox np -W int` | `ping -W` | ✅ 常用一致 | 超时时间（秒，默认 5） |
-| `gobox np -arp` | `arping -I` | 🆕 gobox扩展 | ARP 模式 |
+| `gobox np --arp` | `arping -I` | 🆕 gobox扩展 | ARP 模式 |
 | `gobox np -c int` | `ping -c` | ✅ 常用一致 | 数据包数量（默认 4） |
-| `gobox np -flood` | `ping -f` | ✅ 常用一致 | 洪水模式（最大速度）；节流和输出细节不承诺完全同形 |
+| `gobox np --flood` | `ping -f` | ✅ 常用一致 | 洪水模式（最大速度）；节流和输出细节不承诺完全同形 |
 | `gobox np -i int` | `ping -i` | ⚠️ 部分一致 | 数据包间隔（微秒，默认 1000000），ping 默认秒 |
-| `gobox np -icmp` | `ping` | ✅ 常用一致 | ICMP 模式 |
+| `gobox np --icmp` | `ping` | ✅ 常用一致 | ICMP 模式 |
 | `gobox np -l int` | 长连接探测 | 🆕 gobox扩展 | 长连接模式 |
 | `gobox np -p int` | `nc -p` | 🆕 gobox扩展 | 目标端口 |
 | `gobox np -q` | `ping -q` | ✅ 常用一致 | 静默模式；输出收敛为 summary-only 视图 |
 | `gobox np -s int` | 源端口绑定 | 🆕 gobox扩展 | 源端口 |
-| `gobox np -scan` | `nc -z` | 🆕 gobox扩展 | 端口扫描模式 |
-| `gobox np -tcp` | `nc` | ✅ 常用一致 | TCP 模式（默认）；连通性探测语义对齐常用 `nc` 用法 |
-| `gobox np -udp` | `nc -u` | ✅ 常用一致 | UDP 模式 |
+| `gobox np --scan` | `nc -z` | 🆕 gobox扩展 | 端口扫描模式 |
+| `gobox np --tcp` | `nc` | ✅ 常用一致 | TCP 模式（默认）；连通性探测语义对齐常用 `nc` 用法 |
+| `gobox np --udp` | `nc -u` | ✅ 常用一致 | UDP 模式 |
 | `gobox np -v` | `ping -v` | ✅ 常用一致 | 详细输出；相对 quiet 模式增加逐次诊断信息 |
 | `gobox np -w int` | 工作池并发 | 🆕 gobox扩展 | 并发工作数（默认 1） |
 
@@ -485,18 +485,20 @@
 | `gobox ps -u USER` | `ps -u` | ✅ 常用一致 | 按用户或 UID 过滤 |
 | `gobox ps -p PID` | `ps -p` | ✅ 常用一致 | 按 PID 过滤 |
 | `gobox ps -C NAME` | `ps -C` | ✅ 常用一致 | 按命令名过滤 |
-| `gobox ps -comm string` | `pgrep -x` | ✅ 一致 | 按进程名精确匹配 |
-| `gobox ps -full string` | `pgrep -f` | ✅ 一致 | 按完整命令行正则匹配；输出默认也保留完整命令行，便于核对命中过滤结果 |
+| `gobox ps --long` | `ps -l` | ⚠️ 部分一致 | long 格式输出，展示 `PID/PPID/STAT/TTY/TIME/CMD` 等核心列 |
+| `gobox ps --comm string` | `pgrep -x` | ✅ 一致 | 按进程名精确匹配 |
+| `gobox ps --full string` | `pgrep -f` | ✅ 一致 | 按完整命令行正则匹配；输出默认也保留完整命令行，便于核对命中过滤结果 |
 | `gobox ps -o FIELDS` | `ps -o` | ⚠️ 部分一致 | 自定义输出字段，支持常用字段子集 |
 | `gobox ps --sort FIELD` | `ps --sort` | ⚠️ 部分一致 | GNU 风格排序字段 |
 | `gobox ps aux` | BSD 风格 `ps` 字母参数 | ⚠️ 部分一致 | BSD 风格下默认选择“自己且有 TTY”的进程；`a` 放开 only-yourself 限制，`x` 放开 must-have-tty 限制，`u` 切换到 user-oriented 列布局 |
 | `gobox ps -ww` | `ps -ww` | ✅ 一致 | 取消 `ps` 默认宽度截断，尽量完整显示单行 `CMD` |
 | `gobox ps -i int` | `vmstat -i` (采样间隔) | 🆕 gobox扩展 | CPU 采样间隔（毫秒，默认 500） |
-| `gobox ps -maxcmd N` | `ps -o pid,cmd` (截断) | 🆕 gobox扩展 | 指定命令列最大长度（0=无限制）；显式指定时优先于默认 TTY 宽度策略 |
+| `gobox ps --maxcmd N` | `ps -o pid,cmd` (截断) | 🆕 gobox扩展 | 指定命令列最大长度（0=无限制）；显式指定时优先于默认 TTY 宽度策略 |
 | `gobox ps -n int` | `ps --no-headers` (管道 head) | 🆕 gobox扩展 | 仅显示前 N 个进程（0=显示全部） |
 | `gobox ps -r` | reverse sort (gobox-only) | 🆕 gobox扩展 | 反向排序；不复用原生 `ps -r` 的“仅显示 running 进程”语义 |
+| `gobox ps --hide-idle` | gobox-only | 🆕 gobox扩展 | 过滤掉采样 CPU 为 0 的进程 |
 
-> 宽度语义说明：`ps` 默认在 TTY 下按当前终端宽度截断最后一列命令文本，非 TTY 输出保留完整单行命令；`-ww` 用于关闭该默认截断。`-f` 只负责切换到 full-format，多显示列，不负责控制宽度策略。帮助信息统一主推 `--sort` 和 `-maxcmd`；`-l N` 仅保留兼容别名，不再作为公开主路径。
+> 宽度语义说明：`ps` 默认在 TTY 下按当前终端宽度截断最后一列命令文本，非 TTY 输出保留完整单行命令；`-ww` 用于关闭该默认截断。`-f` 只负责切换到 full-format，多显示列，不负责控制宽度策略。帮助信息统一主推 `--sort` 和 `--maxcmd`。
 
 ### top
 
@@ -512,7 +514,7 @@
 | `gobox top -c` | `top -c` | ✅ 常用一致 | 显示完整命令行 |
 | `gobox top -o FIELD` | `top -o` | ⚠️ 部分一致 | 按字段排序 |
 | `gobox top -r` | reverse sort (gobox-only) | 🆕 gobox扩展 | 反向排序开关；不复用原生 `top -r` 的语义 |
-| `gobox top -sort string` | `top -o` (排序键) | 🆕 gobox扩展 | 排序字段：pid\|cpu\|rss\|vms\|cmd |
+| `gobox top --sort string` | `top -o` (排序键) | 🆕 gobox扩展 | 排序字段：pid\|cpu\|rss\|vms\|cmd |
 
 > 注意：gobox top 是 top 命令的简化实现，使用独立的实时采样与渲染路径，不再复用 `ps` 的输出。
 

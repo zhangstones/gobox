@@ -39,7 +39,17 @@ func TopCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "Display dynamic real-time view of running processes (very small subset).")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Options:")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "  -d SEC       delay in seconds between updates")
+		fmt.Fprintln(os.Stderr, "  -n COUNT     number of iterations (0 = infinite)")
+		fmt.Fprintln(os.Stderr, "  -b           batch mode")
+		fmt.Fprintln(os.Stderr, "  -p PIDS      show only comma-separated process IDs")
+		fmt.Fprintln(os.Stderr, "  -u USERS     show only processes for comma-separated users or UIDs")
+		fmt.Fprintln(os.Stderr, "  -H           thread display mode (accepted; process-level output)")
+		fmt.Fprintln(os.Stderr, "  -i           hide processes with zero sampled CPU")
+		fmt.Fprintln(os.Stderr, "  -c           show full command lines")
+		fmt.Fprintln(os.Stderr, "  -o FIELD     sort by field")
+		fmt.Fprintln(os.Stderr, "  --sort FIELD sort by: pid|cpu|rss|vms|cmd")
+		fmt.Fprintln(os.Stderr, "  -r           reverse sort order")
 	}
 
 	if err := fsFlags.Parse(args); err != nil {

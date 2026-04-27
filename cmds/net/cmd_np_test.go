@@ -151,7 +151,7 @@ func TestNpCmdMissingHost(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// TCP mode requires host
-	_, err := runNpCmd([]string{"-tcp", "-p", "80"})
+	_, err := runNpCmd([]string{"--tcp", "-p", "80"})
 	if err == nil {
 		t.Fatalf("expected error for missing host")
 	}
@@ -181,7 +181,7 @@ func TestNpCmdTcpModeWithoutPort(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// TCP mode requires port
-	_, err := runNpCmd([]string{"-tcp", "127.0.0.1"})
+	_, err := runNpCmd([]string{"--tcp", "127.0.0.1"})
 	if err == nil {
 		t.Fatalf("expected error for TCP mode without port")
 	}
@@ -191,7 +191,7 @@ func TestNpCmdUdpModeWithoutPort(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// UDP mode requires port
-	_, err := runNpCmd([]string{"-udp", "127.0.0.1"})
+	_, err := runNpCmd([]string{"--udp", "127.0.0.1"})
 	if err == nil {
 		t.Fatalf("expected error for UDP mode without port")
 	}
@@ -218,8 +218,10 @@ func TestNpCmdHelp(t *testing.T) {
 		t.Fatalf("np --help failed unexpectedly: %v", err)
 	}
 	result := string(output)
-	if !strings.Contains(result, "Usage") && !strings.Contains(result, "np") {
-		t.Errorf("expected help output to contain 'Usage' and 'np', got: %s", result)
+	for _, want := range []string{"Usage: gobox np", "Modes:", "--tcp", "--udp", "--icmp", "--arp", "--scan", "--flood", "Examples:"} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("expected help output to contain %q, got: %s", want, result)
+		}
 	}
 }
 
@@ -230,7 +232,7 @@ func TestNpCmdQuietMode(t *testing.T) {
 
 	// Using localhost with a closed port - quiet mode should only show stats
 	// Count=1 to make test fast, timeout=1s to fail fast
-	output, err := runNpCmd([]string{"-tcp", "-p", "59999", "-c", "1", "-W", "1", "-q", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--tcp", "-p", "59999", "-c", "1", "-W", "1", "-q", "127.0.0.1"})
 	// We expect it to run (may or may not error depending on network)
 	// Just verify it produces some output or handles gracefully
 	_ = output
@@ -242,7 +244,7 @@ func TestNpCmdVerboseMode(t *testing.T) {
 
 	// Verbose mode should produce more detailed output
 	// Using localhost with a closed port to trigger connection failures
-	output, err := runNpCmd([]string{"-tcp", "-p", "59999", "-c", "1", "-W", "1", "-v", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--tcp", "-p", "59999", "-c", "1", "-W", "1", "-v", "127.0.0.1"})
 	_ = output
 	_ = err
 	// May error but should produce output
@@ -255,7 +257,7 @@ func TestNpCmdFloodMode(t *testing.T) {
 	// Run in background and kill after timeout
 	done := make(chan error, 1)
 	go func() {
-		_, err := runNpCmd([]string{"-tcp", "-p", "59999", "-c", "100", "-W", "2", "-flood", "127.0.0.1"})
+		_, err := runNpCmd([]string{"--tcp", "-p", "59999", "-c", "100", "-W", "2", "--flood", "127.0.0.1"})
 		done <- err
 	}()
 
@@ -275,7 +277,7 @@ func TestNpCmdIcmpMode(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// ICMP ping to localhost
-	output, err := runNpCmd([]string{"-icmp", "-c", "1", "-W", "2", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--icmp", "-c", "1", "-W", "2", "127.0.0.1"})
 	if err != nil {
 		t.Logf("ICMP test output: %s", output)
 		// ICMP may fail due to permissions, skip in that case
@@ -288,7 +290,7 @@ func TestNpCmdIcmpMode(t *testing.T) {
 func TestNpCmdIcmpModeInvalidHost(t *testing.T) {
 	skipIfNotLinux(t)
 
-	_, err := runNpCmd([]string{"-icmp", "-c", "1", "-W", "1", "nonexistent.invalid.host"})
+	_, err := runNpCmd([]string{"--icmp", "-c", "1", "-W", "1", "nonexistent.invalid.host"})
 	if err == nil {
 		t.Fatalf("expected error for invalid ICMP host")
 	}
@@ -300,7 +302,7 @@ func TestNpCmdArpMode(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// ARP ping to localhost
-	output, err := runNpCmd([]string{"-arp", "-c", "1", "-W", "2", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--arp", "-c", "1", "-W", "2", "127.0.0.1"})
 	_ = output
 	// ARP might not work in all environments
 	if err != nil {
@@ -407,7 +409,7 @@ func TestNpCmdTcpModeBasic(t *testing.T) {
 
 	// TCP ping to a closed port should complete quickly
 	// Using a non-routable IP to fail fast
-	output, err := runNpCmd([]string{"-tcp", "-p", "59999", "-c", "1", "-W", "1", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--tcp", "-p", "59999", "-c", "1", "-W", "1", "127.0.0.1"})
 	_ = output
 	_ = err
 	// Either succeeds or fails, just needs to complete without panic
@@ -417,7 +419,7 @@ func TestNpCmdTcpModeCount(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// Test with multiple counts
-	output, err := runNpCmd([]string{"-tcp", "-p", "59999", "-c", "2", "-W", "1", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--tcp", "-p", "59999", "-c", "2", "-W", "1", "127.0.0.1"})
 	_ = output
 	_ = err
 }
@@ -426,7 +428,7 @@ func TestNpCmdTcpModeInterval(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// Test with custom interval (in microseconds)
-	output, err := runNpCmd([]string{"-tcp", "-p", "59999", "-c", "1", "-i", "100000", "-W", "1", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--tcp", "-p", "59999", "-c", "1", "-i", "100000", "-W", "1", "127.0.0.1"})
 	_ = output
 	_ = err
 }
@@ -435,7 +437,7 @@ func TestNpCmdTcpModeSourcePort(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// Test with source port
-	output, err := runNpCmd([]string{"-tcp", "-p", "59999", "-s", "40000", "-c", "1", "-W", "1", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--tcp", "-p", "59999", "-s", "40000", "-c", "1", "-W", "1", "127.0.0.1"})
 	_ = output
 	_ = err
 }
@@ -444,7 +446,7 @@ func TestNpCmdTcpModeLongConnection(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// Test long connection mode
-	output, err := runNpCmd([]string{"-tcp", "-p", "59999", "-c", "1", "-l", "1", "-W", "1", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--tcp", "-p", "59999", "-c", "1", "-l", "1", "-W", "1", "127.0.0.1"})
 	_ = output
 	_ = err
 }
@@ -453,7 +455,7 @@ func TestNpCmdTcpModeMultipleWorkers(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// Test with multiple workers
-	output, err := runNpCmd([]string{"-tcp", "-p", "59999", "-c", "1", "-w", "4", "-W", "1", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--tcp", "-p", "59999", "-c", "1", "-w", "4", "-W", "1", "127.0.0.1"})
 	_ = output
 	_ = err
 }
@@ -464,7 +466,7 @@ func TestNpCmdUdpModeBasic(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// UDP ping to a closed port
-	output, err := runNpCmd([]string{"-udp", "-p", "59999", "-c", "1", "-W", "1", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--udp", "-p", "59999", "-c", "1", "-W", "1", "127.0.0.1"})
 	_ = output
 	_ = err
 }
@@ -473,7 +475,7 @@ func TestNpCmdUdpModeCount(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// Test with multiple counts
-	output, err := runNpCmd([]string{"-udp", "-p", "59999", "-c", "2", "-W", "1", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--udp", "-p", "59999", "-c", "2", "-W", "1", "127.0.0.1"})
 	_ = output
 	_ = err
 }
@@ -482,7 +484,7 @@ func TestNpCmdUdpModeVerbose(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// UDP verbose mode
-	output, err := runNpCmd([]string{"-udp", "-p", "59999", "-c", "1", "-v", "-W", "1", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--udp", "-p", "59999", "-c", "1", "-v", "-W", "1", "127.0.0.1"})
 	_ = output
 	_ = err
 }
@@ -493,7 +495,7 @@ func TestNpCmdInvalidTimeout(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// Invalid timeout should be handled gracefully
-	output, err := runNpCmd([]string{"-tcp", "-p", "80", "-W", "abc", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--tcp", "-p", "80", "-W", "abc", "127.0.0.1"})
 	_ = output
 	// The flag package should handle this
 	if err == nil {
@@ -504,7 +506,7 @@ func TestNpCmdInvalidTimeout(t *testing.T) {
 func TestNpCmdNegativeCount(t *testing.T) {
 	skipIfNotLinux(t)
 
-	_, err := runNpCmd([]string{"-tcp", "-p", "80", "-c", "-1", "-W", "2", "127.0.0.1"})
+	_, err := runNpCmd([]string{"--tcp", "-p", "80", "-c", "-1", "-W", "2", "127.0.0.1"})
 	if err == nil {
 		t.Fatal("expected error for negative count")
 	}
@@ -517,7 +519,7 @@ func TestNpCmdZeroPort(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// Port 0 should error
-	_, err := runNpCmd([]string{"-tcp", "-p", "0", "-W", "1", "127.0.0.1"})
+	_, err := runNpCmd([]string{"--tcp", "-p", "0", "-W", "1", "127.0.0.1"})
 	if err == nil {
 		t.Fatalf("expected error for port 0")
 	}
@@ -527,7 +529,7 @@ func TestNpCmdPortOutOfRange(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// Port > 65535 should error
-	_, err := runNpCmd([]string{"-tcp", "-p", "70000", "-W", "1", "127.0.0.1"})
+	_, err := runNpCmd([]string{"--tcp", "-p", "70000", "-W", "1", "127.0.0.1"})
 	if err == nil {
 		t.Fatalf("expected error for port > 65535")
 	}
@@ -537,7 +539,7 @@ func TestNpCmdEmptyHost(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// Empty host should error
-	_, err := runNpCmd([]string{"-tcp", "-p", "80", "-W", "1"})
+	_, err := runNpCmd([]string{"--tcp", "-p", "80", "-W", "1"})
 	if err == nil {
 		t.Fatalf("expected error for empty host")
 	}
@@ -607,7 +609,7 @@ func TestNpCmdEndToEndTcp(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// Full end-to-end TCP test
-	output, err := runNpCmd([]string{"-tcp", "-p", "59999", "-c", "1", "-W", "2", "-q", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--tcp", "-p", "59999", "-c", "1", "-W", "2", "-q", "127.0.0.1"})
 	if err != nil {
 		t.Fatalf("TCP end-to-end test failed: %v", err)
 	}
@@ -640,8 +642,8 @@ func TestNpCmdMultipleModesSequential(t *testing.T) {
 
 	// Test multiple modes in sequence to ensure no state pollution
 	modes := [][]string{
-		{"-tcp", "-p", "59999", "-c", "1", "-W", "1", "127.0.0.1"},
-		{"-udp", "-p", "59999", "-c", "1", "-W", "1", "127.0.0.1"},
+		{"--tcp", "-p", "59999", "-c", "1", "-W", "1", "127.0.0.1"},
+		{"--udp", "-p", "59999", "-c", "1", "-W", "1", "127.0.0.1"},
 		{"--scan", "59999", "127.0.0.1"},
 	}
 
@@ -660,7 +662,7 @@ func TestNpCmdStatisticsOutput(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// Verbose mode should produce statistics
-	output, err := runNpCmd([]string{"-tcp", "-p", "59999", "-c", "2", "-W", "1", "-v", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--tcp", "-p", "59999", "-c", "2", "-W", "1", "-v", "127.0.0.1"})
 	if err != nil {
 		t.Fatalf("command failed: %v", err)
 	}
@@ -676,7 +678,7 @@ func TestNpCmdPingOutputFormat(t *testing.T) {
 	skipIfNotLinux(t)
 
 	// Non-quiet mode should produce per-ping output
-	output, err := runNpCmd([]string{"-tcp", "-p", "59999", "-c", "1", "-W", "1", "127.0.0.1"})
+	output, err := runNpCmd([]string{"--tcp", "-p", "59999", "-c", "1", "-W", "1", "127.0.0.1"})
 	if err != nil {
 		t.Fatalf("command failed: %v", err)
 	}

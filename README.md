@@ -90,6 +90,9 @@ gobox <command> [args...]
 # 全格式查看进程；-f 负责增加列，默认宽度策略仍然生效
 ./gobox ps -f -n 10
 
+# 使用 long 格式查看常用进程列
+./gobox ps --long -n 10
+
 # 需要完整命令行时用 -ww 关闭 ps 默认宽度截断
 ./gobox ps -f -ww -n 10
 
