@@ -40,12 +40,128 @@ func netstatProto(line string) string {
 	return fields[2]
 }
 
+func netstatState(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) < 6 {
+		return ""
+	}
+	return fields[5]
+}
+
+func netstatLocalAddress(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) < 4 {
+		return ""
+	}
+	return fields[3]
+}
+
+func netstatPort(line string) string {
+	local := netstatLocalAddress(line)
+	if idx := strings.LastIndex(local, ":"); idx >= 0 && idx+1 < len(local) {
+		return local[idx+1:]
+	}
+	return ""
+}
+
+func netstatSocketKey(line string) string {
+	return netstatPort(line) + "|" + netstatState(line)
+}
+
 func ifstatHeaderAndRows(out string) (string, []string) {
 	lines := nonEmptyLines(out)
 	if len(lines) == 0 {
 		return "", nil
 	}
 	return lines[0], lines[1:]
+}
+
+func ifstatHeaderColumns(header string) []string {
+	return strings.Fields(header)
+}
+
+func ifstatParseRow(t *testing.T, line string, wantFields int) []string {
+	t.Helper()
+	fields := strings.Fields(line)
+	if len(fields) != wantFields {
+		t.Fatalf("ifstat row width mismatch: got=%d want=%d line=%q", len(fields), wantFields, line)
+	}
+	return fields
+}
+
+func ifstatRowsByInterface(rows []string, wantFields int) map[string][][]string {
+	byIface := make(map[string][][]string)
+	for _, line := range rows {
+		fields := strings.Fields(line)
+		if len(fields) != wantFields {
+			continue
+		}
+		byIface[fields[0]] = append(byIface[fields[0]], fields)
+	}
+	return byIface
+}
+
+func ifstatParseFloatField(t *testing.T, field string) float64 {
+	t.Helper()
+	v, err := strconv.ParseFloat(field, 64)
+	if err != nil {
+		t.Fatalf("parse float %q: %v", field, err)
+	}
+	return v
+}
+
+func ifstatParseUintField(t *testing.T, field string) uint64 {
+	t.Helper()
+	v, err := strconv.ParseUint(field, 10, 64)
+	if err != nil {
+		t.Fatalf("parse uint %q: %v", field, err)
+	}
+	return v
+}
+
+func ncBenchTotalFields(t *testing.T, out string) (float64, string) {
+	t.Helper()
+	line := findNetLineWithPrefix(out, "Total:")
+	if line == "" {
+		t.Fatalf("missing total line\n%s", out)
+	}
+	trimmed := strings.TrimPrefix(line, "Total:")
+	parts := strings.Split(trimmed, ",")
+	if len(parts) != 3 {
+		t.Fatalf("unexpected total line format: %q", line)
+	}
+	secondsText := strings.TrimSpace(strings.TrimSuffix(parts[0], "s"))
+	seconds, err := strconv.ParseFloat(secondsText, 64)
+	if err != nil {
+		t.Fatalf("parse total duration %q: %v", secondsText, err)
+	}
+	return seconds, strings.TrimSpace(parts[1])
+}
+
+func curlBenchRequestsLine(t *testing.T, out string) (requests, concurrency, failed int) {
+	t.Helper()
+	line := findNetLineWithPrefix(out, "Requests:")
+	if line == "" {
+		t.Fatalf("missing requests line\n%s", out)
+	}
+	var err error
+	parts := strings.Split(line, ",")
+	if len(parts) != 3 {
+		t.Fatalf("unexpected requests line format: %q", line)
+	}
+	requests, err = strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(parts[0]), "Requests:")))
+	if err != nil {
+		t.Fatalf("parse requests from %q: %v", line, err)
+	}
+	concurrency, err = strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(parts[1]), "Concurrency:")))
+	if err != nil {
+		t.Fatalf("parse concurrency from %q: %v", line, err)
+	}
+	failed, err = strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(parts[2]), "Failed:")))
+	if err != nil {
+		t.Fatalf("parse failed count from %q: %v", line, err)
+	}
+	return requests, concurrency, failed
 }
 
 func ipBlocks(out string) map[string][]string {
@@ -136,8 +252,33 @@ func TestParity_NetstatCases(t *testing.T) {
 		if res.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("netstat failed gobox=%+v native=%+v", res, native)
 		}
-		portText := fmt.Sprintf(":%d", port)
-		if !strings.Contains(res.Stdout, portText) || !strings.Contains(native.Stdout, portText) {
+		wantPort := strconv.Itoa(port)
+		header, rows := netstatHeaderAndRows(res.Stdout)
+		if len(strings.Fields(header)) < 6 || len(rows) == 0 {
+			t.Fatalf("netstat -port missing structured output\n%s", res.Stdout)
+		}
+		var matches []string
+		for _, line := range rows {
+			if netstatPort(line) == wantPort {
+				matches = append(matches, line)
+			}
+		}
+		if len(matches) != 1 {
+			t.Fatalf("netstat -port should isolate exactly one target row, got %d\n%s", len(matches), res.Stdout)
+		}
+		row := matches[0]
+		if proto := netstatProto(row); proto != "TCP" && proto != "TCP6" {
+			t.Fatalf("netstat -port should retain tcp listener, got %q in %q", proto, row)
+		}
+		if state := netstatState(row); state != "LISTEN" {
+			t.Fatalf("netstat -port should retain listening row, got %q in %q", state, row)
+		}
+		for _, line := range rows {
+			if line != row && netstatPort(line) == wantPort {
+				t.Fatalf("netstat -port leaked duplicate target rows: %q", line)
+			}
+		}
+		if !strings.Contains(native.Stdout, fmt.Sprintf(":%d", port)) {
 			t.Fatalf("netstat -port missing listener\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
 		}
 	})
@@ -171,9 +312,21 @@ func TestParity_NetstatCases(t *testing.T) {
 		if !strings.Contains(native.Stdout, "LISTEN") {
 			t.Fatalf("native netstat baseline missing LISTEN rows: %+v", native)
 		}
+		nativeListen := make(map[string]struct{})
+		for _, line := range nonEmptyLines(native.Stdout)[1:] {
+			if netstatState(line) == "LISTEN" {
+				nativeListen[netstatSocketKey(line)] = struct{}{}
+			}
+		}
+		if len(nativeListen) == 0 {
+			t.Fatalf("native netstat parsed no LISTEN rows\n%s", native.Stdout)
+		}
 		for _, line := range nonEmptyLines(res.Stdout)[1:] {
-			if !strings.Contains(line, "LISTEN") {
+			if netstatState(line) != "LISTEN" {
 				t.Fatalf("netstat -state LISTEN leaked non-LISTEN row: %q", line)
+			}
+			if _, ok := nativeListen[netstatSocketKey(line)]; !ok {
+				t.Fatalf("netstat -state LISTEN returned row missing from native LISTEN subset: %q\n--- native ---\n%s", line, native.Stdout)
 			}
 		}
 	})
@@ -276,7 +429,7 @@ func TestParity_NetstatCases(t *testing.T) {
 			t.Fatalf("netstat -t mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
 		}
 		_, rows := netstatHeaderAndRows(res.Stdout)
-		if len(rows) == 0 {
+		if len(rows) != 1 {
 			t.Fatalf("netstat -t expected tcp rows\n%s", res.Stdout)
 		}
 		for _, line := range rows {
@@ -285,6 +438,9 @@ func TestParity_NetstatCases(t *testing.T) {
 			}
 			if proto := netstatProto(line); strings.HasPrefix(proto, "UDP") || proto == "UNIX" {
 				t.Fatalf("netstat -t leaked wrong protocol row: %q", line)
+			}
+			if netstatState(line) != "LISTEN" {
+				t.Fatalf("netstat -t should keep only target listening socket, got %q", line)
 			}
 		}
 		if netstatFindRow(rows, strconv.Itoa(port)) == "" {
@@ -308,7 +464,7 @@ func TestParity_NetstatCases(t *testing.T) {
 			t.Fatalf("netstat -u mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
 		}
 		_, rows := netstatHeaderAndRows(res.Stdout)
-		if len(rows) == 0 {
+		if len(rows) != 1 {
 			t.Fatalf("netstat -u expected udp rows\n%s", res.Stdout)
 		}
 		for _, line := range rows {
@@ -369,18 +525,20 @@ func TestParity_NetstatCases(t *testing.T) {
 		if base.ExitCode != 0 || withProg.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("netstat -p baseline failed base=%+v withProg=%+v native=%+v", base, withProg, native)
 		}
-		if base.Stdout == withProg.Stdout {
-			t.Fatalf("netstat -p did not change output\n--- base ---\n%s\n--- with -p ---\n%s", base.Stdout, withProg.Stdout)
-		}
 		if !strings.Contains(withProg.Stdout, "PID/Program") || !strings.Contains(native.Stdout, "PID/Program") {
 			t.Fatalf("netstat -p missing PID/Program column\n--- gobox ---\n%s\n--- native ---\n%s", withProg.Stdout, native.Stdout)
 		}
-		if !strings.Contains(withProg.Stdout, "/") {
-			t.Fatalf("netstat -p did not render pid/program cell\n%s", withProg.Stdout)
+		baseHeader, baseRows := netstatHeaderAndRows(base.Stdout)
+		header, rows := netstatHeaderAndRows(withProg.Stdout)
+		if len(strings.Fields(header)) <= len(strings.Fields(baseHeader)) {
+			t.Fatalf("netstat -p should widen the table with PID/Program column\n--- base ---\n%s\n--- with -p ---\n%s", base.Stdout, withProg.Stdout)
 		}
-		lines := nonEmptyLines(withProg.Stdout)
-		if len(lines) < 2 || !strings.Contains(lines[1], port) || !strings.Contains(lines[1], "/") {
+		row := netstatFindRow(rows, port)
+		if row == "" || !strings.Contains(row, "/") {
 			t.Fatalf("netstat -p should keep the filtered listener row and annotate pid/program\n%s", withProg.Stdout)
+		}
+		if len(baseRows) == 0 || len(rows) != len(baseRows) {
+			t.Fatalf("netstat -p should preserve the filtered row set\n--- base ---\n%s\n--- with -p ---\n%s", base.Stdout, withProg.Stdout)
 		}
 	})
 
@@ -446,16 +604,17 @@ func TestParity_NetstatCases(t *testing.T) {
 		if base.ExitCode != 0 || extended.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("netstat -e baseline failed base=%+v extended=%+v native=%+v", base, extended, native)
 		}
-		if base.Stdout == extended.Stdout {
-			t.Fatalf("netstat -e did not change output\n--- base ---\n%s\n--- with -e ---\n%s", base.Stdout, extended.Stdout)
-		}
+		baseHeader, baseRows := netstatHeaderAndRows(base.Stdout)
 		header, rows := netstatHeaderAndRows(extended.Stdout)
 		for _, want := range []string{"User", "Inode"} {
 			if !strings.Contains(header, want) || !strings.Contains(native.Stdout, want) {
 				t.Fatalf("netstat -e missing %q\n--- gobox ---\n%s\n--- native ---\n%s", want, extended.Stdout, native.Stdout)
 			}
 		}
-		if len(rows) == 0 || len(strings.Fields(rows[0])) < 8 {
+		if len(rows) != len(baseRows) || len(strings.Fields(header)) <= len(strings.Fields(baseHeader)) {
+			t.Fatalf("netstat -e should preserve row set and extend columns\n--- base ---\n%s\n--- extended ---\n%s", base.Stdout, extended.Stdout)
+		}
+		if len(rows) == 0 || len(strings.Fields(rows[0])) <= len(strings.Fields(baseRows[0])) {
 			t.Fatalf("netstat -e should extend the filtered row with extra columns\n%s", extended.Stdout)
 		}
 		if netstatFindRow(rows, port) == "" {
@@ -479,13 +638,14 @@ func TestParity_NetstatCases(t *testing.T) {
 		if base.ExitCode != 0 || withTimers.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("netstat -o baseline failed base=%+v withTimers=%+v native=%+v", base, withTimers, native)
 		}
-		if base.Stdout == withTimers.Stdout {
-			t.Fatalf("netstat -o did not change output\n--- base ---\n%s\n--- with -o ---\n%s", base.Stdout, withTimers.Stdout)
-		}
+		baseHeader, baseRows := netstatHeaderAndRows(base.Stdout)
 		header, rows := netstatHeaderAndRows(withTimers.Stdout)
 		fields := strings.Fields(header)
 		if len(fields) == 0 || fields[len(fields)-1] != "Timer" || !strings.Contains(native.Stdout, "Timer") {
 			t.Fatalf("netstat -o missing Timer column\n--- gobox ---\n%s\n--- native ---\n%s", withTimers.Stdout, native.Stdout)
+		}
+		if len(rows) != len(baseRows) || len(fields) <= len(strings.Fields(baseHeader)) {
+			t.Fatalf("netstat -o should preserve row set and add timer column\n--- base ---\n%s\n--- with timers ---\n%s", base.Stdout, withTimers.Stdout)
 		}
 		if len(rows) == 0 || netstatFindRow(rows, port) == "" {
 			t.Fatalf("netstat -o should keep the filtered listener row\n%s", withTimers.Stdout)
@@ -531,9 +691,6 @@ func TestParity_NetstatCases(t *testing.T) {
 		native := runNativeCLI(t, t.TempDir(), "", "netstat", "-tnlp")
 		if base.ExitCode != 0 || res.ExitCode != native.ExitCode {
 			t.Fatalf("netstat combined flags mismatch\n--- base ---\n%+v\n--- gobox ---\n%+v\n--- native ---\n%+v", base, res, native)
-		}
-		if base.Stdout == res.Stdout {
-			t.Fatalf("netstat -tnlp should change output relative to -t -l by enabling numeric/program views\n--- base ---\n%s\n--- combined ---\n%s", base.Stdout, res.Stdout)
 		}
 		header, rows := netstatHeaderAndRows(res.Stdout)
 		if !strings.Contains(header, "PID/Program") || !strings.Contains(native.Stdout, "tcp") {
@@ -1123,11 +1280,13 @@ func TestParity_CurlCases(t *testing.T) {
 		if base.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("curl bench concurrent failed base=%+v concurrent=%+v", base, res)
 		}
-		if base.Stdout == res.Stdout {
-			t.Fatalf("curl bench -c should change output relative to the default concurrency\n--- base ---\n%s\n--- concurrent ---\n%s", base.Stdout, res.Stdout)
+		req, conc, failed := curlBenchRequestsLine(t, res.Stdout)
+		baseReq, baseConc, _ := curlBenchRequestsLine(t, base.Stdout)
+		if req != 4 || conc != 2 || failed != 0 {
+			t.Fatalf("curl bench -c should report configured requests/concurrency, got requests=%d concurrency=%d failed=%d\n%s", req, conc, failed, res.Stdout)
 		}
-		if !strings.Contains(findNetLineWithPrefix(res.Stdout, "Requests:"), "Concurrency: 2") {
-			t.Fatalf("curl bench -c should report the configured concurrency\n%s", res.Stdout)
+		if baseReq != 4 || baseConc != 1 {
+			t.Fatalf("curl bench baseline unexpected requests/concurrency=%d/%d\n%s", baseReq, baseConc, base.Stdout)
 		}
 		if findNetLineWithPrefix(res.Stdout, "Latency:") == "" || findNetLineWithPrefix(res.Stdout, "Throughput:") == "" {
 			t.Fatalf("curl bench -c missing latency/throughput summary\n%s", res.Stdout)
@@ -1141,11 +1300,9 @@ func TestParity_CurlCases(t *testing.T) {
 		if base.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("curl bench requests failed base=%+v requests=%+v", base, res)
 		}
-		if base.Stdout == res.Stdout {
-			t.Fatalf("curl bench -n should change output relative to the baseline request count\n--- base ---\n%s\n--- requests ---\n%s", base.Stdout, res.Stdout)
-		}
-		if !strings.Contains(findNetLineWithPrefix(res.Stdout, "Requests:"), "Requests: 3") {
-			t.Fatalf("curl bench -n should report the configured request count\n%s", res.Stdout)
+		req, conc, failed := curlBenchRequestsLine(t, res.Stdout)
+		if req != 3 || conc != 1 || failed != 0 {
+			t.Fatalf("curl bench -n should report configured request count, got requests=%d concurrency=%d failed=%d\n%s", req, conc, failed, res.Stdout)
 		}
 		if findNetLineWithPrefix(res.Stdout, "Latency:") == "" || findNetLineWithPrefix(res.Stdout, "Throughput:") == "" {
 			t.Fatalf("curl bench -n missing latency/throughput summary\n%s", res.Stdout)
@@ -1159,11 +1316,9 @@ func TestParity_CurlCases(t *testing.T) {
 		if base.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("curl bench warmup failed base=%+v warmup=%+v", base, res)
 		}
-		if base.Stdout == res.Stdout {
-			t.Fatalf("curl bench --warmup should change output relative to the no-warmup baseline\n--- base ---\n%s\n--- warmup ---\n%s", base.Stdout, res.Stdout)
-		}
-		if !strings.Contains(findNetLineWithPrefix(res.Stdout, "Requests:"), "Requests: 2") {
-			t.Fatalf("curl bench --warmup should preserve the configured request count\n%s", res.Stdout)
+		req, conc, failed := curlBenchRequestsLine(t, res.Stdout)
+		if req != 2 || conc != 1 || failed != 0 {
+			t.Fatalf("curl bench --warmup should preserve configured request count, got requests=%d concurrency=%d failed=%d\n%s", req, conc, failed, res.Stdout)
 		}
 		if findNetLineWithPrefix(res.Stdout, "Latency:") == "" || findNetLineWithPrefix(res.Stdout, "Throughput:") == "" {
 			t.Fatalf("curl bench --warmup missing latency/throughput summary\n%s", res.Stdout)
@@ -1180,7 +1335,8 @@ func TestParity_CurlCases(t *testing.T) {
 		}))
 		defer slowServer.Close()
 		res := runGoboxCLI(t, t.TempDir(), "", "curl", "--bench", "-n", "2", "-t", "0.05", slowServer.URL)
-		if res.ExitCode != 0 || !strings.Contains(res.Stdout, "Failed:") {
+		req, conc, failed := curlBenchRequestsLine(t, res.Stdout)
+		if res.ExitCode != 0 || req != 2 || conc != 1 || failed == 0 {
 			t.Fatalf("curl bench timeout failed: %+v", res)
 		}
 	})
@@ -1307,16 +1463,21 @@ func TestParity_NcCases(t *testing.T) {
 	})
 
 	for _, tc := range []struct {
-		id   string
-		args []string
-		want string
+		id          string
+		args        []string
+		baseArgs    []string
+		wantBytes   string
+		minDuration float64
+		maxDuration float64
+		minElapsed  time.Duration
+		wantReport  string
 	}{
-		{"NC-009", []string{"nc", "--bench", "-n", "2", "-s", "16B"}, "Total:"},
-		{"NC-010", []string{"nc", "--bench", "-c", "2", "-n", "4", "-s", "16B"}, "64B"},
-		{"NC-011", []string{"nc", "--bench", "-n", "3", "-s", "16B"}, "48B"},
-		{"NC-012", []string{"nc", "--bench", "-n", "2", "-s", "32B"}, "64B"},
-		{"NC-013", []string{"nc", "--bench", "-t", "1", "-s", "16B"}, "Total:"},
-		{"NC-014", []string{"nc", "--bench", "-n", "2", "-s", "16B", "-i", "1"}, "Total:"},
+		{"NC-009", []string{"nc", "--bench", "-n", "2", "-s", "16B"}, nil, "32B", 0, 5, 0, ""},
+		{"NC-010", []string{"nc", "--bench", "-c", "2", "-n", "4", "-s", "16B"}, nil, "64B", 0, 5, 0, ""},
+		{"NC-011", []string{"nc", "--bench", "-n", "3", "-s", "16B"}, nil, "48B", 0, 5, 0, ""},
+		{"NC-012", []string{"nc", "--bench", "-n", "2", "-s", "32B"}, nil, "64B", 0, 5, 0, ""},
+		{"NC-013", []string{"nc", "--bench", "-t", "1", "-n", "200000", "-s", "16B"}, []string{"nc", "--bench", "-n", "2", "-s", "16B"}, "", 0, 5, 800 * time.Millisecond, ""},
+		{"NC-014", []string{"nc", "--bench", "-t", "3", "-n", "200000", "-s", "16B", "-i", "2"}, []string{"nc", "--bench", "-t", "3", "-n", "200000", "-s", "16B"}, "", 0, 5, 2500 * time.Millisecond, "[ 1]"},
 	} {
 		t.Run(tc.id, func(t *testing.T) {
 			_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")
@@ -1324,22 +1485,36 @@ func TestParity_NcCases(t *testing.T) {
 			args := append([]string{}, tc.args...)
 			args = append(args, "127.0.0.1", port)
 			env := t.TempDir()
-			baseArgs := []string{"nc", "--bench", "-n", "2", "-s", "16B", "127.0.0.1", port}
+			baseArgs := append([]string{}, tc.baseArgs...)
+			if len(baseArgs) == 0 {
+				baseArgs = []string{"nc", "--bench", "-n", "2", "-s", "16B"}
+			}
+			baseArgs = append(baseArgs, "127.0.0.1", port)
 			base := runGoboxCLI(t, env, "", baseArgs...)
+			started := time.Now()
 			res := runGoboxCLI(t, env, "", args...)
+			elapsed := time.Since(started)
 			if res.ExitCode != 0 {
-				t.Fatalf("%s failed: %+v want %q", tc.id, res, tc.want)
+				t.Fatalf("%s failed: %+v want bytes %q", tc.id, res, tc.wantBytes)
 			}
-			if tc.id != "NC-009" && base.ExitCode == 0 && base.Stdout == res.Stdout {
+			if tc.id != "NC-009" && tc.id != "NC-013" && tc.id != "NC-014" && base.ExitCode == 0 && base.Stdout == res.Stdout {
 				t.Fatalf("%s should change bench output relative to the default bench baseline\n--- base ---\n%s\n--- variant ---\n%s", tc.id, base.Stdout, res.Stdout)
-			}
-			if line := findNetLineWithPrefix(res.Stdout, "Total:"); line == "" {
-				t.Fatalf("%s missing final total line\n%s", tc.id, res.Stdout)
-			} else if !strings.Contains(line, tc.want) {
-				t.Fatalf("%s total line missing expected payload %q\n%s", tc.id, tc.want, res.Stdout)
 			}
 			if findNetLineWithPrefix(res.Stdout, "Latency:") == "" {
 				t.Fatalf("%s missing latency summary\n%s", tc.id, res.Stdout)
+			}
+			duration, totalBytes := ncBenchTotalFields(t, res.Stdout)
+			if tc.wantBytes != "" && totalBytes != tc.wantBytes {
+				t.Fatalf("%s total payload mismatch: got %q want %q\n%s", tc.id, totalBytes, tc.wantBytes, res.Stdout)
+			}
+			if duration < tc.minDuration || (tc.maxDuration > 0 && duration > tc.maxDuration) {
+				t.Fatalf("%s total duration out of range: got %.2fs want [%.2f, %.2f]\n%s", tc.id, duration, tc.minDuration, tc.maxDuration, res.Stdout)
+			}
+			if tc.minElapsed > 0 && elapsed < tc.minElapsed {
+				t.Fatalf("%s elapsed runtime too short: got %s want >= %s\n%s", tc.id, elapsed, tc.minElapsed, res.Stdout)
+			}
+			if tc.wantReport != "" && !strings.Contains(res.Stdout, tc.wantReport) {
+				t.Fatalf("%s should emit interval report %q\n%s", tc.id, tc.wantReport, res.Stdout)
 			}
 		})
 	}
@@ -1692,8 +1867,34 @@ func TestParity_IfstatCases(t *testing.T) {
 					t.Fatalf("ifstat -a did not change output relative to baseline\n--- base ---\n%s\n--- absolute ---\n%s", base.Stdout, out)
 				}
 				header, rows := ifstatHeaderAndRows(out)
-				if !strings.Contains(header, "Interface") || len(rows) == 0 {
+				baseHeader, baseRows := ifstatHeaderAndRows(base.Stdout)
+				if header != baseHeader || len(rows) == 0 || len(rows) != len(baseRows) {
 					t.Fatalf("ifstat -a missing header or rows: %q", out)
+				}
+				wantFields := len(ifstatHeaderColumns(header))
+				outByIface := ifstatRowsByInterface(rows, wantFields)
+				baseByIface := ifstatRowsByInterface(baseRows, wantFields)
+				sawLargerAbsolute := false
+				for iface, samples := range outByIface {
+					baseSamples := baseByIface[iface]
+					if len(samples) != 1 || len(baseSamples) != 1 {
+						t.Fatalf("ifstat -a expected exactly one row per interface for iface=%q out=%v base=%v", iface, samples, baseSamples)
+					}
+					outFields := samples[0]
+					baseFields := baseSamples[0]
+					for i := 1; i < wantFields; i++ {
+						outVal := ifstatParseFloatField(t, outFields[i])
+						baseVal := ifstatParseFloatField(t, baseFields[i])
+						if outVal < 0 || baseVal < 0 {
+							t.Fatalf("ifstat values must be non-negative iface=%q out=%v base=%v", iface, outFields, baseFields)
+						}
+						if outVal > baseVal {
+							sawLargerAbsolute = true
+						}
+					}
+				}
+				if !sawLargerAbsolute {
+					t.Fatalf("ifstat -a should expose cumulative values larger than the per-second baseline\n--- base ---\n%s\n--- absolute ---\n%s", base.Stdout, out)
 				}
 			},
 		},
@@ -1709,11 +1910,19 @@ func TestParity_IfstatCases(t *testing.T) {
 					t.Fatalf("ifstat -d did not change output relative to baseline\n--- base ---\n%s\n--- drop ---\n%s", base.Stdout, out)
 				}
 				header, rows := ifstatHeaderAndRows(out)
+				cols := ifstatHeaderColumns(header)
 				if !strings.Contains(header, "rxdrop") || !strings.Contains(header, "txdrop") {
 					t.Fatalf("ifstat -d missing drop columns: %q", out)
 				}
-				if len(rows) == 0 || len(strings.Fields(rows[0])) < 7 {
+				if len(rows) == 0 {
 					t.Fatalf("ifstat -d expected data rows with drop columns: %q", out)
+				}
+				rxdropIdx := len(cols) - 2
+				txdropIdx := len(cols) - 1
+				for _, line := range rows {
+					fields := ifstatParseRow(t, line, len(cols))
+					_ = ifstatParseUintField(t, fields[rxdropIdx])
+					_ = ifstatParseUintField(t, fields[txdropIdx])
 				}
 			},
 		},
@@ -1729,11 +1938,19 @@ func TestParity_IfstatCases(t *testing.T) {
 					t.Fatalf("ifstat -e did not change output relative to baseline\n--- base ---\n%s\n--- errors ---\n%s", base.Stdout, out)
 				}
 				header, rows := ifstatHeaderAndRows(out)
+				cols := ifstatHeaderColumns(header)
 				if !strings.Contains(header, "rxerrs") || !strings.Contains(header, "txerrs") {
 					t.Fatalf("ifstat -e missing error columns: %q", out)
 				}
-				if len(rows) == 0 || len(strings.Fields(rows[0])) < 7 {
+				if len(rows) == 0 {
 					t.Fatalf("ifstat -e expected data rows with error columns: %q", out)
+				}
+				rxerrsIdx := len(cols) - 2
+				txerrsIdx := len(cols) - 1
+				for _, line := range rows {
+					fields := ifstatParseRow(t, line, len(cols))
+					_ = ifstatParseUintField(t, fields[rxerrsIdx])
+					_ = ifstatParseUintField(t, fields[txerrsIdx])
 				}
 			},
 		},
@@ -1753,19 +1970,35 @@ func TestParity_IfstatCases(t *testing.T) {
 			id:   "IFSTAT-006",
 			args: []string{"ifstat", "-n", "2", "-p", "1"},
 			check: func(t *testing.T, out string) {
+				base := runGoboxCLI(t, t.TempDir(), "", "ifstat", "-n", "1", "-p", "1")
+				if base.ExitCode != 0 {
+					t.Fatalf("ifstat baseline failed: %+v", base)
+				}
 				header, rows := ifstatHeaderAndRows(out)
-				if !strings.Contains(header, "Interface") || len(rows) < 2 {
+				_, baseRows := ifstatHeaderAndRows(base.Stdout)
+				if !strings.Contains(header, "Interface") || len(baseRows) == 0 {
 					t.Fatalf("ifstat -n expected multiple samples: %q", out)
+				}
+				if len(rows) != 2*len(baseRows) {
+					t.Fatalf("ifstat -n should emit exactly two samples worth of rows: base=%d got=%d\n%s", len(baseRows), len(rows), out)
 				}
 			},
 		},
 		{
 			id:   "IFSTAT-007",
-			args: []string{"ifstat", "-n", "2", "-p", "1"},
+			args: []string{"ifstat", "-n", "2", "-p", "2"},
 			check: func(t *testing.T, out string) {
+				base := runGoboxCLI(t, t.TempDir(), "", "ifstat", "-n", "1", "-p", "1")
+				if base.ExitCode != 0 {
+					t.Fatalf("ifstat baseline failed: %+v", base)
+				}
 				header, rows := ifstatHeaderAndRows(out)
-				if !strings.Contains(header, "Interface") || len(rows) < 2 {
+				_, baseRows := ifstatHeaderAndRows(base.Stdout)
+				if !strings.Contains(header, "Interface") || len(baseRows) == 0 {
 					t.Fatalf("ifstat -n/-p expected header plus repeated samples: %q", out)
+				}
+				if len(rows) != 2*len(baseRows) {
+					t.Fatalf("ifstat -p should preserve the interface set across two samples: base=%d got=%d\n%s", len(baseRows), len(rows), out)
 				}
 			},
 		},
@@ -1776,8 +2009,11 @@ func TestParity_IfstatCases(t *testing.T) {
 			if res.ExitCode != 0 {
 				t.Fatalf("%s failed: %+v", tc.id, res)
 			}
-			if (tc.id == "IFSTAT-006" || tc.id == "IFSTAT-007") && time.Since(start) < time.Second {
+			if tc.id == "IFSTAT-006" && time.Since(start) < time.Second {
 				t.Fatalf("ifstat -p interval did not delay second sample: elapsed=%s output=%q", time.Since(start), res.Stdout)
+			}
+			if tc.id == "IFSTAT-007" && time.Since(start) < 2*time.Second {
+				t.Fatalf("ifstat -p 2 interval did not delay second sample enough: elapsed=%s output=%q", time.Since(start), res.Stdout)
 			}
 			if tc.check != nil {
 				tc.check(t, res.Stdout)

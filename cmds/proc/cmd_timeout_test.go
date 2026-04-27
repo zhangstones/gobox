@@ -25,19 +25,33 @@ func TestTimeoutCmdOptionsCommandExitsBeforeTimeout(t *testing.T) {
 }
 
 func TestTimeoutCmdOptionsCustomSignal(t *testing.T) {
-
-	err := TimeoutCmd([]string{"-s", "KILL", "0.1s", "sleep", "2"})
+	dir := t.TempDir()
+	marker := dir + "/kill"
+	script := "trap 'echo term > \"$1\"; exit 0' TERM; while true; do sleep 0.01; done"
+	err := TimeoutCmd([]string{"-s", "KILL", "0.1s", "sh", "-c", script, "sh", marker})
 	if exitErr, ok := err.(timeoutExitError); !ok || exitErr.ExitCode() != 124 {
 		t.Fatalf("expected timeout exit 124, got %T %v", err, err)
+	}
+	if _, readErr := os.ReadFile(marker); !os.IsNotExist(readErr) {
+		t.Fatalf("expected TERM trap not to run when sending KILL, readErr=%v", readErr)
 	}
 
 }
 
 func TestTimeoutCmdOptionsNumericSignal(t *testing.T) {
-
-	err := TimeoutCmd([]string{"-s", "15", "0.1s", "sleep", "2"})
+	dir := t.TempDir()
+	marker := dir + "/term"
+	script := "trap 'echo term > \"$1\"; exit 0' TERM; while true; do sleep 0.01; done"
+	err := TimeoutCmd([]string{"-s", "15", "0.1s", "sh", "-c", script, "sh", marker})
 	if exitErr, ok := err.(timeoutExitError); !ok || exitErr.ExitCode() != 124 {
 		t.Fatalf("expected timeout exit 124, got %T %v", err, err)
+	}
+	data, readErr := os.ReadFile(marker)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if strings.TrimSpace(string(data)) != "term" {
+		t.Fatalf("expected TERM marker for signal 15, got %q", data)
 	}
 
 }
@@ -59,6 +73,8 @@ func TestTimeoutCmdOptionsInvalidKillAfterDuration(t *testing.T) {
 
 	if err := TimeoutCmd([]string{"-k", "bad", "0.1s", "sleep", "1"}); err == nil {
 		t.Fatal("expected invalid kill-after duration error")
+	} else if !strings.Contains(err.Error(), `invalid duration "bad"`) {
+		t.Fatalf("unexpected kill-after duration error: %v", err)
 	}
 
 }
@@ -67,6 +83,8 @@ func TestTimeoutCmdOptionsInvalidDuration(t *testing.T) {
 
 	if err := TimeoutCmd([]string{"bad", "sleep", "1"}); err == nil {
 		t.Fatal("expected invalid duration error")
+	} else if !strings.Contains(err.Error(), `invalid duration "bad"`) {
+		t.Fatalf("unexpected duration error: %v", err)
 	}
 
 }
@@ -84,6 +102,8 @@ func TestTimeoutCmdOptionsUnsupportedSignal(t *testing.T) {
 
 	if err := TimeoutCmd([]string{"-s", "USR1", "0.1s", "sleep", "1"}); err == nil {
 		t.Fatal("expected unsupported signal error")
+	} else if !strings.Contains(err.Error(), "unsupported signal USR1") {
+		t.Fatalf("unexpected signal error: %v", err)
 	}
 
 }
@@ -92,6 +112,8 @@ func TestTimeoutCmdOptionsMissingCommand(t *testing.T) {
 
 	if err := TimeoutCmd([]string{"1s"}); err == nil {
 		t.Fatal("expected missing command error")
+	} else if !strings.Contains(err.Error(), "missing duration or command") {
+		t.Fatalf("unexpected missing command error: %v", err)
 	}
 
 }

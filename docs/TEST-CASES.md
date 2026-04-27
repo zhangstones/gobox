@@ -37,7 +37,8 @@
 以下命令已按 `docs/CMD-SPECS.md` 当前条目建立参数级 case；自动化测试按 exact、structured、behavior、contract 四类分别落地，无法稳定自动化的环境依赖项需在测试中显式说明或跳过。
 
 - 文件系统：`find`、`du`、`df`、`readpath`、`stat`、`truncate`
-- 文本处理：`head`、`tail`、`grep`、`sed`、`sort`、`uniq`、`wc`、`hex`、`base64`、`strings`、`diff`
+- Shell 辅助：`alias`
+- 文本处理：`head`、`tail`、`grep`、`sed`、`sort`、`uniq`、`wc`、`seq`、`rand`、`hex`、`base64`、`strings`、`diff`
 - 网络：`curl`、`nc`、`netstat`、`tw`、`nslookup/dig`、`ifstat`、`ip`、`np`
 - 进程：`ps`、`top`、`free`、`xargs`、`kill`、`lsof`、`watch`、`timeout`
 - 磁盘：`iostat`、`ioperf`、`md5sum`、`sha256sum`
@@ -52,6 +53,18 @@
 6. 组合参数至少要有一条 case 验证优先级或交互语义，避免某个参数在组合场景里被静默忽略。
 7. 对 `structured` 和 `behavior` case，`Core Assertion` 必须优先写结果集、字段语义、排序/过滤/副作用，不应退化成泛化的关键词匹配描述。
 8. 对环境敏感命令，`Core Assertion` 应优先描述受控夹具、目标记录或方向性约束，不默认要求全量输出完全相等。
+
+---
+
+## Shell 辅助命令
+
+### alias
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| ALIAS-001 | default alias script | contract | gobox-only | registered command set | 输出 `gobox_alias_type=bash` 且为每个已注册子命令生成 `alias name='gobox name'`，同时不为 `alias` 自身生成递归 alias |
+| ALIAS-002 | `-u` | contract | gobox-only | registered command set | 输出与已注册子命令集合一致的 `unalias` 脚本，并在结尾清理 `gobox_alias_type` |
+| ALIAS-003 | `-h` | contract | gobox-only | none | 帮助输出包含用途说明和 `gobox alias [-u]` 用法 |
 
 ---
 
@@ -238,6 +251,30 @@
 | WC-003 | `-c` | exact | `wc -c` | UTF-8 文本 | 字节数一致 |
 | WC-004 | `-m` | exact | `wc -m` | UTF-8 文本 | 字符数一致 |
 | WC-005 | `-L` | exact | `wc -L` | 不同长度行 | 最长行长度一致 |
+
+### seq
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| SEQ-001 | `LAST` | exact | `seq LAST` | integer operand | 默认从 `1` 递增到 `LAST`，输出与退出码一致 |
+| SEQ-002 | `FIRST LAST` | exact | `seq FIRST LAST` | integer operands | 默认步长 `1` 的双参数区间输出一致 |
+| SEQ-003 | `FIRST INC LAST` | exact | `seq FIRST INC LAST` | integer/float operands | 显式步长路径生效，递增/递减与浮点步长输出一致 |
+| SEQ-004 | `-f FORMAT, --format=FORMAT` | behavior | `seq -f` | integer/float operands | 指定格式必须相对默认输出改变每项文本表示，且数值序列不变 |
+| SEQ-005 | `-s SEP, --separator=SEP` | exact | `seq -s` | integer operands | 分隔符替换换行的输出一致 |
+| SEQ-006 | `-w, --equal-width` | behavior | `seq -w` | mixed-width integer operands | 输出项按最大位宽补零对齐，且相对默认输出改变文本宽度 |
+| SEQ-007 | `-h, --help` | contract | `seq --help` | none | 帮助输出成功并包含 `gobox seq` 用法与主要参数说明 |
+
+### rand
+
+| Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
+|---|---|---|---|---|---|
+| RAND-001 | default hex output | contract | gobox-only | none | 默认输出 32 字节随机数据的 hex 文本，长度与编码语义稳定 |
+| RAND-002 | `NUM` positional operand | contract | gobox-only | byte-count operand | 位置参数会改变生成字节数，输出编码长度与请求字节数匹配 |
+| RAND-003 | `-n NUM` | contract | `openssl rand -hex NUM` | byte-count operand | 显式字节数参数进入执行路径，输出长度与请求字节数匹配 |
+| RAND-004 | `-hex` | contract | `openssl rand -hex` | none | hex 模式输出仅包含 lowercase hex 字符并保持换行契约 |
+| RAND-005 | `-base64` | behavior | `openssl rand -base64` | none | base64 模式必须相对默认 hex 输出改变编码字母表和长度语义 |
+| RAND-006 | `-out FILE` | contract | `openssl rand -out FILE` | temp output file | 生成结果写入指定文件，stdout 不混入随机正文 |
+| RAND-007 | `-h, --help` | contract | `openssl rand -help` | none | 帮助输出成功并包含 `gobox rand` 用法与主要参数说明 |
 
 ### hex
 

@@ -9,9 +9,10 @@ import (
 	"testing"
 )
 
-// runIfstatCmd runs IfstatCmd and captures stdout and stderr
-func runIfstatCmd(args []string) (string, error) {
-	var buf bytes.Buffer
+// runIfstatCmdFull runs IfstatCmd and captures stdout and stderr separately.
+func runIfstatCmdFull(args []string) (string, string, error) {
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
 	rOut, wOut, _ := os.Pipe()
@@ -23,11 +24,16 @@ func runIfstatCmd(args []string) (string, error) {
 
 	wOut.Close()
 	wErr.Close()
-	io.Copy(&buf, rOut)
-	io.Copy(&buf, rErr)
+	io.Copy(&outBuf, rOut)
+	io.Copy(&errBuf, rErr)
 	os.Stdout = oldStdout
 	os.Stderr = oldStderr
-	return buf.String(), err
+	return outBuf.String(), errBuf.String(), err
+}
+
+func runIfstatCmd(args []string) (string, error) {
+	stdout, stderr, err := runIfstatCmdFull(args)
+	return stdout + stderr, err
 }
 
 // skipIfNoInterfaces skips the test if no network interfaces are available
@@ -128,15 +134,15 @@ func TestIfstatCmdMultipleSamples(t *testing.T) {
 func TestIfstatCmdHelp(t *testing.T) {
 	skipIfNoInterfaces(t)
 
-	// --help outputs to stderr
-	output, err := runIfstatCmd([]string{"--help"})
-	// --help should cause flag package to exit with code 1
-	if err != nil && !strings.Contains(err.Error(), "exit status 1") {
+	stdout, stderr, err := runIfstatCmdFull([]string{"--help"})
+	if err != nil {
 		t.Fatalf("ifstat --help failed unexpectedly: %v", err)
 	}
-	result := string(output)
-	if !strings.Contains(result, "Usage") && !strings.Contains(result, "ifstat") {
-		t.Errorf("expected help output to contain 'Usage' and 'ifstat', got: %s", result)
+	if stdout != "" {
+		t.Fatalf("expected help text on stderr only, got stdout=%q", stdout)
+	}
+	if !strings.Contains(stderr, "Usage: gobox ifstat") || !strings.Contains(stderr, "network interface statistics") {
+		t.Errorf("expected help output to contain usage and description, got: %s", stderr)
 	}
 }
 
@@ -176,6 +182,9 @@ func TestIfstatCmdSpecificInterface(t *testing.T) {
 	dataLines := strings.Split(strings.TrimSpace(result), "\n")
 	if len(dataLines) != 2 {
 		t.Errorf("Expected only 1 data line for interface %s, got: %d", ifaceName, len(dataLines)-1)
+	}
+	if got := strings.Fields(dataLines[1])[0]; got != ifaceName {
+		t.Fatalf("expected filtered interface %q, got row %q", ifaceName, dataLines[1])
 	}
 }
 
@@ -218,21 +227,26 @@ func TestIfstatCmdMultipleInterfaces(t *testing.T) {
 	if len(dataLines) != 3 {
 		t.Errorf("Expected 2 data lines for 2 interfaces, got: %d", len(dataLines)-1)
 	}
+	gotIfaces := []string{strings.Fields(dataLines[1])[0], strings.Fields(dataLines[2])[0]}
+	if gotIfaces[0] != ifaces[0] || gotIfaces[1] != ifaces[1] {
+		t.Fatalf("expected interface rows %v, got %v", ifaces, gotIfaces)
+	}
 }
 
 func TestIfstatCmdNonExistentInterface(t *testing.T) {
 	skipIfNoInterfaces(t)
 
 	// Test with a clearly non-existent interface name
-	output, err := runIfstatCmd([]string{"-n", "1", "-i", "thisinterfacedoesnotexist12345"})
+	stdout, stderr, err := runIfstatCmdFull([]string{"-n", "1", "-i", "thisinterfacedoesnotexist12345"})
 	if err != nil {
 		t.Fatalf("ifstat command should not error for non-existent interface: %v", err)
 	}
-
-	result := string(output)
-	// Should show a warning about interface not found
-	if !strings.Contains(result, "warning") && !strings.Contains(result, "not found") {
-		t.Logf("Note: warning message format: %s", result)
+	if !strings.Contains(stderr, "warning: interface thisinterfacedoesnotexist12345 not found") {
+		t.Fatalf("expected warning on stderr for missing interface, got %q", stderr)
+	}
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	if len(lines) != 1 || !strings.Contains(lines[0], "Interface") {
+		t.Fatalf("expected header-only stdout for missing interface, got %q", stdout)
 	}
 }
 
@@ -567,9 +581,14 @@ func TestIfstatCmdInvalidInterval(t *testing.T) {
 	skipIfNoInterfaces(t)
 
 	// Non-numeric interval should cause error
-	_, err := runIfstatCmd([]string{"-n", "1", "-p", "abc"})
+	stdout, stderr, err := runIfstatCmdFull([]string{"-n", "1", "-p", "abc"})
 	if err == nil {
 		t.Errorf("Expected error for invalid interval 'abc'")
+	} else if !strings.Contains(err.Error(), "invalid value") && !strings.Contains(stderr, "invalid value") {
+		t.Fatalf("unexpected invalid interval error stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if stdout != "" {
+		t.Fatalf("expected no stdout for invalid interval, got %q", stdout)
 	}
 }
 
@@ -577,9 +596,14 @@ func TestIfstatCmdInvalidCount(t *testing.T) {
 	skipIfNoInterfaces(t)
 
 	// Non-numeric count should cause error
-	_, err := runIfstatCmd([]string{"-n", "xyz", "-p", "1"})
+	stdout, stderr, err := runIfstatCmdFull([]string{"-n", "xyz", "-p", "1"})
 	if err == nil {
 		t.Errorf("Expected error for invalid count 'xyz'")
+	} else if !strings.Contains(err.Error(), "invalid value") && !strings.Contains(stderr, "invalid value") {
+		t.Fatalf("unexpected invalid count error stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if stdout != "" {
+		t.Fatalf("expected no stdout for invalid count, got %q", stdout)
 	}
 }
 
@@ -587,9 +611,11 @@ func TestIfstatCmdMissingIntervalArg(t *testing.T) {
 	skipIfNoInterfaces(t)
 
 	// -p without argument should error
-	_, err := runIfstatCmd([]string{"-n", "1", "-p"})
+	stdout, stderr, err := runIfstatCmdFull([]string{"-n", "1", "-p"})
 	if err == nil {
 		t.Errorf("Expected error when -p is missing argument")
+	} else if !strings.Contains(err.Error(), "flag needs an argument") && !strings.Contains(stderr, "flag needs an argument") {
+		t.Fatalf("unexpected missing -p arg error stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
 }
 
@@ -597,9 +623,11 @@ func TestIfstatCmdMissingCountArg(t *testing.T) {
 	skipIfNoInterfaces(t)
 
 	// -n without argument should error
-	_, err := runIfstatCmd([]string{"-n", "-p", "1"})
+	stdout, stderr, err := runIfstatCmdFull([]string{"-n", "-p", "1"})
 	if err == nil {
 		t.Errorf("Expected error when -n is missing argument")
+	} else if !strings.Contains(err.Error(), "invalid value") && !strings.Contains(stderr, "invalid value") {
+		t.Fatalf("unexpected missing -n arg error stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
 }
 
@@ -607,9 +635,11 @@ func TestIfstatCmdMissingInterfaceArg(t *testing.T) {
 	skipIfNoInterfaces(t)
 
 	// -i without argument should error
-	_, err := runIfstatCmd([]string{"-n", "1", "-i"})
+	stdout, stderr, err := runIfstatCmdFull([]string{"-n", "1", "-i"})
 	if err == nil {
 		t.Errorf("Expected error when -i is missing argument")
+	} else if !strings.Contains(err.Error(), "flag needs an argument") && !strings.Contains(stderr, "flag needs an argument") {
+		t.Fatalf("unexpected missing -i arg error stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
 }
 

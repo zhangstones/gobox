@@ -11,10 +11,11 @@ import (
 	"testing"
 )
 
-// runMd5sumCmd runs Md5sumCmd and captures stdout and stderr
-// If dir is provided, the command will be executed in that directory
-func runMd5sumCmd(args []string, dir string) (string, error) {
-	var buf bytes.Buffer
+// runMd5sumCmdFull runs Md5sumCmd and captures stdout and stderr separately.
+// If dir is provided, the command will be executed in that directory.
+func runMd5sumCmdFull(args []string, dir string) (string, string, error) {
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
 	rOut, wOut, _ := os.Pipe()
@@ -27,7 +28,7 @@ func runMd5sumCmd(args []string, dir string) (string, error) {
 	if dir != "" {
 		oldDir, err = os.Getwd()
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		os.Chdir(dir)
 	}
@@ -40,17 +41,23 @@ func runMd5sumCmd(args []string, dir string) (string, error) {
 
 	wOut.Close()
 	wErr.Close()
-	io.Copy(&buf, rOut)
-	io.Copy(&buf, rErr)
+	io.Copy(&outBuf, rOut)
+	io.Copy(&errBuf, rErr)
 	os.Stdout = oldStdout
 	os.Stderr = oldStderr
-	return buf.String(), err
+	return outBuf.String(), errBuf.String(), err
 }
 
-// runMd5sumCmdWithStdin runs Md5sumCmd with stdin input and captures output
-// If dir is provided, the command will be executed in that directory
-func runMd5sumCmdWithStdin(args []string, stdinInput string, dir string) (string, error) {
-	var buf bytes.Buffer
+func runMd5sumCmd(args []string, dir string) (string, error) {
+	stdout, stderr, err := runMd5sumCmdFull(args, dir)
+	return stdout + stderr, err
+}
+
+// runMd5sumCmdWithStdinFull runs Md5sumCmd with stdin input and captures stdout/stderr separately.
+// If dir is provided, the command will be executed in that directory.
+func runMd5sumCmdWithStdinFull(args []string, stdinInput string, dir string) (string, string, error) {
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
 	oldStdin := os.Stdin
@@ -80,12 +87,18 @@ func runMd5sumCmdWithStdin(args []string, stdinInput string, dir string) (string
 
 	wOut.Close()
 	wErr.Close()
-	io.Copy(&buf, rOut)
-	io.Copy(&buf, rErr)
+	io.Copy(&outBuf, rOut)
+	io.Copy(&errBuf, rErr)
 	os.Stdout = oldStdout
 	os.Stderr = oldStderr
 	os.Stdin = oldStdin
-	return buf.String(), err
+	return outBuf.String(), errBuf.String(), err
+}
+
+// runMd5sumCmdWithStdin runs Md5sumCmd with stdin input and captures combined output.
+func runMd5sumCmdWithStdin(args []string, stdinInput string, dir string) (string, error) {
+	stdout, stderr, err := runMd5sumCmdWithStdinFull(args, stdinInput, dir)
+	return stdout + stderr, err
 }
 
 // ============== NORMAL CASES TESTS ==============
@@ -559,27 +572,26 @@ func TestMd5sumCmdQuietMode(t *testing.T) {
 	}
 
 	// -q flag in compute mode suppresses error messages
-	output, err := runMd5sumCmd([]string{"-q", testFile}, "")
+	stdout, stderr, err := runMd5sumCmdFull([]string{"-q", testFile}, "")
 	if err != nil {
-		t.Fatalf("md5sum -q failed: %v, output: %s", err, output)
+		t.Fatalf("md5sum -q failed: %v, stdout=%q stderr=%q", err, stdout, stderr)
 	}
-
-	// Should still output hash
-	result := strings.TrimSpace(string(output))
-	if result == "" {
-		t.Errorf("expected output in quiet mode, got empty")
+	if stderr != "" {
+		t.Fatalf("expected quiet mode to suppress stderr, got %q", stderr)
+	}
+	if strings.TrimSpace(stdout) != "5d41402abc4b2a76b9719d911017c592" {
+		t.Fatalf("expected quiet mode to print only digest, got %q", stdout)
 	}
 }
 
 func TestMd5sumCmdQuietModeNonExistent(t *testing.T) {
 	// -q should suppress error messages
-	output, err := runMd5sumCmd([]string{"-q", "/nonexistent/file.txt"}, "")
-	// Command doesn't error out
-	_ = err
-
-	// Should not contain error message
-	if strings.Contains(output, "no such file") {
-		t.Errorf("expected quiet mode to suppress error messages, got: %s", output)
+	stdout, stderr, err := runMd5sumCmdFull([]string{"-q", "/nonexistent/file.txt"}, "")
+	if err != nil {
+		t.Fatalf("expected quiet compute mode missing file to stay non-fatal, got %v", err)
+	}
+	if stdout != "" || stderr != "" {
+		t.Fatalf("expected quiet mode to suppress output for missing file, stdout=%q stderr=%q", stdout, stderr)
 	}
 }
 
@@ -629,10 +641,13 @@ func TestMd5sumCmdCheckQuietModeInvalid(t *testing.T) {
 	}
 
 	// Use cmd.Dir to run command in the directory
-	output, err := runMd5sumCmd([]string{"-c", "-q", "test.txt.md5"}, dir)
-	_ = output
-	_ = err
-	// Quiet mode suppresses output even for failures
+	stdout, stderr, err := runMd5sumCmdFull([]string{"-c", "-q", "test.txt.md5"}, dir)
+	if stdout != "" || stderr != "" {
+		t.Fatalf("expected quiet check failure to stay silent, stdout=%q stderr=%q", stdout, stderr)
+	}
+	if exitErr, ok := err.(md5sumExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("expected quiet check failure exit 1, got %T %v", err, err)
+	}
 }
 
 // ============== STATUS MODE TESTS ==============
@@ -685,9 +700,15 @@ func TestMd5sumCmdCheckStatusModeFailure(t *testing.T) {
 	}
 
 	// Use cmd.Dir to run command in the directory
-	_, err := runMd5sumCmd([]string{"-c", "-s", "test.txt.md5"}, dir)
-	if err == nil {
-		t.Fatalf("expected error in status mode with failed checksum")
+	stdout, stderr, err := runMd5sumCmdFull([]string{"-c", "-s", "test.txt.md5"}, dir)
+	if !strings.Contains(stdout, "test.txt: FAILED") {
+		t.Fatalf("expected failed status output, stdout=%q stderr=%q", stdout, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("expected no stderr for checksum mismatch, got %q", stderr)
+	}
+	if exitErr, ok := err.(md5sumExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("expected status-mode failure exit 1, got %T %v", err, err)
 	}
 }
 
@@ -704,10 +725,16 @@ func TestMd5sumCmdCheckWarnMode(t *testing.T) {
 	}
 
 	// Use cmd.Dir to run command in the directory
-	output, err := runMd5sumCmd([]string{"-c", "-w", "malformed.md5"}, dir)
-	_ = output
-	_ = err
-	// Should complete without crashing
+	stdout, stderr, err := runMd5sumCmdFull([]string{"-c", "-w", "malformed.md5"}, dir)
+	if stdout != "" {
+		t.Fatalf("expected no stdout for malformed warn-only input, got %q", stdout)
+	}
+	if !strings.Contains(stderr, "improperly formatted checksum line") {
+		t.Fatalf("expected malformed warning, got stderr=%q", stderr)
+	}
+	if exitErr, ok := err.(md5sumExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("expected warn mode malformed exit 1, got %T %v", err, err)
+	}
 }
 
 // ============== HELP FLAG TESTS ==============

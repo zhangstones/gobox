@@ -44,8 +44,16 @@ func TestParity_HeadCases(t *testing.T) {
 
 	t.Run("HEAD-004", func(t *testing.T) {
 		res := runGoboxCLI(t, t.TempDir(), "", "head", "-h")
-		if res.ExitCode != 0 || !strings.Contains(res.Stdout, "Usage") {
+		if res.ExitCode != 0 {
 			t.Fatalf("head -h failed: %+v", res)
+		}
+		if strings.TrimSpace(res.Stderr) != "" {
+			t.Fatalf("head -h should not write stderr, got %q", res.Stderr)
+		}
+		for _, want := range []string{"Usage: gobox head", "Options:", "-n NUM", "Examples:"} {
+			if !strings.Contains(res.Stdout, want) {
+				t.Fatalf("head -h missing %q in %q", want, res.Stdout)
+			}
 		}
 	})
 }
@@ -383,8 +391,16 @@ func TestParity_SedCases(t *testing.T) {
 
 	t.Run("SED-005", func(t *testing.T) {
 		res := runGoboxCLI(t, t.TempDir(), "", "sed", "-h")
-		if res.ExitCode != 0 || !strings.Contains(res.Stdout, "Usage") {
+		if res.ExitCode != 0 {
 			t.Fatalf("sed -h failed: %+v", res)
+		}
+		if strings.TrimSpace(res.Stderr) != "" {
+			t.Fatalf("sed -h should not write stderr, got %q", res.Stderr)
+		}
+		for _, want := range []string{"Usage: gobox sed", "Options:", "Commands:", "s/pattern/replacement/flags"} {
+			if !strings.Contains(res.Stdout, want) {
+				t.Fatalf("sed -h missing %q in %q", want, res.Stdout)
+			}
 		}
 	})
 }

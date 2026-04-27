@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,6 +69,73 @@ func topProcessLines(out string) []string {
 		return nil
 	}
 	return lines[headerIdx+1:]
+}
+
+func runWatchCapture(t *testing.T, timeout time.Duration, args ...string) string {
+	t.Helper()
+	var out strings.Builder
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	err = proc.WatchCmdWithContext(ctx, args)
+	_ = w.Close()
+	os.Stdout = old
+	_, _ = io.Copy(&out, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out.String()
+}
+
+func watchPayloadCount(out, payload string) int {
+	count := 0
+	for _, line := range nonEmptyLines(out) {
+		if strings.TrimSpace(line) == payload {
+			count++
+		}
+	}
+	return count
+}
+
+func freeRowFields(t *testing.T, out, prefix string) []string {
+	t.Helper()
+	line := findLineWithPrefix(out, prefix)
+	if line == "" {
+		t.Fatalf("missing %s row\n%s", prefix, out)
+	}
+	fields := strings.Fields(line)
+	if len(fields) < 4 {
+		t.Fatalf("%s row too short: %q", prefix, line)
+	}
+	return fields
+}
+
+func holdLockedOSThreads(t *testing.T, n int) func() {
+	t.Helper()
+	if n <= 0 {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			runtime.LockOSThread()
+			defer runtime.UnlockOSThread()
+			defer wg.Done()
+			<-stop
+		}()
+	}
+	time.Sleep(150 * time.Millisecond)
+	return func() {
+		close(stop)
+		wg.Wait()
+	}
 }
 
 func lsofHeaderAndRows(out string) (string, []string) {
@@ -229,8 +297,14 @@ func TestParity_TopCases(t *testing.T) {
 			if base.ExitCode != 0 {
 				t.Fatalf("%s base top failed: %+v", tc.id, base)
 			}
-			if base.Stdout == res.Stdout {
-				t.Fatalf("%s did not change gobox output relative to baseline\n--- base ---\n%s\n--- variant ---\n%s", tc.id, base.Stdout, res.Stdout)
+			basePIDs := extractLeadingInts(topProcessLines(base.Stdout))
+			resPIDs := extractLeadingInts(topProcessLines(res.Stdout))
+			if len(basePIDs) == 0 || len(resPIDs) == 0 {
+				t.Fatalf("%s expected process rows in both baseline and variant\n--- base ---\n%s\n--- variant ---\n%s", tc.id, base.Stdout, res.Stdout)
+			}
+			switch tc.id {
+			case "TOP-004":
+				assertMonotonic(t, resPIDs, true)
 			}
 		})
 	}
@@ -285,6 +359,8 @@ func TestParity_TopCases(t *testing.T) {
 				t.Fatalf("%s did not change gobox output relative to baseline\n--- base ---\n%s\n--- variant ---\n%s", tc.id, base.Stdout, res.Stdout)
 			}
 			switch tc.id {
+			case "TOP-005":
+				assertTopBatchOutput(t, tc.id, res)
 			case "TOP-006":
 				pids := extractLeadingInts(processLines)
 				if len(pids) != 1 || pids[0] != os.Getpid() {
@@ -302,12 +378,48 @@ func TestParity_TopCases(t *testing.T) {
 					}
 				}
 			case "TOP-009":
-				if len(processLines) > len(topProcessLines(base.Stdout)) {
-					t.Fatalf("%s should not increase visible process rows\n--- base ---\n%s\n--- filtered ---\n%s", tc.id, base.Stdout, res.Stdout)
+				idleCmd := exec.Command("sleep", "30")
+				if err := idleCmd.Start(); err != nil {
+					t.Fatalf("start idle process: %v", err)
+				}
+				defer stopCmd(idleCmd)
+				filterBase := runGoboxCLI(t, env, "", "top", "-b", "-n", "1", "-d", "0", "-p", strconv.Itoa(idleCmd.Process.Pid))
+				filtered := runGoboxCLI(t, env, "", "top", "-b", "-n", "1", "-d", "0", "-i", "-p", strconv.Itoa(idleCmd.Process.Pid))
+				if len(topProcessLines(filterBase.Stdout)) == 0 {
+					t.Fatalf("%s baseline -p output should include idle target\n%s", tc.id, filterBase.Stdout)
+				}
+				if len(topProcessLines(filtered.Stdout)) >= len(topProcessLines(filterBase.Stdout)) {
+					t.Fatalf("%s should hide idle pid %d from filtered output\n--- base ---\n%s\n--- filtered ---\n%s", tc.id, idleCmd.Process.Pid, filterBase.Stdout, filtered.Stdout)
+				}
+			case "TOP-008":
+				releaseThreads := holdLockedOSThreads(t, 3)
+				defer releaseThreads()
+				threaded := runGoboxCLI(t, env, "", "top", "-b", "-n", "1", "-d", "0", "-H", "-p", strconv.Itoa(os.Getpid()))
+				assertTopBatchOutput(t, tc.id, threaded)
+				if got := extractLeadingInts(topProcessLines(threaded.Stdout)); len(got) != 1 || got[0] != os.Getpid() {
+					t.Fatalf("%s should accept thread mode while still honoring pid filtering, got %v\n%s", tc.id, got, threaded.Stdout)
+				}
+			case "TOP-010":
+				markerCmd := startMarkerProcess(t, "top-longcmd")
+				defer stopCmd(markerCmd)
+				shortOut := runGoboxCLI(t, env, "", "top", "-b", "-n", "1", "-d", "0", "-p", strconv.Itoa(markerCmd.Process.Pid))
+				longOut := runGoboxCLI(t, env, "", "top", "-b", "-n", "1", "-d", "0", "-c", "-p", strconv.Itoa(markerCmd.Process.Pid))
+				shortRow, ok := rowFieldsByPID(shortOut.Stdout, strconv.Itoa(markerCmd.Process.Pid))
+				if !ok {
+					t.Fatalf("%s baseline -p output missing marker pid %d\n%s", tc.id, markerCmd.Process.Pid, shortOut.Stdout)
+				}
+				longRow, ok := rowFieldsByPID(longOut.Stdout, strconv.Itoa(markerCmd.Process.Pid))
+				if !ok {
+					t.Fatalf("%s -c output missing marker pid %d\n%s", tc.id, markerCmd.Process.Pid, longOut.Stdout)
+				}
+				if strings.Join(longRow, " ") == strings.Join(shortRow, " ") || !strings.Contains(strings.Join(longRow, " "), "30") {
+					t.Fatalf("%s should expose a fuller command line than baseline\n--- base ---\n%s\n--- long ---\n%s", tc.id, shortOut.Stdout, longOut.Stdout)
 				}
 			case "TOP-011":
 				pids := extractLeadingInts(processLines)
 				assertMonotonic(t, pids, true)
+				nativePIDs := extractLeadingInts(topProcessLines(native.Stdout))
+				assertMonotonic(t, nativePIDs, true)
 			}
 			for _, want := range tc.contains {
 				if !strings.Contains(res.Stdout, want) {
@@ -1039,9 +1151,6 @@ func TestParity_FreeCases(t *testing.T) {
 		if base.ExitCode != 0 || gobox.ExitCode != native.ExitCode {
 			t.Fatalf("free -h exit mismatch base=%+v gobox=%+v native=%+v", base, gobox, native)
 		}
-		if base.Stdout == gobox.Stdout {
-			t.Fatalf("free -h should change output relative to default units\n--- base ---\n%s\n--- human ---\n%s", base.Stdout, gobox.Stdout)
-		}
 		goboxMem := findLineWithPrefix(gobox.Stdout, "Mem:")
 		nativeMem := findLineWithPrefix(native.Stdout, "Mem:")
 		if !containsAny(goboxMem, []string{"Ki", "Mi", "Gi", "Ti", "KB", "MB", "GB", "TB"}) || !containsAny(nativeMem, []string{"Ki", "Mi", "Gi", "Ti", "KB", "MB", "GB", "TB"}) {
@@ -1056,9 +1165,7 @@ func TestParity_FreeCases(t *testing.T) {
 		if base.ExitCode != 0 || gobox.ExitCode != native.ExitCode || findLineWithPrefix(gobox.Stdout, "Mem:") == "" || findLineWithPrefix(native.Stdout, "Mem:") == "" {
 			t.Fatalf("free -m mismatch gobox=%+v native=%+v", gobox, native)
 		}
-		if base.Stdout == gobox.Stdout {
-			t.Fatalf("free -m should change output relative to default byte-scale view\n--- base ---\n%s\n--- MiB ---\n%s", base.Stdout, gobox.Stdout)
-		}
+		baseFields := freeRowFields(t, base.Stdout, "Mem:")
 		goboxMem := findLineWithPrefix(gobox.Stdout, "Mem:")
 		if containsAny(goboxMem, []string{"KB", "MB", "GB", "TB", "Ki", "Mi", "Gi", "Ti"}) {
 			t.Fatalf("free -m Mem row should stay numeric without human unit suffixes\n%s", gobox.Stdout)
@@ -1067,9 +1174,17 @@ func TestParity_FreeCases(t *testing.T) {
 		if len(fields) < 6 {
 			t.Fatalf("free -m Mem row missing numeric columns\n%s", gobox.Stdout)
 		}
-		for _, field := range fields[1:] {
-			if _, err := strconv.ParseFloat(field, 64); err != nil {
+		for i, field := range fields[1:] {
+			got, err := strconv.ParseUint(field, 10, 64)
+			if err != nil {
 				t.Fatalf("free -m Mem row should stay numeric, got %q in %q", field, goboxMem)
+			}
+			baseKiB, err := strconv.ParseUint(baseFields[i+1], 10, 64)
+			if err != nil {
+				t.Fatalf("free baseline row should stay numeric, got %q in %q", baseFields[i+1], base.Stdout)
+			}
+			if want := baseKiB / 1024; got != want {
+				t.Fatalf("free -m should convert KiB to MiB at column %d: got=%d want=%d\nbase=%s\nmib=%s", i+1, got, want, base.Stdout, gobox.Stdout)
 			}
 		}
 	})
@@ -1081,9 +1196,7 @@ func TestParity_FreeCases(t *testing.T) {
 		if base.ExitCode != 0 || gobox.ExitCode != native.ExitCode || findLineWithPrefix(gobox.Stdout, "Mem:") == "" || findLineWithPrefix(native.Stdout, "Mem:") == "" {
 			t.Fatalf("free -g mismatch gobox=%+v native=%+v", gobox, native)
 		}
-		if base.Stdout == gobox.Stdout {
-			t.Fatalf("free -g should change output relative to default byte-scale view\n--- base ---\n%s\n--- GiB ---\n%s", base.Stdout, gobox.Stdout)
-		}
+		baseFields := freeRowFields(t, base.Stdout, "Mem:")
 		goboxMem := findLineWithPrefix(gobox.Stdout, "Mem:")
 		if containsAny(goboxMem, []string{"KB", "MB", "GB", "TB", "Ki", "Mi", "Gi", "Ti"}) {
 			t.Fatalf("free -g Mem row should stay numeric without human unit suffixes\n%s", gobox.Stdout)
@@ -1092,9 +1205,17 @@ func TestParity_FreeCases(t *testing.T) {
 		if len(fields) < 6 {
 			t.Fatalf("free -g Mem row missing numeric columns\n%s", gobox.Stdout)
 		}
-		for _, field := range fields[1:] {
-			if _, err := strconv.ParseFloat(field, 64); err != nil {
+		for i, field := range fields[1:] {
+			got, err := strconv.ParseUint(field, 10, 64)
+			if err != nil {
 				t.Fatalf("free -g Mem row should stay numeric, got %q in %q", field, goboxMem)
+			}
+			baseKiB, err := strconv.ParseUint(baseFields[i+1], 10, 64)
+			if err != nil {
+				t.Fatalf("free baseline row should stay numeric, got %q in %q", baseFields[i+1], base.Stdout)
+			}
+			if want := baseKiB / 1024 / 1024; got != want {
+				t.Fatalf("free -g should convert KiB to GiB at column %d: got=%d want=%d\nbase=%s\ngib=%s", i+1, got, want, base.Stdout, gobox.Stdout)
 			}
 		}
 	})
@@ -1185,24 +1306,9 @@ func TestParity_TimeoutCases(t *testing.T) {
 
 func TestParity_WatchCases(t *testing.T) {
 	t.Run("WATCH-001", func(t *testing.T) {
-		var out strings.Builder
-		old := os.Stdout
-		r, w, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		os.Stdout = w
-		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
-		defer cancel()
-		err = proc.WatchCmdWithContext(ctx, []string{"-n", "0.05", "-t", "echo", "ok"})
-		_ = w.Close()
-		os.Stdout = old
-		_, _ = io.Copy(&out, r)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(out.String(), "ok") {
-			t.Fatalf("watch output missing command result: %q", out.String())
+		out := runWatchCapture(t, 120*time.Millisecond, "-n", "0.05", "-t", "echo", "ok")
+		if count := watchPayloadCount(out, "ok"); count < 2 {
+			t.Fatalf("watch should execute command repeatedly, got %d payload lines in %q", count, out)
 		}
 	})
 	t.Run("WATCH-002", func(t *testing.T) {
@@ -1235,24 +1341,14 @@ func TestParity_WatchCases(t *testing.T) {
 		}
 	})
 	t.Run("WATCH-003", func(t *testing.T) {
-		var out strings.Builder
-		old := os.Stdout
-		r, w, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
+		out := runWatchCapture(t, 120*time.Millisecond, "-n", "0.05", "-t", "echo", "ok")
+		if strings.Contains(out, "Every ") {
+			t.Fatalf("watch -t title suppression mismatch: %q", out)
 		}
-		os.Stdout = w
-		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
-		defer cancel()
-		err = proc.WatchCmdWithContext(ctx, []string{"-n", "0.05", "-t", "echo", "ok"})
-		_ = w.Close()
-		os.Stdout = old
-		_, _ = io.Copy(&out, r)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(out.String(), "ok") || strings.Contains(out.String(), "Every ") {
-			t.Fatalf("watch -t title suppression mismatch: %q", out.String())
+		for _, line := range nonEmptyLines(out) {
+			if strings.TrimSpace(line) != "ok" {
+				t.Fatalf("watch -t should emit command payload only, got line %q in %q", line, out)
+			}
 		}
 	})
 }
@@ -1260,10 +1356,18 @@ func TestParity_WatchCases(t *testing.T) {
 func TestParity_KillCases(t *testing.T) {
 	t.Run("KILL-010", func(t *testing.T) {
 		env := t.TempDir()
-		gobox := runGoboxCLI(t, env, "", "kill", "--dry-run", "-x", "sleep")
+		name := "pkdry" + strconv.FormatInt(time.Now().UnixNano()%100000000, 10)
+		cmd := startExactNameProcess(t, name)
+		defer stopCmd(cmd)
+		gobox := runGoboxCLI(t, env, "", "kill", "--dry-run", "-x", name)
 		if gobox.ExitCode != 0 {
 			t.Fatalf("kill --dry-run failed: %+v", gobox)
 		}
+		out := gobox.Stdout + gobox.Stderr
+		if !strings.Contains(out, name) || !strings.Contains(out, strconv.Itoa(cmd.Process.Pid)) {
+			t.Fatalf("kill --dry-run should print the matched process name and pid, got %q", out)
+		}
+		requireAlive(t, cmd)
 	})
 	for _, tc := range []struct {
 		id     string

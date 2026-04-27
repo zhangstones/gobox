@@ -682,6 +682,11 @@ func doRequest(client *http.Client, targetURL, method string, headers []string, 
 	if err != nil {
 		return 0, err
 	}
+	if timeout > 0 {
+		ctx, cancel := context.WithTimeout(req.Context(), timeout)
+		defer cancel()
+		req = req.WithContext(ctx)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {

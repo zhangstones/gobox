@@ -247,6 +247,34 @@
 | `gobox wc -m` | `wc -m` | ✅ 一致 | 打印字符数 |
 | `gobox wc -L` | `wc -L` | ✅ 一致 | 打印最长行长度 |
 
+### seq
+
+`seq` 对齐 Linux `seq` 的常用数字序列生成功能，支持默认起始值、显式步长、自定义分隔符和输出格式，覆盖排障脚本中快速构造编号、端口区间、重试序列等高频场景。
+
+| gobox 参数 | 对应原生命令参数/参考基线 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox seq LAST` | `seq LAST` | ✅ 常用一致 | 输出 `1..LAST` 的递增序列 |
+| `gobox seq FIRST LAST` | `seq FIRST LAST` | ✅ 常用一致 | 输出 `FIRST..LAST`，步长默认为 `1` |
+| `gobox seq FIRST INC LAST` | `seq FIRST INC LAST` | ✅ 常用一致 | 输出指定起点、步长和终点的序列，支持负步长与浮点数 |
+| `gobox seq -f FORMAT ...` | `seq -f` | ✅ 常用一致 | 使用 printf 风格格式化每个数字 |
+| `gobox seq -s SEP ...` | `seq -s` | ✅ 一致 | 使用自定义分隔符替代换行 |
+| `gobox seq -w ...` | `seq -w` | ⚠️ 部分一致 | 按最大位宽左侧补零；当前主要覆盖整数宽度对齐，复杂浮点补齐细节不承诺完全同形 |
+| `gobox seq -h` | `seq --help` | ✅ 一致 | 显示帮助信息 |
+
+### rand
+
+`rand` 是 gobox 自带的随机字节生成功能，面向容器内快速生成 token、密钥片段或测试数据的场景。该命令默认输出 hex，也支持 base64 和直接写文件。
+
+| gobox 参数 | 对应原生命令参数/参考基线 | 实现一致性 | 功能说明 |
+|------------|---------------|------------|----------|
+| `gobox rand` | `openssl rand -hex 32` | 🆕 gobox扩展 | 默认生成 32 字节随机数据，并以 hex 文本输出 |
+| `gobox rand NUM` | `openssl rand -hex NUM` | 🆕 gobox扩展 | 通过位置参数指定要生成的字节数 |
+| `gobox rand -n NUM` | `openssl rand -hex NUM` | 🆕 gobox扩展 | 通过显式参数指定要生成的字节数 |
+| `gobox rand -hex` | `openssl rand -hex` | 🆕 gobox扩展 | 以 hex 编码输出随机字节（默认行为） |
+| `gobox rand -base64` | `openssl rand -base64` | 🆕 gobox扩展 | 以 base64 编码输出随机字节 |
+| `gobox rand -out FILE` | `openssl rand -out FILE` | 🆕 gobox扩展 | 将生成结果写入指定文件 |
+| `gobox rand -h` / `gobox rand --help` | `openssl rand -help` | 🆕 gobox扩展 | 显示帮助信息 |
+
 ### hex
 
 `hex` 面向容器排障中的十六进制查看与编解码场景。`--dump` 对齐 `hexdump` 常用查看能力，`--encode` / `--decode` 是 gobox 扩展，用于轻量替代 `xxd -p` / `xxd -r -p` 场景。
@@ -639,6 +667,7 @@
 
 | 命令 | 类别 | 功能 |
 |------|------|------|
+| alias | Shell 辅助 | shell alias/unalias 片段生成 |
 | find | 文件系统 | 文件搜索 |
 | du | 文件系统 | 磁盘使用统计 |
 | df | 文件系统 | 文件系统容量 |
@@ -652,6 +681,8 @@
 | sort | 文本处理 | 排序 |
 | uniq | 文本处理 | 去重 |
 | wc | 文本处理 | 计数 |
+| seq | 文本处理 | 数字序列生成 |
+| rand | 文本处理 | 随机字节/文本生成 |
 | hex | 文本处理 | 十六进制查看与编解码 |
 | base64 | 文本处理 | base64 编解码 |
 | strings | 文本处理 | 可打印字符串提取 |

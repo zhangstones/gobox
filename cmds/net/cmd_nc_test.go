@@ -12,9 +12,10 @@ import (
 	"time"
 )
 
-// runNcCmd runs NcCmd with args and captures stdout and stderr
-func runNcCmd(args []string) (string, error) {
-	var buf bytes.Buffer
+// runNcCmdFull runs NcCmd with args and captures stdout and stderr separately.
+func runNcCmdFull(args []string) (string, string, error) {
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
 	rOut, wOut, _ := os.Pipe()
@@ -26,16 +27,22 @@ func runNcCmd(args []string) (string, error) {
 
 	wOut.Close()
 	wErr.Close()
-	io.Copy(&buf, rOut)
-	io.Copy(&buf, rErr)
+	io.Copy(&outBuf, rOut)
+	io.Copy(&errBuf, rErr)
 	os.Stdout = oldStdout
 	os.Stderr = oldStderr
-	return buf.String(), err
+	return outBuf.String(), errBuf.String(), err
 }
 
-// runNcCmdWithStdin runs NcCmd with stdin input and captures stdout and stderr
-func runNcCmdWithStdin(args []string, stdinInput string) (string, error) {
-	var buf bytes.Buffer
+func runNcCmd(args []string) (string, error) {
+	stdout, stderr, err := runNcCmdFull(args)
+	return stdout + stderr, err
+}
+
+// runNcCmdWithStdinFull runs NcCmd with stdin input and captures stdout/stderr separately.
+func runNcCmdWithStdinFull(args []string, stdinInput string) (string, string, error) {
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
 	oldStdin := os.Stdin
@@ -55,12 +62,17 @@ func runNcCmdWithStdin(args []string, stdinInput string) (string, error) {
 
 	wOut.Close()
 	wErr.Close()
-	io.Copy(&buf, rOut)
-	io.Copy(&buf, rErr)
+	io.Copy(&outBuf, rOut)
+	io.Copy(&errBuf, rErr)
 	os.Stdout = oldStdout
 	os.Stderr = oldStderr
 	os.Stdin = oldStdin
-	return buf.String(), err
+	return outBuf.String(), errBuf.String(), err
+}
+
+func runNcCmdWithStdin(args []string, stdinInput string) (string, error) {
+	stdout, stderr, err := runNcCmdWithStdinFull(args, stdinInput)
+	return stdout + stderr, err
 }
 
 // ============== HELPER FUNCTIONS FOR SERVER MODE TESTS ==============
@@ -86,18 +98,15 @@ func waitForPort(port int, timeout time.Duration) bool {
 // ============== BASIC CONNECT TESTS ==============
 
 func TestNCBasicConnect(t *testing.T) {
-	// Start a TCP server in a goroutine
-	serverReady := make(chan struct{})
+	serverReady := make(chan string, 1)
 	go func() {
 		ln, err := net.Listen("tcp", "localhost:0")
 		if err != nil {
 			t.Logf("Server listen failed: %v", err)
-			close(serverReady)
+			serverReady <- ""
 			return
 		}
-		addr := ln.Addr().String()
-		_ = strings.Split(addr, ":")[len(strings.Split(addr, ":"))-1]
-		close(serverReady)
+		serverReady <- strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
 
 		conn, err := ln.Accept()
 		if err != nil {
@@ -114,9 +123,18 @@ func TestNCBasicConnect(t *testing.T) {
 		conn.Write(buf[:n])
 	}()
 
-	// Wait for server to be ready
-	<-serverReady
-	time.Sleep(100 * time.Millisecond)
+	port := <-serverReady
+	if port == "" {
+		t.Fatal("server failed to start")
+	}
+
+	output, err := runNcCmdWithStdin([]string{"127.0.0.1", port}, "ping from nc\n")
+	if err != nil {
+		t.Fatalf("expected nc client to connect successfully: %v", err)
+	}
+	if !strings.Contains(output, "ping from nc") {
+		t.Fatalf("expected echoed payload, got %q", output)
+	}
 }
 
 func TestNCHelp(t *testing.T) {
@@ -194,7 +212,6 @@ func TestNCListenMode(t *testing.T) {
 // ============== ALTERNATIVE LISTEN MODE TEST (direct function) ==============
 
 func TestNCListenModeDirect(t *testing.T) {
-	// Get an available port using a TCP listener
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Failed to find available port: %v", err)
@@ -202,39 +219,47 @@ func TestNCListenModeDirect(t *testing.T) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
 
-	// Start a TCP server in a goroutine to simulate nc server
-	serverDone := make(chan struct{})
-	go func() {
-		ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
-		if err != nil {
-			close(serverDone)
-			return
-		}
-		defer ln.Close()
-
-		conn, err := ln.Accept()
-		if err != nil {
-			close(serverDone)
-			return
-		}
-		defer conn.Close()
-
-		// Echo back any data received
-		buf := make([]byte, 1024)
-		n, _ := conn.Read(buf)
-		conn.Write(buf[:n])
-		close(serverDone)
+	oldStdout := os.Stdout
+	oldStdin := os.Stdin
+	rOut, wOut, _ := os.Pipe()
+	rIn, wIn, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stdin = rIn
+	defer func() {
+		os.Stdout = oldStdout
+		os.Stdin = oldStdin
 	}()
 
-	// Give server time to start
-	time.Sleep(100 * time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serverDone := make(chan error, 1)
+	go func() {
+		serverDone <- NcCmdWithContext(ctx, []string{"-l", strconv.Itoa(port)})
+	}()
 
-	// Check that server is listening
 	if !waitForPort(port, 1*time.Second) {
 		t.Fatalf("Server not listening on port %d", port)
 	}
 
-	t.Logf("Server started on port %d", port)
+	client, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(port), time.Second)
+	if err != nil {
+		t.Fatalf("client dial failed: %v", err)
+	}
+	if _, err := io.WriteString(client, "hello listener\n"); err != nil {
+		t.Fatalf("client write failed: %v", err)
+	}
+	_ = client.Close()
+	_ = wIn.Close()
+	err = <-serverDone
+	_ = wOut.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, rOut)
+	if err != nil && err != context.Canceled {
+		t.Fatalf("listen mode returned error: %v", err)
+	}
+	if buf.Len() != 0 && !strings.Contains(buf.String(), "hello listener") {
+		t.Fatalf("expected any listener output to include client payload, got %q", buf.String())
+	}
 }
 
 // ============== LISTEN AND CONNECT TESTS ==============
@@ -298,11 +323,13 @@ func TestNCListenUDP(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Connect with nc client using UDP
-	output, err := runNcCmd([]string{"-u", "-zj", "127.0.0.1", strconv.Itoa(port)})
+	output, err := runNcCmd([]string{"-u", "-z", "127.0.0.1", strconv.Itoa(port)})
 	if err != nil {
-		t.Logf("UDP scan output: %s, err: %v", string(output), err)
+		t.Fatalf("expected UDP scan to succeed against an open port, output=%q err=%v", output, err)
 	}
-	t.Logf("UDP listen test output: %s", string(output))
+	if output != "" {
+		t.Fatalf("expected zero-I/O UDP scan to stay silent without -v, got %q", output)
+	}
 }
 
 // ============== PORT SCAN MODE TESTS ==============
@@ -332,13 +359,12 @@ func TestNCPortScanOpen(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Scan the port with -z (zero I/O)
-	output, err := runNcCmd([]string{"-z", "127.0.0.1", strconv.Itoa(port)})
-	result := string(output)
-	t.Logf("Port scan output: %s, err: %v", result, err)
-
-	// With -z, it should exit successfully if port is open
+	stdout, stderr, err := runNcCmdFull([]string{"-z", "127.0.0.1", strconv.Itoa(port)})
 	if err != nil {
-		t.Errorf("Port scan failed unexpectedly: %v", err)
+		t.Fatalf("expected open TCP scan to succeed, stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if stdout != "" || stderr != "" {
+		t.Fatalf("expected non-verbose open scan to stay silent, stdout=%q stderr=%q", stdout, stderr)
 	}
 }
 
@@ -432,11 +458,11 @@ func TestNCVerboseNumeric(t *testing.T) {
 
 	// Connect with verbose and numeric mode
 	output, err := runNcCmd([]string{"-v", "-n", "-z", "127.0.0.1", strconv.Itoa(port)})
-	result := string(output)
-	t.Logf("Verbose numeric output: %s", result)
-
-	if err == nil {
-		t.Logf("Connect succeeded with verbose numeric mode")
+	if err != nil {
+		t.Fatalf("expected verbose numeric scan to succeed: %v", err)
+	}
+	if !strings.Contains(output, "(not resolving host)") || !strings.Contains(output, "127.0.0.1") {
+		t.Fatalf("expected numeric verbose output to mention literal host without DNS resolution, got %q", output)
 	}
 
 	ln.Close()
@@ -503,6 +529,8 @@ func TestNCInvalidPort(t *testing.T) {
 	// Should fail
 	if err == nil {
 		t.Errorf("Expected error for invalid port, got success")
+	} else if !strings.Contains(err.Error(), "listen mode requires port") && !strings.Contains(err.Error(), "unknown port") && !strings.Contains(err.Error(), "missing port in address") {
+		t.Fatalf("unexpected invalid-port error: output=%q err=%v", result, err)
 	}
 }
 
@@ -515,6 +543,8 @@ func TestNCMissingHost(t *testing.T) {
 	// Should fail with usage error
 	if err == nil {
 		t.Errorf("Expected error for missing arguments")
+	} else if !strings.Contains(err.Error(), "requires host and port") {
+		t.Fatalf("unexpected missing-host error: output=%q err=%v", result, err)
 	}
 }
 

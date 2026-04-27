@@ -15,9 +15,10 @@ import (
 	"time"
 )
 
-// runCurlCmd runs CurlCmd with args and captures stdout and stderr
-func runCurlCmd(args []string) (string, error) {
-	var buf bytes.Buffer
+// runCurlCmdFull runs CurlCmd with args and captures stdout and stderr separately.
+func runCurlCmdFull(args []string) (string, string, error) {
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
 	rOut, wOut, _ := os.Pipe()
@@ -29,16 +30,22 @@ func runCurlCmd(args []string) (string, error) {
 
 	wOut.Close()
 	wErr.Close()
-	io.Copy(&buf, rOut)
-	io.Copy(&buf, rErr)
+	io.Copy(&outBuf, rOut)
+	io.Copy(&errBuf, rErr)
 	os.Stdout = oldStdout
 	os.Stderr = oldStderr
-	return buf.String(), err
+	return outBuf.String(), errBuf.String(), err
 }
 
-// runCurlCmdWithStdin runs CurlCmd with stdin input and captures stdout and stderr
-func runCurlCmdWithStdin(args []string, stdinInput string) (string, error) {
-	var buf bytes.Buffer
+func runCurlCmd(args []string) (string, error) {
+	stdout, stderr, err := runCurlCmdFull(args)
+	return stdout + stderr, err
+}
+
+// runCurlCmdWithStdinFull runs CurlCmd with stdin input and captures stdout/stderr separately.
+func runCurlCmdWithStdinFull(args []string, stdinInput string) (string, string, error) {
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
 	oldStdin := os.Stdin
@@ -58,12 +65,17 @@ func runCurlCmdWithStdin(args []string, stdinInput string) (string, error) {
 
 	wOut.Close()
 	wErr.Close()
-	io.Copy(&buf, rOut)
-	io.Copy(&buf, rErr)
+	io.Copy(&outBuf, rOut)
+	io.Copy(&errBuf, rErr)
 	os.Stdout = oldStdout
 	os.Stderr = oldStderr
 	os.Stdin = oldStdin
-	return buf.String(), err
+	return outBuf.String(), errBuf.String(), err
+}
+
+func runCurlCmdWithStdin(args []string, stdinInput string) (string, error) {
+	stdout, stderr, err := runCurlCmdWithStdinFull(args, stdinInput)
+	return stdout + stderr, err
 }
 
 // ============== BASIC GET TESTS ==============
@@ -152,12 +164,12 @@ func TestCurlSilentModeSuppressesProgress(t *testing.T) {
 }
 
 func TestCurlSilentModeSuppressesErrorOutput(t *testing.T) {
-	output, err := runCurlCmd([]string{"-s", "://bad-url"})
+	stdout, stderr, err := runCurlCmdFull([]string{"-s", "://bad-url"})
 	if err == nil {
 		t.Fatalf("expected curl to fail for invalid URL")
 	}
-	if output != "" {
-		t.Fatalf("expected no stdout/stderr output in silent mode, got: %q", output)
+	if stdout != "" || stderr != "" {
+		t.Fatalf("expected silent mode to suppress output, stdout=%q stderr=%q", stdout, stderr)
 	}
 }
 
@@ -169,10 +181,15 @@ func TestCurlShowErrorWithSilent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := runCurlCmd([]string{"-s", "-S", "-f", server.URL})
-	// With -f, it should exit with error for 500
+	stdout, stderr, err := runCurlCmdFull([]string{"-s", "-S", "-f", server.URL})
 	if err == nil {
-		t.Logf("Note: curl exited without error (some implementations may not fail on 500)")
+		t.Fatalf("expected -s -S -f to fail on HTTP 500")
+	}
+	if stdout != "" {
+		t.Fatalf("expected no response body on fail-on-error, got stdout=%q", stdout)
+	}
+	if !strings.Contains(strings.ToLower(stderr), "500") && !strings.Contains(strings.ToLower(stderr), "server error") {
+		t.Fatalf("expected show-error stderr to mention the HTTP failure, got %q", stderr)
 	}
 }
 
@@ -229,9 +246,15 @@ func TestCurlOutputToFileError(t *testing.T) {
 
 	// Try to write to a directory (should fail)
 	tmpDir := t.TempDir()
-	_, err := runCurlCmd([]string{"-o", tmpDir, server.URL})
+	stdout, stderr, err := runCurlCmdFull([]string{"-o", tmpDir, server.URL})
 	if err == nil {
 		t.Errorf("Expected error when writing to directory")
+	}
+	if stdout != "" {
+		t.Fatalf("expected no stdout when output path is invalid, got %q", stdout)
+	}
+	if !strings.Contains(strings.ToLower(stderr), "directory") && !strings.Contains(strings.ToLower(err.Error()), "directory") {
+		t.Fatalf("expected directory-related error, stderr=%q err=%v", stderr, err)
 	}
 }
 
@@ -428,9 +451,15 @@ func TestCurlMaxTime(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := runCurlCmd([]string{"-m", "1", server.URL})
+	stdout, stderr, err := runCurlCmdFull([]string{"-m", "1", server.URL})
 	if err == nil {
 		t.Errorf("Expected timeout error with max-time 1 second and 2 second delay")
+	}
+	if stdout != "" {
+		t.Fatalf("expected no stdout on request timeout, got %q", stdout)
+	}
+	if !strings.Contains(strings.ToLower(stderr+err.Error()), "timeout") && !strings.Contains(strings.ToLower(stderr+err.Error()), "deadline") {
+		t.Fatalf("expected timeout error details, stderr=%q err=%v", stderr, err)
 	}
 }
 
@@ -702,9 +731,15 @@ func TestCurlFailOnError4xx(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := runCurlCmd([]string{"-f", server.URL})
+	stdout, stderr, err := runCurlCmdFull([]string{"-f", server.URL})
 	if err == nil {
 		t.Errorf("Expected error on 404 with -f flag")
+	}
+	if stdout != "" {
+		t.Fatalf("expected fail-on-error to suppress body, got stdout=%q", stdout)
+	}
+	if !strings.Contains(strings.ToLower(stderr+err.Error()), "404") && !strings.Contains(strings.ToLower(stderr+err.Error()), "not found") {
+		t.Fatalf("expected 404 diagnostic, stderr=%q err=%v", stderr, err)
 	}
 }
 
@@ -714,9 +749,15 @@ func TestCurlFailOnError5xx(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := runCurlCmd([]string{"-f", server.URL})
+	stdout, stderr, err := runCurlCmdFull([]string{"-f", server.URL})
 	if err == nil {
 		t.Errorf("Expected error on 500 with -f flag")
+	}
+	if stdout != "" {
+		t.Fatalf("expected fail-on-error to suppress body, got stdout=%q", stdout)
+	}
+	if !strings.Contains(strings.ToLower(stderr+err.Error()), "500") && !strings.Contains(strings.ToLower(stderr+err.Error()), "internal server error") {
+		t.Fatalf("expected 500 diagnostic, stderr=%q err=%v", stderr, err)
 	}
 }
 
@@ -1252,8 +1293,11 @@ func TestCurlBenchRequestTimeout(t *testing.T) {
 	}
 
 	result := string(output)
-	if !strings.Contains(result, "Failed:") {
-		t.Logf("Note: benchmark result: %s", result)
+	if !strings.Contains(result, "Failed:") || !strings.Contains(result, "Requests: 10") {
+		t.Fatalf("expected benchmark timeout summary, got: %s", result)
+	}
+	if strings.Contains(result, "Failed: 0") {
+		t.Fatalf("expected at least one timed out benchmark request, got: %s", result)
 	}
 }
 

@@ -54,6 +54,14 @@ func captureNetOutput(t *testing.T, fn func() error) (string, error) {
 	return outBuf.String() + errBuf.String(), runErr
 }
 
+func netstatDataLines(output string) []string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) <= 1 {
+		return nil
+	}
+	return lines[1:]
+}
+
 func TestParsePortFromAddr(t *testing.T) {
 	if got := parsePortFromAddr("0100007F:0035"); got != 53 {
 		t.Fatalf("expected port 53, got %d", got)
@@ -167,8 +175,20 @@ func TestNetstatCmdPortFilterMatchesExactPort(t *testing.T) {
 		t.Fatalf("NetstatCmd failed: %v", err)
 	}
 
-	if !strings.Contains(output, ":"+strconv.Itoa(port)) {
-		t.Fatalf("expected output to contain exact port %d, got %q", port, output)
+	target := ":" + strconv.Itoa(port)
+	var matched []string
+	for _, line := range netstatDataLines(output) {
+		if strings.Contains(line, target) {
+			matched = append(matched, line)
+		}
+	}
+	if len(matched) == 0 {
+		t.Fatalf("expected at least one row for port %d, got %q", port, output)
+	}
+	for _, line := range matched {
+		if !strings.Contains(line, target) {
+			t.Fatalf("unexpected matched line for port %d: %q", port, line)
+		}
 	}
 }
 
@@ -191,11 +211,26 @@ func TestNetstatCmdStateFilterSupportsStateList(t *testing.T) {
 		t.Fatalf("NetstatCmd failed: %v", err)
 	}
 
-	if !strings.Contains(output, "LISTEN") {
-		t.Fatalf("expected LISTEN entry for port %d, got %q", port, output)
+	target := ":" + strconv.Itoa(port)
+	rows := netstatDataLines(output)
+	if len(rows) == 0 {
+		t.Fatalf("expected at least one data row, got %q", output)
 	}
-	if strings.Contains(output, "TIME_WAIT") {
-		t.Fatalf("expected state filter to exclude unrelated states, got %q", output)
+	var found bool
+	for _, line := range rows {
+		if !strings.Contains(line, target) {
+			continue
+		}
+		found = true
+		if !strings.Contains(line, "LISTEN") && !strings.Contains(line, "ESTABLISHED") {
+			t.Fatalf("expected state-filtered row for port %d to be LISTEN/ESTABLISHED, got %q", port, line)
+		}
+		if strings.Contains(line, "TIME_WAIT") {
+			t.Fatalf("expected state filter to exclude unrelated states, got %q", line)
+		}
+	}
+	if !found {
+		t.Fatalf("expected state-filtered row for port %d, got %q", port, output)
 	}
 }
 

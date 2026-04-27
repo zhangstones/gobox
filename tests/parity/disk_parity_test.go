@@ -6,9 +6,63 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func iostatHeaderAndRows(out string) ([]string, [][]string) {
+	lines := nonEmptyLines(out)
+	headerIdx := -1
+	for i, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == "Device" {
+			headerIdx = i
+			break
+		}
+	}
+	if headerIdx < 0 {
+		return nil, nil
+	}
+	header := strings.Fields(lines[headerIdx])
+	rows := make([][]string, 0, len(lines)-headerIdx-1)
+	for _, line := range lines[headerIdx+1:] {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		rows = append(rows, fields)
+	}
+	return header, rows
+}
+
+func iostatCommonDeviceRows(goboxRows, nativeRows [][]string) [][]string {
+	nativeByDev := make(map[string][]string, len(nativeRows))
+	for _, row := range nativeRows {
+		if len(row) > 0 {
+			nativeByDev[row[0]] = row
+		}
+	}
+	var common [][]string
+	for _, row := range goboxRows {
+		if len(row) == 0 {
+			continue
+		}
+		if native, ok := nativeByDev[row[0]]; ok {
+			common = append(common, row)
+			common = append(common, native)
+		}
+	}
+	return common
+}
+
+func isIostatRateField(field string) bool {
+	if strings.HasSuffix(field, "/s") {
+		return true
+	}
+	_, err := strconv.ParseFloat(field, 64)
+	return err == nil
+}
 
 func TestParity_Md5sumCases(t *testing.T) {
 	runExactParityCases(t, []parityCase{
@@ -110,16 +164,22 @@ func TestParity_IostatCases(t *testing.T) {
 		if base.Stdout == gobox.Stdout {
 			t.Fatalf("iostat -H did not change output\n--- base ---\n%s\n--- human ---\n%s", base.Stdout, gobox.Stdout)
 		}
-		lines := nonEmptyLines(gobox.Stdout)
-		header := strings.Fields(lines[0])
-		if len(lines) < 2 || len(header) < 2 || header[0] != "Device" {
+		header, rows := iostatHeaderAndRows(gobox.Stdout)
+		if len(rows) == 0 || len(header) < 2 || header[0] != "Device" {
 			t.Fatalf("iostat -H missing header or rows: %+v", gobox)
 		}
-		if !strings.Contains(lines[0], "/s") {
+		if !strings.Contains(strings.Join(header, " "), "/s") {
 			t.Fatalf("iostat -H missing per-second units: %+v", gobox)
 		}
-		if row := lines[1]; !strings.Contains(row, "K/s") && !strings.Contains(row, "M/s") && !strings.Contains(row, "B/s") {
-			t.Fatalf("iostat -H missing humanized throughput units: %+v", gobox)
+		for _, row := range rows {
+			if len(row) != len(header) {
+				t.Fatalf("iostat -H row width mismatch row=%v header=%v", row, header)
+			}
+			for _, field := range row[1:] {
+				if !isIostatRateField(field) {
+					t.Fatalf("iostat -H should emit human-readable rate fields, got %q in row %v", field, row)
+				}
+			}
 		}
 	})
 
@@ -142,16 +202,17 @@ func TestParity_IostatCases(t *testing.T) {
 		if base.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("iostat --cgroup failed base=%+v cgroup=%+v", base, res)
 		}
-		lines := nonEmptyLines(res.Stdout)
-		header := strings.Fields(lines[0])
-		if len(lines) < 2 || len(header) < 2 || header[0] != "Device" {
+		header, rows := iostatHeaderAndRows(res.Stdout)
+		if len(rows) == 0 || len(header) < 2 || header[0] != "Device" {
 			t.Fatalf("iostat --cgroup missing header: %+v", res)
 		}
 		if base.Stdout == res.Stdout {
 			t.Fatalf("iostat --cgroup did not change output relative to diskstats baseline\n--- base ---\n%s\n--- cgroup ---\n%s", base.Stdout, res.Stdout)
 		}
-		if len(strings.Fields(lines[1])) < 7 {
-			t.Fatalf("iostat --cgroup expected structured device row: %q", lines[1])
+		for _, row := range rows {
+			if len(row) != len(header) {
+				t.Fatalf("iostat --cgroup expected structured device row width=%d header=%d row=%v", len(row), len(header), row)
+			}
 		}
 	})
 
@@ -624,20 +685,37 @@ func assertIostatStructuredParity(t *testing.T, gobox, native parityResult) {
 	if native.ExitCode != 0 {
 		t.Fatalf("native iostat failed: %+v", native)
 	}
-	if !strings.Contains(gobox.Stdout, "Device") || !strings.Contains(native.Stdout, "Device") {
+	goboxHeader, goboxRows := iostatHeaderAndRows(gobox.Stdout)
+	nativeHeader, nativeRows := iostatHeaderAndRows(native.Stdout)
+	if len(goboxHeader) == 0 || len(nativeHeader) == 0 || goboxHeader[0] != "Device" || nativeHeader[0] != "Device" {
 		t.Fatalf("iostat header missing\ngobox=%q\nnative=%q", gobox.Stdout, native.Stdout)
 	}
-
-	goboxDevices := iostatDeviceSet(gobox.Stdout)
-	nativeDevices := iostatDeviceSet(native.Stdout)
-	if len(goboxDevices) == 0 {
+	if len(goboxRows) == 0 {
 		t.Fatalf("gobox iostat produced no device rows: %+v", gobox)
 	}
-	if len(nativeDevices) == 0 {
+	if len(nativeRows) == 0 {
 		t.Fatalf("native iostat produced no device rows: %+v", native)
 	}
+	if len(goboxHeader) < 4 || len(nativeHeader) < 4 {
+		t.Fatalf("iostat header too short\ngobox=%v\nnative=%v", goboxHeader, nativeHeader)
+	}
+	for _, row := range goboxRows {
+		if len(row) != len(goboxHeader) {
+			t.Fatalf("gobox iostat row width mismatch row=%v header=%v", row, goboxHeader)
+		}
+	}
+	for _, row := range nativeRows {
+		if len(row) != len(nativeHeader) {
+			t.Fatalf("native iostat row width mismatch row=%v header=%v", row, nativeHeader)
+		}
+	}
+	goboxDevices := iostatDeviceSet(gobox.Stdout)
+	nativeDevices := iostatDeviceSet(native.Stdout)
 	if !hasSetIntersection(goboxDevices, nativeDevices) {
 		t.Fatalf("iostat device sets do not overlap\ngobox=%v\nnative=%v", goboxDevices, nativeDevices)
+	}
+	if len(iostatCommonDeviceRows(goboxRows, nativeRows)) == 0 {
+		t.Fatalf("iostat common-device structured comparison found no shared rows\ngobox=%v\nnative=%v", goboxRows, nativeRows)
 	}
 }
 

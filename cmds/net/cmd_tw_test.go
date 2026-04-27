@@ -4,15 +4,40 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
-// runTwCmd runs TwCmd with args and captures stdout
+// runTwCmdFull runs TwCmd with args and captures stdout/stderr separately.
+func runTwCmdFull(args []string) (string, string, error) {
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stderr = wErr
+
+	err := TwCmd(args)
+
+	wOut.Close()
+	wErr.Close()
+	io.Copy(&outBuf, rOut)
+	io.Copy(&errBuf, rErr)
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
+	return outBuf.String(), errBuf.String(), err
+}
+
+// runTwCmd runs TwCmd with args and captures stdout.
 func runTwCmd(args []string) (string, error) {
 	var buf bytes.Buffer
 	old := os.Stdout
@@ -25,6 +50,31 @@ func runTwCmd(args []string) (string, error) {
 	io.Copy(&buf, r)
 	os.Stdout = old
 	return buf.String(), err
+}
+
+func freeTCPPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port: %v", err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func waitForHTTPReady(t *testing.T, url string) {
+	t.Helper()
+	client := &http.Client{Timeout: 100 * time.Millisecond}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(url)
+		if err == nil {
+			_ = resp.Body.Close()
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("server did not become ready: %s", url)
 }
 
 // ============== HELP TESTS ==============
@@ -53,6 +103,54 @@ func TestTwHelpLong(t *testing.T) {
 	result := string(output)
 	if !strings.Contains(result, "Usage: gobox tw") {
 		t.Errorf("Expected usage info in output, got: %s", result)
+	}
+}
+
+func TestTwCmdBenchServerServesPing(t *testing.T) {
+	port := freeTCPPort(t)
+	go func() {
+		_ = TwCmd([]string{"--bench", "-p", strconv.Itoa(port)})
+	}()
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/ping", port)
+	waitForHTTPReady(t, url)
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET /ping failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if strings.TrimSpace(string(body)) != "pong" {
+		t.Fatalf("expected pong, got %q", body)
+	}
+}
+
+func TestTwCmdStaticServerServesConfiguredDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello from tw"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	port := freeTCPPort(t)
+	go func() {
+		_ = TwCmd([]string{"-p", strconv.Itoa(port), "-d", dir})
+	}()
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/hello.txt", port)
+	waitForHTTPReady(t, url)
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET /hello.txt failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if string(body) != "hello from tw" {
+		t.Fatalf("expected file body, got %q", body)
 	}
 }
 

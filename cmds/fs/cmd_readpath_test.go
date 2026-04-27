@@ -111,10 +111,17 @@ func TestReadpathCmdOptionsCanonicalizeMissingParentErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := captureFsCmd(t, func() error {
+	stdout, stderr, err := captureFsCmdFull(t, func() error {
 		return ReadpathCmd([]string{"-f", filepath.Join(dir, "missing-parent", "new-file")})
-	}); err == nil {
+	})
+	if err == nil {
 		t.Fatal("expected missing parent error")
+	}
+	if stdout != "" {
+		t.Fatalf("expected no stdout on missing parent error, got %q", stdout)
+	}
+	if !strings.Contains(stderr, "missing-parent") {
+		t.Fatalf("expected stderr to mention missing parent, got %q", stderr)
 	}
 
 }
@@ -130,10 +137,17 @@ func TestReadpathCmdOptionsExistingPathRequired(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := captureFsCmd(t, func() error {
+	stdout, stderr, err := captureFsCmdFull(t, func() error {
 		return ReadpathCmd([]string{"-e", filepath.Join(dir, "missing")})
-	}); err == nil {
+	})
+	if err == nil {
 		t.Fatal("expected -e missing path error")
+	}
+	if stdout != "" {
+		t.Fatalf("expected no stdout for -e missing path, got %q", stdout)
+	}
+	if !strings.Contains(stderr, "missing") {
+		t.Fatalf("expected stderr to mention missing path, got %q", stderr)
 	}
 
 }
@@ -196,10 +210,17 @@ func TestReadpathCmdOptionsReadlinkNonSymlinkErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := captureFsCmd(t, func() error {
+	stdout, stderr, err := captureFsCmdFull(t, func() error {
 		return ReadpathCmd([]string{"-l", file})
-	}); err == nil {
+	})
+	if err == nil {
 		t.Fatal("expected non-symlink readlink error")
+	}
+	if stdout != "" {
+		t.Fatalf("expected no stdout for non-symlink readlink, got %q", stdout)
+	}
+	if !strings.Contains(stderr, file) {
+		t.Fatalf("expected stderr to mention target file, got %q", stderr)
 	}
 
 }
@@ -380,10 +401,17 @@ func TestReadpathCmdOptionsMissingOperand(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := captureFsCmd(t, func() error {
+	stdout, stderr, err := captureFsCmdFull(t, func() error {
 		return ReadpathCmd(nil)
-	}); err == nil {
+	})
+	if err == nil {
 		t.Fatal("expected missing operand error")
+	}
+	if stdout != "" {
+		t.Fatalf("expected no stdout for missing operand, got %q", stdout)
+	}
+	if !strings.Contains(err.Error(), "missing operand") && !strings.Contains(stderr, "missing operand") {
+		t.Fatalf("expected missing operand diagnostic, stderr=%q err=%v", stderr, err)
 	}
 
 }

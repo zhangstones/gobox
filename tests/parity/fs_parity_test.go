@@ -10,6 +10,39 @@ import (
 	"time"
 )
 
+func dfHeaderAndRows(out string) ([]string, [][]string) {
+	lines := nonEmptyLines(out)
+	if len(lines) == 0 {
+		return nil, nil
+	}
+	header := strings.Fields(lines[0])
+	rows := make([][]string, 0, len(lines)-1)
+	for _, line := range lines[1:] {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		rows = append(rows, fields)
+	}
+	return header, rows
+}
+
+func hasNonDigitSuffix(s string) bool {
+	for _, r := range s {
+		if (r < '0' || r > '9') && r != '.' {
+			return true
+		}
+	}
+	return false
+}
+
+func expectedDFRowWidth(header []string) int {
+	if len(header) >= 2 && header[len(header)-2] == "Mounted" && header[len(header)-1] == "on" {
+		return len(header) - 1
+	}
+	return len(header)
+}
+
 func TestParity_FindCases(t *testing.T) {
 	runExactParityCases(t, []parityCase{
 		{
@@ -403,18 +436,42 @@ func TestParity_DfCases(t *testing.T) {
 				if base.Stdout == res.Stdout {
 					t.Fatalf("DF-006 should change output relative to default df\n--- base ---\n%s\n--- -H ---\n%s", base.Stdout, res.Stdout)
 				}
-			case "DF-007":
-				if findLineWithPrefix(res.Stdout, "proc ") == "" && findLineWithPrefix(res.Stdout, "sysfs ") == "" && findLineWithPrefix(res.Stdout, "cgroup2 ") == "" {
-					t.Fatalf("DF-007 should expose pseudo filesystems beyond default df\n%s", res.Stdout)
+				_, baseRows := dfHeaderAndRows(base.Stdout)
+				header, rows := dfHeaderAndRows(res.Stdout)
+				if len(rows) != 1 || len(baseRows) != 1 || len(header) < 2 {
+					t.Fatalf("DF-006 expected single-path df rows\n--- base ---\n%s\n--- human ---\n%s", base.Stdout, res.Stdout)
 				}
-				{
-					base := runGoboxCLI(t, t.TempDir(), "", "df")
-					if base.ExitCode != 0 {
-						t.Fatalf("DF-007 baseline failed: %+v", base)
+				if !hasNonDigitSuffix(rows[0][1]) || rows[0][1] == baseRows[0][1] {
+					t.Fatalf("DF-006 should switch size column to SI-style units: base=%q human=%q", baseRows[0][1], rows[0][1])
+				}
+			case "DF-007":
+				base := runGoboxCLI(t, t.TempDir(), "", "df")
+				if base.ExitCode != 0 {
+					t.Fatalf("DF-007 baseline failed: %+v", base)
+				}
+				if dfMountList(base.Stdout) == dfMountList(res.Stdout) {
+					t.Fatalf("DF-007 should expose additional all-filesystem rows beyond default df\n--- base ---\n%s\n--- -a ---\n%s", base.Stdout, res.Stdout)
+				}
+				baseSet := make(map[string]struct{})
+				for _, line := range nonEmptyLines(base.Stdout)[1:] {
+					fields := strings.Fields(line)
+					if len(fields) > 0 {
+						baseSet[fields[0]+"|"+fields[len(fields)-1]] = struct{}{}
 					}
-					if dfMountList(base.Stdout) == dfMountList(res.Stdout) {
-						t.Fatalf("DF-007 should expose additional all-filesystem rows beyond default df\n--- base ---\n%s\n--- -a ---\n%s", base.Stdout, res.Stdout)
+				}
+				sawHidden := false
+				for _, line := range nonEmptyLines(res.Stdout)[1:] {
+					fields := strings.Fields(line)
+					if len(fields) == 0 {
+						continue
 					}
+					key := fields[0] + "|" + fields[len(fields)-1]
+					if _, ok := baseSet[key]; !ok {
+						sawHidden = true
+					}
+				}
+				if !sawHidden {
+					t.Fatalf("DF-007 should add at least one filesystem hidden in default mode\n--- base ---\n%s\n--- all ---\n%s", base.Stdout, res.Stdout)
 				}
 			case "DF-008":
 				for _, line := range nonEmptyLines(res.Stdout)[1:] {
@@ -450,18 +507,26 @@ func TestParity_DfCases(t *testing.T) {
 					}
 				}
 			case "DF-011":
-				lines := nonEmptyLines(res.Stdout)
-				if len(lines) < 2 || !strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "total") {
+				header, rows := dfHeaderAndRows(res.Stdout)
+				if len(rows) == 0 || !strings.HasPrefix(strings.TrimSpace(nonEmptyLines(res.Stdout)[len(nonEmptyLines(res.Stdout))-1]), "total") {
 					t.Fatalf("DF-011 should end with a total row\n%s", res.Stdout)
 				}
+				total := rows[len(rows)-1]
+				if len(total) != expectedDFRowWidth(header) {
+					t.Fatalf("DF-011 total row width mismatch header=%v total=%v\n%s", header, total, res.Stdout)
+				}
 			case "DF-012":
-				lines := nonEmptyLines(res.Stdout)
-				if len(lines) < 2 {
+				header, rows := dfHeaderAndRows(res.Stdout)
+				if len(rows) == 0 {
 					t.Fatalf("DF-012 output too short\n%s", res.Stdout)
 				}
-				header := strings.Fields(lines[0])
 				if len(header) < 6 || header[0] != "Filesystem" || header[1] != "1024-blocks" {
-					t.Fatalf("DF-012 should render POSIX header fields, got %q", lines[0])
+					t.Fatalf("DF-012 should render POSIX header fields, got %q", nonEmptyLines(res.Stdout)[0])
+				}
+				for _, row := range rows {
+					if len(row) != expectedDFRowWidth(header) {
+						t.Fatalf("DF-012 should keep POSIX single-line row width=%d header=%d row=%v", len(row), len(header), row)
+					}
 				}
 			}
 			for _, want := range tc.contains {
