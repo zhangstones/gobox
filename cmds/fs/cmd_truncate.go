@@ -16,7 +16,16 @@ func TruncateCmd(args []string) error {
 	ref := fsFlags.String("r", "", "use reference file size")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox truncate -s SIZE FILE... | gobox truncate -r RFILE FILE...")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "Shrink or extend files to a specified size.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Options:")
+		fmt.Fprintln(os.Stderr, "  -s SIZE             set or adjust file size")
+		fmt.Fprintln(os.Stderr, "  -r RFILE            use reference file size")
+		fmt.Fprintln(os.Stderr, "  -c, --no-create     do not create files")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  gobox truncate -s 0 app.log")
+		fmt.Fprintln(os.Stderr, "  gobox truncate -r ref.bin copy.bin")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

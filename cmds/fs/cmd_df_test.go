@@ -44,6 +44,19 @@ func TestDfPath(t *testing.T) {
 	}
 }
 
+func TestDfCmdHelpUsesGroupedSections(t *testing.T) {
+	setupDfFixture(t)
+	_, out, err := captureFsCmdFull(t, func() error { return DfCmd([]string{"--help"}) })
+	if err != nil {
+		t.Fatalf("df --help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox df [OPTION]... [PATH...]", "Display:", "Filters:", "--total", "-t TYPE"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
+
 func TestDfHuman(t *testing.T) {
 	dir := setupDfFixture(t)
 	out, err := captureFsCmd(t, func() error { return DfCmd([]string{"-h", dir}) })

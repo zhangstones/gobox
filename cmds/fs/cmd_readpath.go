@@ -31,7 +31,18 @@ func ReadpathCmd(args []string) error {
 	fsFlags.BoolVar(zero, "zero", false, "end each output line with NUL")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox readpath [OPTION]... FILE...")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "Resolve or inspect pathnames.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Modes:")
+		fmt.Fprintln(os.Stderr, "  -f, --canonicalize             canonicalize by following symlinks")
+		fmt.Fprintln(os.Stderr, "  -e, --canonicalize-existing    require all path components to exist")
+		fmt.Fprintln(os.Stderr, "  -m, --canonicalize-missing     allow missing path components")
+		fmt.Fprintln(os.Stderr, "  -l, --readlink                 print symlink target instead of canonical path")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Output:")
+		fmt.Fprintln(os.Stderr, "  -n, --no-newline               do not print trailing newline")
+		fmt.Fprintln(os.Stderr, "  -z, --zero                     terminate each output with NUL")
+		fmt.Fprintln(os.Stderr, "  -q, --quiet                    suppress most error messages")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

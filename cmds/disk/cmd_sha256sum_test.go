@@ -50,6 +50,21 @@ func captureSha256CmdFull(t *testing.T, stdin string, fn func() error) (string, 
 	return buf.String(), errBuf.String(), err
 }
 
+func TestSha256sumCmdHelpUsesMergedLongFlags(t *testing.T) {
+	stdout, stderr, err := captureSha256CmdFull(t, "", func() error {
+		return Sha256sumCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("sha256sum --help failed: %v", err)
+	}
+	out := stdout + stderr
+	for _, want := range []string{"Usage: gobox sha256sum [OPTION]... [FILE]...", "Modes:", "Output:", "-c, --check", "-q, --quiet"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
+
 func TestSha256sumDefaultAndCheck(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "file")

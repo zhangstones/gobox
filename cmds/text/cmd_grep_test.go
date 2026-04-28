@@ -31,6 +31,20 @@ func TestGrepBasicMatch(t *testing.T) {
 	}
 }
 
+func TestGrepCmdHelpUsesGroupedSections(t *testing.T) {
+	_, output, err := captureTextCmdFull(t, "", func() error {
+		return GrepCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("grep --help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox grep [OPTION]... PATTERN [FILE...]", "Matching:", "Output:", "Context:", "--exclude-dir DIR"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, output)
+		}
+	}
+}
+
 func TestGrepIgnoreCase(t *testing.T) {
 	tmpDir := t.TempDir()
 	content := "HELLO world\nfoo BAR\nHello Again\n"

@@ -20,7 +20,13 @@ func Base64Cmd(args []string) error {
 	output := fsFlags.String("o", "", "write output to file")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox base64 [OPTION]... [FILE]...")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "Encode or decode base64 data.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Options:")
+		fmt.Fprintln(os.Stderr, "  -d, --decode              decode data")
+		fmt.Fprintln(os.Stderr, "  -w, --wrap COLS           wrap encoded lines after COLS characters (0 disables wrapping)")
+		fmt.Fprintln(os.Stderr, "  -i, --ignore-garbage      ignore non-alphabet characters while decoding")
+		fmt.Fprintln(os.Stderr, "  -o FILE                   write output to file")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

@@ -39,7 +39,16 @@ func Sha256sumCmd(args []string) error {
 	fsFlags.BoolVar(warn, "warn", false, "warn malformed lines")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox sha256sum [OPTION]... [FILE]...")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "Compute or check SHA256 message digests.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Modes:")
+		fmt.Fprintln(os.Stderr, "  -c, --check       check SHA256 sums from files")
+		fmt.Fprintln(os.Stderr, "  --tag             use BSD style output")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Output:")
+		fmt.Fprintln(os.Stderr, "  -q, --quiet       quiet mode")
+		fmt.Fprintln(os.Stderr, "  -s, --status      status mode")
+		fmt.Fprintln(os.Stderr, "  -w, --warn        warn about malformed lines")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

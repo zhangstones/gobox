@@ -6,6 +6,20 @@ import (
 	"testing"
 )
 
+func TestXargsCmdHelpUsesStructuredOptions(t *testing.T) {
+	out, err := captureProcOutput(t, func() error {
+		return XargsCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("xargs --help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox xargs [OPTION]... [COMMAND [ARG]...]", "Options:", "-i REPL", "-P N", "-v"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
+
 func TestParseXargsInputsDefaultDelimiterTrimsWhitespace(t *testing.T) {
 	input := "  alpha  \n\nbeta\n"
 	got, err := parseXargsInputs(strings.NewReader(input), "\n")

@@ -24,10 +24,19 @@ func IfstatCmd(args []string) error {
 	showErrors := fsFlags.Bool("e", false, "show error packet counts (rx_errors, tx_errors)")
 	showDrops := fsFlags.Bool("d", false, "show drop packet counts (rx_dropped, tx_dropped)")
 	fsFlags.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: gobox ifstat [-p sec] [-n count] [-a] [-A] [-e] [-d] [-i iface]")
+		fmt.Fprintln(os.Stderr, "Usage: gobox ifstat [-p SEC] [-n COUNT] [-a] [-A] [-e] [-d] [-i IFACES]")
 		fmt.Fprintln(os.Stderr, "Print network interface statistics (packets/s, bytes/s).")
-		fmt.Fprintln(os.Stderr, "Options:")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Sampling:")
+		fmt.Fprintln(os.Stderr, "  -p SEC          sample interval in seconds")
+		fmt.Fprintln(os.Stderr, "  -n COUNT        number of samples to take (0 = continuous)")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Display:")
+		fmt.Fprintln(os.Stderr, "  -i IFACES       comma-separated interface list")
+		fmt.Fprintln(os.Stderr, "  -a              show absolute cumulative values")
+		fmt.Fprintln(os.Stderr, "  -A              show all interfaces including virtual ones")
+		fmt.Fprintln(os.Stderr, "  -e              show error packet counts")
+		fmt.Fprintln(os.Stderr, "  -d              show drop packet counts")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

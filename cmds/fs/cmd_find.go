@@ -30,11 +30,27 @@ func FindCmd(args []string) error {
 	mtime := fsFlags.String("mtime", "", "file modify time: +N, -N, N (N[smh] = seconds/minutes/hours/days)")
 
 	fsFlags.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: gobox find [OPTIONS] [PATH...]")
+		fmt.Fprintln(os.Stderr, "Usage: gobox find [OPTION]... [PATH...]")
 		fmt.Fprintln(os.Stderr, "Search for files in a directory hierarchy.")
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Options:")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "Filters:")
+		fmt.Fprintln(os.Stderr, "  -name PATTERN      match basename with shell glob")
+		fmt.Fprintln(os.Stderr, "  -path PATTERN      match full path with shell glob")
+		fmt.Fprintln(os.Stderr, "  -type TYPE         file type: f (file) or d (directory)")
+		fmt.Fprintln(os.Stderr, "  -empty             match empty files or directories")
+		fmt.Fprintln(os.Stderr, "  -size SPEC         size filter: +N, -N, N with optional K/M/G suffix")
+		fmt.Fprintln(os.Stderr, "  -atime SPEC        access time filter: +N, -N, N with optional s/m/h suffix")
+		fmt.Fprintln(os.Stderr, "  -mtime SPEC        modify time filter: +N, -N, N with optional s/m/h suffix")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Traversal:")
+		fmt.Fprintln(os.Stderr, "  -maxdepth N        descend at most N levels")
+		fmt.Fprintln(os.Stderr, "  -mindepth N        skip matches shallower than N levels")
+		fmt.Fprintln(os.Stderr, "  -not               negate the combined match result")
+		fmt.Fprintln(os.Stderr, "  -print             print matched paths (default true)")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  gobox find . -type f -name '*.log'")
+		fmt.Fprintln(os.Stderr, "  gobox find /tmp -maxdepth 2 -empty")
 	}
 
 	if err := fsFlags.Parse(args); err != nil {

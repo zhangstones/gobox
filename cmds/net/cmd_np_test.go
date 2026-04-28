@@ -218,7 +218,7 @@ func TestNpCmdHelp(t *testing.T) {
 		t.Fatalf("np --help failed unexpectedly: %v", err)
 	}
 	result := string(output)
-	for _, want := range []string{"Usage: gobox np", "Modes:", "--tcp", "--udp", "--icmp", "--arp", "--scan", "--flood", "Examples:", "interval between packets in seconds (supports decimals)"} {
+	for _, want := range []string{"Usage: gobox np [OPTION]... [HOST]", "Modes:", "--tcp", "--udp", "--icmp", "--arp", "--scan", "--flood", "Examples:", "interval between packets in seconds (supports decimals)"} {
 		if !strings.Contains(result, want) {
 			t.Fatalf("expected help output to contain %q, got: %s", want, result)
 		}

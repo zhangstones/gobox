@@ -25,6 +25,20 @@ func TestStringsExtractsPrintableText(t *testing.T) {
 	}
 }
 
+func TestStringsCmdHelpUsesStructuredSections(t *testing.T) {
+	_, out, err := captureTextCmdFull(t, "", func() error {
+		return StringsCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("strings --help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox strings [OPTION]... [FILE]...", "Options:", "-n N", "-t BASE"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
+
 func TestStringsCmdOptionsDefaultMinimum(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "bin")

@@ -256,7 +256,7 @@ func PsCmd(args []string) error {
 }
 
 func printPSUsage() {
-	fmt.Fprintln(os.Stderr, "Usage: gobox ps [OPTIONS]")
+	fmt.Fprintln(os.Stderr, "Usage: gobox ps [OPTION]...")
 	fmt.Fprintln(os.Stderr, "List processes. On Linux this shows CPU% and memory (RSS/VMS) by sampling /proc.")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Options:")
@@ -1179,8 +1179,8 @@ func readProcStatFromPaths(pid, tgid int, statPath, statusPath, cmdPath, commPat
 	}
 	readProcStatus(&pi, statusPath)
 
-		if data, err := os.ReadFile(cmdPath); err == nil {
-			cmdline := strings.ReplaceAll(string(data), "\x00", " ")
+	if data, err := os.ReadFile(cmdPath); err == nil {
+		cmdline := strings.ReplaceAll(string(data), "\x00", " ")
 		cmdline = strings.TrimSpace(cmdline)
 		if cmdline == "" {
 			if p, err := os.Readlink(exePath); err == nil {

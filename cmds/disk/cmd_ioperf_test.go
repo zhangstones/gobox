@@ -715,8 +715,16 @@ func TestIoperfCmdHelp(t *testing.T) {
 	if !strings.Contains(result, "Usage:") {
 		t.Errorf("Expected usage information, got: %s", result)
 	}
+	if !strings.Contains(result, "Usage: gobox ioperf [OPTION]...") {
+		t.Errorf("Expected canonical usage line, got: %s", result)
+	}
 	if !strings.Contains(result, "ioperf") {
 		t.Errorf("Expected 'ioperf' in help output, got: %s", result)
+	}
+	for _, want := range []string{"Workload:", "Parallelism and rate:", "I/O behavior:", "Latency and histograms:", "--percentile_list LIST"} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("expected help output to contain %q, got: %s", want, result)
+		}
 	}
 }
 

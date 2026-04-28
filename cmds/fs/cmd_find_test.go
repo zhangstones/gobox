@@ -29,6 +29,20 @@ func runFindCmd(t *testing.T, args []string) (string, error) {
 	return buf.String(), runErr
 }
 
+func TestFindCmdHelpUsesGroupedSections(t *testing.T) {
+	_, out, err := captureFsCmdFull(t, func() error {
+		return FindCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("find --help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox find [OPTION]... [PATH...]", "Filters:", "Traversal:", "-name PATTERN", "-maxdepth N"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
+
 func TestPathDepth(t *testing.T) {
 	cases := map[string]int{
 		"":                         0,

@@ -55,11 +55,22 @@ func DuCmd(args []string) error {
 	fsFlags.BoolVar(&opts.apparentSize, "apparent-size", false, "print apparent sizes instead of disk usage")
 
 	fsFlags.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: gobox du [OPTIONS] [PATH...]")
+		fmt.Fprintln(os.Stderr, "Usage: gobox du [OPTION]... [PATH...]")
 		fmt.Fprintln(os.Stderr, "Summarize disk usage of the set of FILEs, recursively for directories.")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Options:")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "  -h                    human readable sizes")
+		fmt.Fprintln(os.Stderr, "  -s                    summarize each argument")
+		fmt.Fprintln(os.Stderr, "  -a                    write counts for all files")
+		fmt.Fprintln(os.Stderr, "  -c                    produce a grand total")
+		fmt.Fprintln(os.Stderr, "  -d, --max-depth N     print directories at most N levels deep")
+		fmt.Fprintln(os.Stderr, "  --exclude PATTERN     exclude files matching PATTERN")
+		fmt.Fprintln(os.Stderr, "  -x                    skip directories on different filesystems")
+		fmt.Fprintln(os.Stderr, "  --apparent-size       print apparent sizes instead of disk usage")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  gobox du -sh .")
+		fmt.Fprintln(os.Stderr, "  gobox du --max-depth 2 --exclude '*.tmp' /var")
 	}
 
 	if err := fsFlags.Parse(args); err != nil {

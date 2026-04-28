@@ -33,6 +33,18 @@ func TestDiskUsageAndHumanSize(t *testing.T) {
 	}
 }
 
+func TestDuCmdHelpUsesGroupedSections(t *testing.T) {
+	_, out, err := captureFsCmdFull(t, func() error { return DuCmd([]string{"--help"}) })
+	if err != nil {
+		t.Fatalf("du --help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox du [OPTION]... [PATH...]", "Options:", "-d, --max-depth N", "--apparent-size", "Examples:"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
+
 func TestDuApparentAllSummaryTotalAndExclude(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "keep.txt"), []byte("abc"), 0o644); err != nil {

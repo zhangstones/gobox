@@ -3,8 +3,23 @@ package fs
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestTruncateCmdHelpUsesStructuredUsage(t *testing.T) {
+	_, out, err := captureFsCmdFull(t, func() error {
+		return TruncateCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("truncate --help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox truncate -s SIZE FILE... | gobox truncate -r RFILE FILE...", "Options:", "-c, --no-create", "Examples:"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
 
 func TestTruncateCmdOptionsNoCreateSkipsMissing(t *testing.T) {
 	dir := t.TempDir()

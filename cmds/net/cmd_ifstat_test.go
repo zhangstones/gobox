@@ -144,6 +144,11 @@ func TestIfstatCmdHelp(t *testing.T) {
 	if !strings.Contains(stderr, "Usage: gobox ifstat") || !strings.Contains(stderr, "network interface statistics") {
 		t.Errorf("expected help output to contain usage and description, got: %s", stderr)
 	}
+	for _, want := range []string{"Usage: gobox ifstat [-p SEC] [-n COUNT] [-a] [-A] [-e] [-d] [-i IFACES]", "Sampling:", "Display:", "-p SEC", "-i IFACES"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("expected help output to contain %q, got: %s", want, stderr)
+		}
+	}
 }
 
 // ============== INTERFACE SELECTION TESTS ==============

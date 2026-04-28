@@ -23,7 +23,20 @@ func HexCmd(args []string) error {
 	output := fsFlags.String("o", "", "write output to file")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox hex --dump|--encode|--decode [OPTION]... [FILE]...")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "Encode, decode, or dump hexadecimal data.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Modes:")
+		fmt.Fprintln(os.Stderr, "  --dump              dump bytes like hexdump")
+		fmt.Fprintln(os.Stderr, "  --encode            encode input as hex")
+		fmt.Fprintln(os.Stderr, "  --decode            decode hex input")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Options:")
+		fmt.Fprintln(os.Stderr, "  -C                  canonical dump")
+		fmt.Fprintln(os.Stderr, "  -n LEN              read at most LEN bytes")
+		fmt.Fprintln(os.Stderr, "  -s OFFSET           skip OFFSET bytes")
+		fmt.Fprintln(os.Stderr, "  -v                  do not fold repeated lines")
+		fmt.Fprintln(os.Stderr, "  -e FORMAT           format string subset for dump mode")
+		fmt.Fprintln(os.Stderr, "  -o FILE             write output to file")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

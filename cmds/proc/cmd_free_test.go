@@ -19,6 +19,20 @@ func TestFreeProducesMemoryRows(t *testing.T) {
 	}
 }
 
+func TestFreeCmdHelpUsesGroupedSections(t *testing.T) {
+	out, err := captureProcOutput(t, func() error {
+		return FreeCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("free --help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox free [OPTION]...", "Units:", "Sampling:", "-s SEC", "-c COUNT"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
+
 func TestFreeDefault(t *testing.T) {
 	out, err := captureProcCmd(t, func() error { return FreeCmd(nil) })
 	if err != nil {

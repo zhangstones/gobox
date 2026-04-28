@@ -36,7 +36,17 @@ func StatCmd(args []string) error {
 	fsFlags.BoolVar(terse, "terse", false, "terse output")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox stat [OPTION]... FILE...")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "Display file or filesystem status.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Options:")
+		fmt.Fprintln(os.Stderr, "  -L, --dereference    follow links")
+		fmt.Fprintln(os.Stderr, "  -f, --file-system    display filesystem status")
+		fmt.Fprintln(os.Stderr, "  -c, --format FORMAT  use custom format string")
+		fmt.Fprintln(os.Stderr, "  -t, --terse          terse output")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  gobox stat file.txt")
+		fmt.Fprintln(os.Stderr, "  gobox stat -f /tmp")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

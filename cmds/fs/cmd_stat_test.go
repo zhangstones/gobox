@@ -31,6 +31,20 @@ func TestStatCmdOptionsFormatTokens(t *testing.T) {
 
 }
 
+func TestStatCmdHelpUsesMergedLongFlags(t *testing.T) {
+	_, out, err := captureFsCmdFull(t, func() error {
+		return StatCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("stat --help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox stat [OPTION]... FILE...", "-L, --dereference", "-f, --file-system", "-c, --format FORMAT"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
+
 func TestStatCmdOptionsEmptyFileSizeAndTimestampToken(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "file")

@@ -17,7 +17,13 @@ func StringsCmd(args []string) error {
 	_ = fsFlags.Bool("a", false, "scan entire file")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox strings [OPTION]... [FILE]...")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "Print printable character sequences from files.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Options:")
+		fmt.Fprintln(os.Stderr, "  -n N       minimum string length")
+		fmt.Fprintln(os.Stderr, "  -f         print filename before each string")
+		fmt.Fprintln(os.Stderr, "  -t BASE    print offset in o, d, or x")
+		fmt.Fprintln(os.Stderr, "  -a         scan entire file")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

@@ -32,6 +32,20 @@ func TestKillDryRunMatchesProcess(t *testing.T) {
 	}
 }
 
+func TestKillCmdHelpUsesGroupedSections(t *testing.T) {
+	out, err := captureProcOutput(t, func() error {
+		return KillCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("kill --help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox kill [OPTION]... PID... | PATTERN", "Signals:", "Matching:", "-l, --list", "--dry-run"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
+
 func TestKillCmdOptionsListSignals(t *testing.T) {
 
 	out, err := captureProcCmd(t, func() error {

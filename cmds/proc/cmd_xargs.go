@@ -26,11 +26,18 @@ func XargsCmd(args []string) error {
 	noRun := xargsFlags.Bool("r", false, "do not run command if no input")
 
 	xargsFlags.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: gobox xargs [OPTIONS] [COMMAND [ARGS...]]")
+		fmt.Fprintln(os.Stderr, "Usage: gobox xargs [OPTION]... [COMMAND [ARG]...]")
 		fmt.Fprintln(os.Stderr, "Build and execute command lines from standard input.")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Options:")
-		xargsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "  -i REPL            replace string (same as -I, use {} as default)")
+		fmt.Fprintln(os.Stderr, "  -I REPL            replace string with custom placeholder")
+		fmt.Fprintln(os.Stderr, "  -d DELIM           input delimiter (default: newline)")
+		fmt.Fprintln(os.Stderr, "  -n N               max number of arguments per command invocation")
+		fmt.Fprintln(os.Stderr, "  -P N               max number of parallel processes")
+		fmt.Fprintln(os.Stderr, "  -t                 print commands before executing")
+		fmt.Fprintln(os.Stderr, "  -v                 legacy alias for -t")
+		fmt.Fprintln(os.Stderr, "  -r                 do not run command if no input")
 	}
 
 	if err := xargsFlags.Parse(args); err != nil {

@@ -21,6 +21,20 @@ func TestLsofCurrentProcess(t *testing.T) {
 	}
 }
 
+func TestLsofCmdHelpUsesGroupedSections(t *testing.T) {
+	out, err := captureProcOutput(t, func() error {
+		return LsofCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("lsof --help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox lsof [OPTION]... [FILE]...", "Filters:", "Output:", "-p PID", "-t"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
+
 func TestLsofCmdOptionsPidsOnly(t *testing.T) {
 
 	out, err := captureProcCmd(t, func() error {

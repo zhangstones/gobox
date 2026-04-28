@@ -21,7 +21,7 @@ func NpCmd(args []string) error {
 	fsFlags := flag.NewFlagSet("np", flag.ContinueOnError)
 	fsFlags.SetOutput(os.Stderr)
 	fsFlags.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: gobox np [OPTIONS] [HOST]")
+		fmt.Fprintln(os.Stderr, "Usage: gobox np [OPTION]... [HOST]")
 		fmt.Fprintln(os.Stderr, "Network connectivity troubleshooting tool (TCP/UDP/ICMP/ARP ping, port scanning)")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Modes:")

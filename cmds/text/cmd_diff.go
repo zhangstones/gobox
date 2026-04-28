@@ -73,7 +73,14 @@ func parseDiffArgs(args []string) (diffOptions, []string, error) {
 	fsFlags.BoolVar(&opts.stripTrailingCR, "strip-trailing-cr", false, "strip trailing carriage returns")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox diff [OPTION]... FILE1 FILE2")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "Compare files line by line.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Options:")
+		fmt.Fprintln(os.Stderr, "  -u, --unified            output unified diff")
+		fmt.Fprintln(os.Stderr, "  -q, --brief              report only whether files differ")
+		fmt.Fprintln(os.Stderr, "  -r, --recursive          recursively compare directories")
+		fmt.Fprintln(os.Stderr, "  -N, --new-file           treat missing files as empty")
+		fmt.Fprintln(os.Stderr, "  --strip-trailing-cr      strip trailing carriage returns")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

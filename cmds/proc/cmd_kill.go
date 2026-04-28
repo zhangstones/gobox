@@ -49,7 +49,20 @@ func KillCmd(args []string) error {
 	dryRun := fsFlags.Bool("dry-run", false, "print matches only")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox kill [OPTION]... PID... | PATTERN")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "Send signals to processes by PID or by match criteria.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Signals:")
+		fmt.Fprintln(os.Stderr, "  -l, --list        list signals")
+		fmt.Fprintln(os.Stderr, "  -s SIGNAL         signal name or number")
+		fmt.Fprintln(os.Stderr, "  -SIGNAL           short form signal selector")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Matching:")
+		fmt.Fprintln(os.Stderr, "  -f PATTERN        match full command line")
+		fmt.Fprintln(os.Stderr, "  -x PATTERN        match exact command name")
+		fmt.Fprintln(os.Stderr, "  -P PPID           match parent PID")
+		fmt.Fprintln(os.Stderr, "  -n                choose newest match")
+		fmt.Fprintln(os.Stderr, "  -o                choose oldest match")
+		fmt.Fprintln(os.Stderr, "  --dry-run         print matches only")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

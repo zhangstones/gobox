@@ -29,6 +29,20 @@ func TestHexEncodeDecode(t *testing.T) {
 	}
 }
 
+func TestHexCmdHelpUsesModesAndOptions(t *testing.T) {
+	_, out, err := captureTextCmdFull(t, "", func() error {
+		return HexCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("hex --help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox hex --dump|--encode|--decode [OPTION]... [FILE]...", "Modes:", "Options:", "--dump", "-e FORMAT"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
+
 func TestHexCmdOptionsDumpOffsetAndLength(t *testing.T) {
 	dir := t.TempDir()
 	input := filepath.Join(dir, "bin")

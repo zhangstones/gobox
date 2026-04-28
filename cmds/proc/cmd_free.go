@@ -27,7 +27,16 @@ func FreeCmd(args []string) error {
 	count := fsFlags.Int("c", 1, "repeat COUNT times")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox free [OPTION]...")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "Display memory and swap usage.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Units:")
+		fmt.Fprintln(os.Stderr, "  -h          human readable")
+		fmt.Fprintln(os.Stderr, "  -m          show MiB")
+		fmt.Fprintln(os.Stderr, "  -g          show GiB")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Sampling:")
+		fmt.Fprintln(os.Stderr, "  -s SEC      repeat every SEC seconds")
+		fmt.Fprintln(os.Stderr, "  -c COUNT    repeat COUNT times")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

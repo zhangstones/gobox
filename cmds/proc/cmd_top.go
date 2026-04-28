@@ -35,7 +35,7 @@ func TopCmd(args []string) error {
 	rev := fsFlags.Bool("r", true, "reverse sort order")
 
 	fsFlags.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: gobox top [OPTIONS]")
+		fmt.Fprintln(os.Stderr, "Usage: gobox top [OPTION]...")
 		fmt.Fprintln(os.Stderr, "Display dynamic real-time view of running processes (very small subset).")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Options:")

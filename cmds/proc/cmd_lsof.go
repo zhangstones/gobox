@@ -25,7 +25,17 @@ func LsofCmd(args []string) error {
 	pidsOnly := fsFlags.Bool("t", false, "pids only")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox lsof [OPTION]... [FILE]...")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "List open files for visible processes.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Filters:")
+		fmt.Fprintln(os.Stderr, "  -p PID        filter by PID")
+		fmt.Fprintln(os.Stderr, "  -c PREFIX     filter by command prefix")
+		fmt.Fprintln(os.Stderr, "  -i            show network files")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Output:")
+		fmt.Fprintln(os.Stderr, "  -n            do not resolve host names")
+		fmt.Fprintln(os.Stderr, "  -P            do not resolve port names")
+		fmt.Fprintln(os.Stderr, "  -t            print only PIDs")
 	}
 	filterArgs := normalizeLsofArgs(args)
 	protoFilter, portFilter := parseLsofIFilters(args)

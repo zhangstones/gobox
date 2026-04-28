@@ -71,7 +71,21 @@ func DfCmd(args []string) error {
 	fsFlags.BoolVar(&opts.posix, "P", false, "use POSIX output format")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox df [OPTION]... [PATH...]")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "Report filesystem disk space usage.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Display:")
+		fmt.Fprintln(os.Stderr, "  -h               human readable units")
+		fmt.Fprintln(os.Stderr, "  -H               human readable SI units")
+		fmt.Fprintln(os.Stderr, "  -T               show filesystem type")
+		fmt.Fprintln(os.Stderr, "  -i               show inode usage")
+		fmt.Fprintln(os.Stderr, "  -P               use POSIX output format")
+		fmt.Fprintln(os.Stderr, "  --total          produce a grand total")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Filters:")
+		fmt.Fprintln(os.Stderr, "  -a               include all filesystems")
+		fmt.Fprintln(os.Stderr, "  -l               limit listing to local filesystems")
+		fmt.Fprintln(os.Stderr, "  -t TYPE          limit listing to filesystems of type TYPE")
+		fmt.Fprintln(os.Stderr, "  -x TYPE          exclude filesystems of type TYPE")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

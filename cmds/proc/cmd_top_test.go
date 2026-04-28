@@ -14,7 +14,7 @@ func TestTopCmdHelpPrefersCanonicalSortFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TopCmd help failed: %v", err)
 	}
-	for _, want := range []string{"Usage: gobox top [OPTIONS]", "--sort FIELD", "-o FIELD", "full thread view on Linux", "pid|cpu|rss|vms|pmem|cmd|comm|user|ppid|start|etime|time"} {
+	for _, want := range []string{"Usage: gobox top [OPTION]...", "--sort FIELD", "-o FIELD", "full thread view on Linux", "pid|cpu|rss|vms|pmem|cmd|comm|user|ppid|start|etime|time"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected help to contain %q, got %q", want, out)
 		}

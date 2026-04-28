@@ -24,7 +24,16 @@ func TimeoutCmd(args []string) error {
 	preserve := fsFlags.Bool("preserve-status", false, "preserve command exit status")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox timeout [OPTION] DURATION COMMAND [ARG]...")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "Run a command with a time limit.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Options:")
+		fmt.Fprintln(os.Stderr, "  -s, --signal SIGNAL      signal to send on timeout")
+		fmt.Fprintln(os.Stderr, "  -k DURATION              send KILL after additional duration")
+		fmt.Fprintln(os.Stderr, "  --preserve-status        preserve command exit status after timeout")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  gobox timeout 5s sleep 30")
+		fmt.Fprintln(os.Stderr, "  gobox timeout -s TERM -k 2s 10s mycmd")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

@@ -30,6 +30,20 @@ func TestReadpathCmdOptionsDefaultRealpathSemantics(t *testing.T) {
 
 }
 
+func TestReadpathCmdHelpUsesMergedLongFlags(t *testing.T) {
+	_, out, err := captureFsCmdFull(t, func() error {
+		return ReadpathCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("readpath --help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox readpath [OPTION]... FILE...", "Modes:", "-f, --canonicalize", "-n, --no-newline", "-z, --zero"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
+
 func TestReadpathCmdOptionsCanonicalizeMissing(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "target")

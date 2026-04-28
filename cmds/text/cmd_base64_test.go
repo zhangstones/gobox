@@ -3,8 +3,23 @@ package text
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestBase64CmdHelpUsesMergedLongFlags(t *testing.T) {
+	_, out, err := captureTextCmdFull(t, "", func() error {
+		return Base64Cmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("base64 --help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox base64 [OPTION]... [FILE]...", "-d, --decode", "-w, --wrap COLS", "-i, --ignore-garbage"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
 
 func TestBase64EncodeDecode(t *testing.T) {
 	out, err := captureTextCmd(t, "hello", func() error {

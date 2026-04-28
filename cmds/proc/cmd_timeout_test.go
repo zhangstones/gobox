@@ -14,6 +14,20 @@ func TestTimeoutTerminatesCommand(t *testing.T) {
 	}
 }
 
+func TestTimeoutCmdHelpUsesMergedLongFlags(t *testing.T) {
+	out, err := captureProcOutput(t, func() error {
+		return TimeoutCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("timeout --help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox timeout [OPTION] DURATION COMMAND [ARG]...", "-s, --signal SIGNAL", "--preserve-status", "Examples:"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
+
 func TestTimeoutCmdOptionsCommandExitsBeforeTimeout(t *testing.T) {
 
 	if err := TimeoutCmd([]string{"1s", "sh", "-c", "exit 7"}); err == nil {

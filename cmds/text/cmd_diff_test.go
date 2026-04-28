@@ -23,6 +23,20 @@ func TestDiffEqualFiles(t *testing.T) {
 	}
 }
 
+func TestDiffCmdHelpUsesMergedLongFlags(t *testing.T) {
+	_, out, err := captureTextCmdFull(t, "", func() error {
+		return DiffCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("diff --help failed: %v", err)
+	}
+	for _, want := range []string{"Usage: gobox diff [OPTION]... FILE1 FILE2", "-u, --unified", "-q, --brief", "--strip-trailing-cr"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
+
 func TestDiffNormalChangedAddedDeletedRanges(t *testing.T) {
 	dir := t.TempDir()
 	a := writeDiffTestFile(t, dir, "a", "one\ntwo\nthree\n")
