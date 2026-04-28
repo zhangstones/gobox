@@ -21,6 +21,7 @@ import (
 
 type procInfo struct {
 	pid      int
+	tgid     int
 	ppid     int
 	exe      string
 	cmdline  string
@@ -113,7 +114,11 @@ func PsCmd(args []string) error {
 
 	var customFields []string
 	if *outputFormat != "" {
-		customFields = parsePSOutputFields(*outputFormat)
+		var unknownFields []string
+		customFields, unknownFields = parsePSOutputFields(*outputFormat)
+		if len(unknownFields) > 0 {
+			return fmt.Errorf("unsupported output fields: %s", strings.Join(unknownFields, ", "))
+		}
 		if len(customFields) == 0 {
 			return fmt.Errorf("no valid output fields in %q", *outputFormat)
 		}
@@ -138,6 +143,9 @@ func PsCmd(args []string) error {
 		}
 	}
 	sortField, sortReverse := normalizePSSortField(*sortBy)
+	if !isSupportedPSSortField(sortField) {
+		return fmt.Errorf("unsupported sort field: %s", strings.TrimSpace(*sortBy))
+	}
 	if sortReverse {
 		*rev = !*rev
 	}
@@ -260,8 +268,8 @@ func printPSUsage() {
 	fmt.Fprintln(os.Stderr, "  -C NAMES          show only comma-separated command names")
 	fmt.Fprintln(os.Stderr, "  --comm PATTERN    exact process-name filter (pgrep -x style)")
 	fmt.Fprintln(os.Stderr, "  --full REGEXP     full command-line regexp filter (pgrep -f style)")
-	fmt.Fprintln(os.Stderr, "  -o FIELDS         custom output fields, e.g. pid,ppid,cmd,pcpu,pmem")
-	fmt.Fprintln(os.Stderr, "  --sort FIELD      sort by: pid|cpu|rss|vms|cmd|exe|ppid|user|start|etime|time")
+	fmt.Fprintln(os.Stderr, "  -o FIELDS         custom fields: pid,ppid,uid,user,comm,cmd,args,pcpu,pmem,rss,vsz,vms,tty,stat,start,etime,time")
+	fmt.Fprintln(os.Stderr, "  --sort FIELD      sort by: pid|ppid|cpu|pcpu|pmem|rss|vsz|vms|comm|cmd|user|start|etime|time")
 	fmt.Fprintln(os.Stderr, "  -r                reverse sort order")
 	fmt.Fprintln(os.Stderr, "  -n N              show only N entries (0 = all)")
 	fmt.Fprintln(os.Stderr, "  -i MS             CPU sample interval in milliseconds")
@@ -271,7 +279,7 @@ func printPSUsage() {
 	fmt.Fprintln(os.Stderr, "  --long            long format")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Compatibility:")
-	fmt.Fprintln(os.Stderr, "  ps aux            BSD-style process table")
+	fmt.Fprintln(os.Stderr, "  ps aux            BSD-style process table with user-oriented columns")
 }
 
 func normalizePSArgs(args []string) ([]string, psBSDMode) {
@@ -336,6 +344,9 @@ func applyPSDefaultSelection(infos []procInfo) []procInfo {
 	currentUID := os.Geteuid()
 	currentTTY := currentProcessTTY()
 	return filterProcInfos(infos, func(pi procInfo) bool {
+		if pi.tgid != 0 && pi.pid != pi.tgid {
+			return false
+		}
 		if pi.uid != currentUID {
 			return false
 		}
@@ -364,7 +375,7 @@ func applyPSExplicitSelections(infos []procInfo, all bool, mode psBSDMode, pidFi
 			return nil, err
 		}
 		for _, pi := range infos {
-			if pids[pi.pid] {
+			if pids[pi.pid] || (pi.tgid != 0 && pids[pi.tgid]) {
 				selected[pi.pid] = true
 			}
 		}
@@ -578,6 +589,38 @@ func captureLinuxProcSnapshot() (procSnapshot, error) {
 	return snapshot, nil
 }
 
+func captureLinuxThreadSnapshot() (procSnapshot, error) {
+	pids, err := listPIDsProc()
+	if err != nil {
+		return procSnapshot{}, err
+	}
+	pageSize := int64(os.Getpagesize())
+	bootTime := readBootTime()
+	now := time.Now()
+	total, _ := readTotalJiffies()
+	cpu, _ := readCPUTimes()
+
+	snapshot := procSnapshot{
+		totalJiffies: total,
+		cpuTimes:     cpu,
+		infos:        make(map[int]procInfo),
+	}
+	for _, pid := range pids {
+		tids, err := listTaskIDsProc(pid)
+		if err != nil {
+			continue
+		}
+		for _, tid := range tids {
+			pi, err := readProcTaskStat(pid, tid, pageSize, bootTime, now)
+			if err != nil {
+				continue
+			}
+			snapshot.infos[pi.pid] = pi
+		}
+	}
+	return snapshot, nil
+}
+
 func diffProcSnapshots(prev, curr procSnapshot) []procInfo {
 	infos := make([]procInfo, 0, len(curr.infos))
 	deltaTotal := curr.totalJiffies - prev.totalJiffies
@@ -614,7 +657,7 @@ func sortProcInfos(infos []procInfo, sortField string) {
 	switch sortField {
 	case "cpu", "pcpu":
 		sort.Slice(infos, func(i, j int) bool { return infos[i].cpu < infos[j].cpu })
-	case "rss":
+	case "pmem", "rss":
 		sort.Slice(infos, func(i, j int) bool { return infos[i].rss < infos[j].rss })
 	case "vms", "vsize", "vsz":
 		sort.Slice(infos, func(i, j int) bool { return infos[i].vsize < infos[j].vsize })
@@ -645,6 +688,23 @@ func sortProcInfos(infos []procInfo, sortField string) {
 	default:
 		sort.Slice(infos, func(i, j int) bool { return infos[i].pid < infos[j].pid })
 	}
+}
+
+func listTaskIDsProc(pid int) ([]int, error) {
+	entries, err := os.ReadDir(filepath.Join("/proc", strconv.Itoa(pid), "task"))
+	if err != nil {
+		return nil, err
+	}
+	var tids []int
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if tid, err := strconv.Atoi(e.Name()); err == nil {
+			tids = append(tids, tid)
+		}
+	}
+	return tids, nil
 }
 
 func listPIDsProc() ([]int, error) {
@@ -717,15 +777,27 @@ func normalizePSField(field string) string {
 	}
 }
 
-func parsePSOutputFields(spec string) []string {
+func parsePSOutputFields(spec string) ([]string, []string) {
 	parts := strings.FieldsFunc(spec, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' })
 	fields := make([]string, 0, len(parts))
+	unknown := make([]string, 0)
 	for _, part := range parts {
 		if field := normalizePSField(part); field != "" {
 			fields = append(fields, field)
+			continue
 		}
+		unknown = append(unknown, strings.TrimSpace(part))
 	}
-	return fields
+	return fields, unknown
+}
+
+func isSupportedPSSortField(field string) bool {
+	switch field {
+	case "pid", "pcpu", "pmem", "rss", "vms", "vsz", "args", "comm", "user", "uid", "ppid", "start", "etime", "time":
+		return true
+	default:
+		return false
+	}
 }
 
 func psFieldHeader(field string) string {
@@ -1061,10 +1133,90 @@ func readBootTime() time.Time {
 	return time.Time{}
 }
 
+func readProcStatFromPaths(pid, tgid int, statPath, statusPath, cmdPath, commPath, exePath string, pageSize int64, bootTime time.Time, now time.Time) (procInfo, error) {
+	var pi procInfo
+	pi.pid = pid
+	pi.tgid = tgid
+	pi.uid = -1
+	pi.tty = "?"
+	data, err := os.ReadFile(statPath)
+	if err != nil {
+		return pi, err
+	}
+	s := string(data)
+	li := strings.Index(s, "(")
+	ri := strings.LastIndex(s, ")")
+	if li < 0 || ri < 0 || ri <= li {
+		return pi, fmt.Errorf("unexpected stat format")
+	}
+	rest := strings.Fields(s[ri+1:])
+	if len(rest) > 21 {
+		pi.state = rest[0]
+		if n, err := strconv.Atoi(rest[1]); err == nil {
+			pi.ppid = n
+		}
+		if tty, err := strconv.ParseInt(rest[4], 10, 64); err == nil {
+			pi.tty = procTTY(tgid, tty)
+		}
+		if ut, err := strconv.ParseInt(rest[11], 10, 64); err == nil {
+			pi.utime = ut
+		}
+		if st, err := strconv.ParseInt(rest[12], 10, 64); err == nil {
+			pi.stime = st
+		}
+		if start, err := strconv.ParseInt(rest[19], 10, 64); err == nil && !bootTime.IsZero() {
+			pi.start = bootTime.Add(time.Duration(start/procClockTicks) * time.Second)
+			if now.After(pi.start) {
+				pi.elapsed = now.Sub(pi.start)
+			}
+		}
+		if v, err := strconv.ParseInt(rest[20], 10, 64); err == nil {
+			pi.vsize = v
+		}
+		if r, err := strconv.ParseInt(rest[21], 10, 64); err == nil {
+			pi.rss = r * pageSize
+		}
+	}
+	readProcStatus(&pi, statusPath)
+
+		if data, err := os.ReadFile(cmdPath); err == nil {
+			cmdline := strings.ReplaceAll(string(data), "\x00", " ")
+		cmdline = strings.TrimSpace(cmdline)
+		if cmdline == "" {
+			if p, err := os.Readlink(exePath); err == nil {
+				pi.cmdline = p
+			}
+		} else {
+			pi.cmdline = cmdline
+		}
+	}
+
+	if data, err := os.ReadFile(commPath); err == nil {
+		pi.exe = strings.TrimSpace(string(data))
+	} else if p, err := os.Readlink(exePath); err == nil {
+		pi.exe = filepath.Base(p)
+	}
+
+	return pi, nil
+}
+
+func readProcTaskStat(tgid, tid int, pageSize int64, bootTime time.Time, now time.Time) (procInfo, error) {
+	base := filepath.Join("/proc", strconv.Itoa(tgid), "task", strconv.Itoa(tid))
+	return readProcStatFromPaths(tid, tgid,
+		filepath.Join(base, "stat"),
+		filepath.Join(base, "status"),
+		filepath.Join("/proc", strconv.Itoa(tgid), "cmdline"),
+		filepath.Join(base, "comm"),
+		filepath.Join("/proc", strconv.Itoa(tgid), "exe"),
+		pageSize, bootTime, now,
+	)
+}
+
 // readProcStat reads /proc/<pid>/stat and /proc/<pid>/cmdline to populate procInfo (best-effort)
 func readProcStat(pid int, pageSize int64, bootTime time.Time, now time.Time) (procInfo, error) {
 	var pi procInfo
 	pi.pid = pid
+	pi.tgid = pid
 	pi.uid = -1
 	pi.tty = "?"
 	statPath := filepath.Join("/proc", strconv.Itoa(pid), "stat")

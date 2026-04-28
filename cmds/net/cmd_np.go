@@ -33,7 +33,7 @@ func NpCmd(args []string) error {
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Options:")
 		fmt.Fprintln(os.Stderr, "  -c COUNT           packet count to send")
-		fmt.Fprintln(os.Stderr, "  -i USEC            interval between packets (microseconds)")
+		fmt.Fprintln(os.Stderr, "  -i SEC             interval between packets in seconds (supports decimals)")
 		fmt.Fprintln(os.Stderr, "  -p PORT            target port")
 		fmt.Fprintln(os.Stderr, "  -s PORT            source port")
 		fmt.Fprintln(os.Stderr, "  -I IFACE           network interface to use")
@@ -59,7 +59,7 @@ func NpCmd(args []string) error {
 
 	// General parameters
 	count := fsFlags.Int("c", 4, "Packet count to send")
-	interval := fsFlags.Int("i", 1000000, "Interval between packets (microseconds)")
+	interval := fsFlags.Float64("i", 1, "Interval between packets (seconds)")
 	port := fsFlags.Int("p", 0, "Target port")
 	sourcePort := fsFlags.Int("s", 0, "Source port")
 	iface := fsFlags.String("I", "", "Network interface to use")
@@ -130,6 +130,9 @@ func NpCmd(args []string) error {
 	if *count < 0 {
 		return fmt.Errorf("count must be >= 0, got %d", *count)
 	}
+	if *interval < 0 {
+		return fmt.Errorf("interval must be >= 0, got %v", *interval)
+	}
 	if *port == 0 && mode != "scan" && mode != "icmp" && mode != "arp" {
 		return fmt.Errorf("port is required for TCP/UDP mode (use -p)")
 	}
@@ -153,7 +156,7 @@ func NpCmd(args []string) error {
 		sourcePort: *sourcePort,
 		iface:      *iface,
 		count:      *count,
-		interval:   time.Duration(*interval) * time.Microsecond,
+		interval:   time.Duration(*interval * float64(time.Second)),
 		wait:       time.Duration(*waitSec) * time.Second,
 		flood:      *flood,
 		workers:    *workers,

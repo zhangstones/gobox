@@ -1638,7 +1638,7 @@ func TestParity_NpCases(t *testing.T) {
 		defer closeFn()
 		env := t.TempDir()
 		base := runGoboxCLI(t, env, "", "np", "--tcp", "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
-		res := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-p", port, "-c", "2", "-i", "1000", "-q", "127.0.0.1")
+		res := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-p", port, "-c", "2", "-i", "0.001", "-q", "127.0.0.1")
 		if base.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("np -c failed base=%+v count2=%+v", base, res)
 		}
@@ -1665,7 +1665,7 @@ func TestParity_NpCases(t *testing.T) {
 		_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")
 		defer closeFn()
 		start := time.Now()
-		res := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-p", port, "-c", "2", "-i", "100000", "-q", "127.0.0.1")
+		res := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-p", port, "-c", "2", "-i", "0.1", "-q", "127.0.0.1")
 		elapsed := time.Since(start)
 		if res.ExitCode != 0 || elapsed < 100*time.Millisecond {
 			t.Fatalf("np -i failed elapsed=%s result=%+v", elapsed, res)

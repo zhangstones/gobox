@@ -14,7 +14,7 @@ func TestTopCmdHelpPrefersCanonicalSortFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TopCmd help failed: %v", err)
 	}
-	for _, want := range []string{"Usage: gobox top [OPTIONS]", "--sort FIELD", "-o FIELD"} {
+	for _, want := range []string{"Usage: gobox top [OPTIONS]", "--sort FIELD", "-o FIELD", "full thread view on Linux", "pid|cpu|rss|vms|pmem|cmd|comm|user|ppid|start|etime|time"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected help to contain %q, got %q", want, out)
 		}
@@ -68,6 +68,18 @@ func TestSortTopInfosKeepsPidTieBreakersStable(t *testing.T) {
 	want := []int{7, 19, 42}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("sortTopInfos should keep PID tie-breakers deterministic, got %v want %v", got, want)
+	}
+}
+
+func TestFilterTopInfosThreadModeMatchesOwningProcess(t *testing.T) {
+	infos := []procInfo{
+		{pid: 101, tgid: 100, user: "root"},
+		{pid: 102, tgid: 100, user: "root"},
+		{pid: 200, tgid: 200, user: "root"},
+	}
+	filtered := filterTopInfos(infos, map[int]bool{100: true}, nil, nil, false, true)
+	if len(filtered) != 2 || filtered[0].pid != 101 || filtered[1].pid != 102 {
+		t.Fatalf("thread-mode pid filtering should match thread group ids, got %+v", filtered)
 	}
 }
 

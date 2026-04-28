@@ -396,8 +396,19 @@ func TestParity_TopCases(t *testing.T) {
 				defer releaseThreads()
 				threaded := runGoboxCLI(t, env, "", "top", "-b", "-n", "1", "-d", "0", "-H", "-p", strconv.Itoa(os.Getpid()))
 				assertTopBatchOutput(t, tc.id, threaded)
-				if got := extractLeadingInts(topProcessLines(threaded.Stdout)); len(got) != 1 || got[0] != os.Getpid() {
-					t.Fatalf("%s should accept thread mode while still honoring pid filtering, got %v\n%s", tc.id, got, threaded.Stdout)
+				got := extractLeadingInts(topProcessLines(threaded.Stdout))
+				if len(got) < 2 {
+					t.Fatalf("%s should expose multiple thread IDs for the current process, got %v\n%s", tc.id, got, threaded.Stdout)
+				}
+				seenNonMainThread := false
+				for _, tid := range got {
+					if tid != os.Getpid() {
+						seenNonMainThread = true
+						break
+					}
+				}
+				if !seenNonMainThread {
+					t.Fatalf("%s should render at least one non-main thread ID, got %v\n%s", tc.id, got, threaded.Stdout)
 				}
 			case "TOP-010":
 				markerCmd := startMarkerProcess(t, "top-longcmd")
@@ -645,6 +656,11 @@ func TestParity_PsCases(t *testing.T) {
 				t.Fatalf("native ps -o row does not contain all requested fields: %q", line)
 			}
 		}
+
+			invalid := runGoboxMainCLI(t, env.Dir, "", "ps", "-o", "pid,notafield", "-n", "3", "-i", "1")
+		if invalid.ExitCode == 0 || !strings.Contains(invalid.Stderr, "unsupported output fields") {
+			t.Fatalf("ps -o should reject unsupported fields, got %+v", invalid)
+		}
 	})
 
 	t.Run("PS-011", func(t *testing.T) {
@@ -812,6 +828,11 @@ func TestParity_PsCases(t *testing.T) {
 		}
 		pids := extractLeadingInts(nonEmptyLines(res.Stdout)[1:])
 		assertMonotonic(t, pids, true)
+
+			invalid := runGoboxMainCLI(t, env, "", "ps", "--sort", "nosuchfield", "-n", "5", "-i", "1")
+		if invalid.ExitCode == 0 || !strings.Contains(invalid.Stderr, "unsupported sort field") {
+			t.Fatalf("ps --sort should reject unsupported fields, got %+v", invalid)
+		}
 	})
 
 	t.Run("PS-018", func(t *testing.T) {
@@ -1355,6 +1376,9 @@ func TestParity_WatchCases(t *testing.T) {
 		if count := watchPayloadCount(out, "ok"); count < 2 {
 			t.Fatalf("watch should execute command repeatedly, got %d payload lines in %q", count, out)
 		}
+		if strings.Count(out, "\x1b[H\x1b[J") < 2 {
+			t.Fatalf("watch default mode should clear the screen between refreshes, got %q", out)
+		}
 	})
 	t.Run("WATCH-002", func(t *testing.T) {
 		runWatch := func(interval string, timeout time.Duration) int {
@@ -1394,6 +1418,15 @@ func TestParity_WatchCases(t *testing.T) {
 			if strings.TrimSpace(line) != "ok" {
 				t.Fatalf("watch -t should emit command payload only, got line %q in %q", line, out)
 			}
+		}
+	})
+	t.Run("WATCH-004", func(t *testing.T) {
+		out := runWatchCapture(t, 120*time.Millisecond, "-n", "0.05", "-t", "--append", "echo", "ok")
+		if strings.Contains(out, "\x1b[H\x1b[J") {
+			t.Fatalf("watch --append should keep scrolling output without clearing the screen, got %q", out)
+		}
+		if count := watchPayloadCount(out, "ok"); count < 2 {
+			t.Fatalf("watch --append should still execute repeatedly, got %d payload lines in %q", count, out)
 		}
 	})
 }

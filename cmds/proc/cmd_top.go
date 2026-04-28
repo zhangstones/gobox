@@ -27,7 +27,7 @@ func TopCmd(args []string) error {
 	batch := fsFlags.Bool("b", false, "batch mode")
 	pids := fsFlags.String("p", "", "show only comma-separated process IDs")
 	users := fsFlags.String("u", "", "show only processes for comma-separated users or UIDs")
-	threads := fsFlags.Bool("H", false, "thread display mode (accepted; process-level output)")
+	threads := fsFlags.Bool("H", false, "thread display mode")
 	hideIdle := fsFlags.Bool("i", false, "hide processes with zero sampled CPU")
 	fullCmd := fsFlags.Bool("c", false, "show full command lines")
 	orderBy := fsFlags.String("o", "", "sort by field")
@@ -44,11 +44,11 @@ func TopCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -b           batch mode")
 		fmt.Fprintln(os.Stderr, "  -p PIDS      show only comma-separated process IDs")
 		fmt.Fprintln(os.Stderr, "  -u USERS     show only processes for comma-separated users or UIDs")
-		fmt.Fprintln(os.Stderr, "  -H           thread display mode (accepted; process-level output)")
+		fmt.Fprintln(os.Stderr, "  -H           thread display mode (full thread view on Linux)")
 		fmt.Fprintln(os.Stderr, "  -i           hide processes with zero sampled CPU")
 		fmt.Fprintln(os.Stderr, "  -c           show full command lines")
 		fmt.Fprintln(os.Stderr, "  -o FIELD     sort by field")
-		fmt.Fprintln(os.Stderr, "  --sort FIELD sort by: pid|cpu|rss|vms|cmd")
+		fmt.Fprintln(os.Stderr, "  --sort FIELD sort by: pid|cpu|rss|vms|pmem|cmd|comm|user|ppid|start|etime|time")
 		fmt.Fprintln(os.Stderr, "  -r           reverse sort order")
 	}
 
@@ -58,7 +58,6 @@ func TopCmd(args []string) error {
 		}
 		return err
 	}
-	_ = threads
 	delay, err := parseTopDelay(*interval)
 	if err != nil {
 		return err
@@ -100,7 +99,12 @@ func TopCmd(args []string) error {
 		}
 	}
 
-	prev, err := captureLinuxProcSnapshot()
+	snapshotFn := captureLinuxProcSnapshot
+	if *threads {
+		snapshotFn = captureLinuxThreadSnapshot
+	}
+
+	prev, err := snapshotFn()
 	if err != nil {
 		return err
 	}
@@ -152,13 +156,13 @@ func TopCmd(args []string) error {
 		} else if wait > 0 {
 			time.Sleep(wait)
 		}
-		curr, err := captureLinuxProcSnapshot()
+		curr, err := snapshotFn()
 		if err != nil {
 			return err
 		}
 		infos := diffProcSnapshots(prev, curr)
 		prev = curr
-		infos = filterTopInfos(infos, pidFilter, userNames, userIDs, *hideIdle)
+		infos = filterTopInfos(infos, pidFilter, userNames, userIDs, *hideIdle, *threads)
 		renderTopScreen(prev, curr, infos, *fullCmd, *batch, memTotal, currentSort, sortIndex, interactiveTTY, currentReverse)
 		i++
 		firstDraw = false
@@ -206,9 +210,9 @@ func runTopViaPS(batch bool, pids, users string, hideIdle, fullCmd bool, sortFie
 			if err != nil {
 				return err
 			}
-			infos = filterTopInfos(infos, nil, userNames, userIDs, hideIdle)
+			infos = filterTopInfos(infos, nil, userNames, userIDs, hideIdle, false)
 		} else if hideIdle {
-			infos = filterTopInfos(infos, nil, nil, nil, hideIdle)
+			infos = filterTopInfos(infos, nil, nil, nil, hideIdle, false)
 		}
 		renderTopScreen(curr, curr, infos, fullCmd, batch, readMemTotalBytes(), sortField, topSortColumnIndex(sortField), interactiveTTY, rev)
 		i++
@@ -263,9 +267,14 @@ func normalizeTopOrderBy(value string) string {
 	}
 }
 
-func filterTopInfos(infos []procInfo, pidFilter map[int]bool, userNames map[string]bool, userIDs map[int]bool, hideIdle bool) []procInfo {
+func filterTopInfos(infos []procInfo, pidFilter map[int]bool, userNames map[string]bool, userIDs map[int]bool, hideIdle bool, threadMode bool) []procInfo {
 	if len(pidFilter) > 0 {
-		infos = filterProcInfos(infos, func(pi procInfo) bool { return pidFilter[pi.pid] })
+		infos = filterProcInfos(infos, func(pi procInfo) bool {
+			if pidFilter[pi.pid] {
+				return true
+			}
+			return threadMode && pi.tgid != 0 && pidFilter[pi.tgid]
+		})
 	}
 	if len(userNames) > 0 || len(userIDs) > 0 {
 		infos = filterProcInfos(infos, func(pi procInfo) bool {

@@ -17,9 +17,23 @@ func WatchCmdWithContext(ctx context.Context, args []string) error {
 	fsFlags := flag.NewFlagSet("watch", flag.ContinueOnError)
 	interval := fsFlags.Float64("n", 2, "interval seconds")
 	noTitle := fsFlags.Bool("t", false, "hide title")
+	appendMode := fsFlags.Bool("append", false, "append each refresh instead of clearing the screen")
 	fsFlags.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: gobox watch [-n SEC] [-t] COMMAND [ARG]...")
-		fsFlags.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "Usage: gobox watch [-n SEC] [-t] [--append] COMMAND [ARG]...")
+		fmt.Fprintln(os.Stderr, "Run a command periodically.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Behavior:")
+		fmt.Fprintln(os.Stderr, "  default            refresh in-place by clearing the screen each iteration")
+		fmt.Fprintln(os.Stderr, "  --append           keep prior output and append each iteration below it")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Options:")
+		fmt.Fprintln(os.Stderr, "  -n SEC             interval in seconds between refreshes")
+		fmt.Fprintln(os.Stderr, "  -t                 hide the title line")
+		fmt.Fprintln(os.Stderr, "  --append           append output instead of clearing the screen")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  gobox watch -n 1 date")
+		fmt.Fprintln(os.Stderr, "  gobox watch --append -n 1 date")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -36,6 +50,9 @@ func WatchCmdWithContext(ctx context.Context, args []string) error {
 		delay = time.Second
 	}
 	for {
+		if !*appendMode {
+			fmt.Fprint(os.Stdout, "\033[H\033[J")
+		}
 		if !*noTitle {
 			fmt.Fprintf(os.Stdout, "Every %.1fs: %v\n\n", *interval, cmdArgs)
 		}

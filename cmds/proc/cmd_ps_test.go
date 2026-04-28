@@ -71,7 +71,7 @@ func TestPsCmdHelpPrefersCanonicalFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PsCmd help failed: %v", err)
 	}
-	for _, want := range []string{"--sort FIELD", "--maxcmd N", "--long", "--full REGEXP", "--comm PATTERN", "--hide-idle", "-ww", "Compatibility:"} {
+	for _, want := range []string{"--sort FIELD", "--maxcmd N", "--long", "--full REGEXP", "--comm PATTERN", "--hide-idle", "-ww", "Compatibility:", "pid,ppid,uid,user,comm,cmd,args,pcpu,pmem,rss,vsz,vms,tty,stat,start,etime,time", "pid|ppid|cpu|pcpu|pmem|rss|vsz|vms|comm|cmd|user|start|etime|time", "ps aux            BSD-style process table with user-oriented columns"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected help to contain %q, got %q", want, output)
 		}

@@ -218,7 +218,7 @@ func TestNpCmdHelp(t *testing.T) {
 		t.Fatalf("np --help failed unexpectedly: %v", err)
 	}
 	result := string(output)
-	for _, want := range []string{"Usage: gobox np", "Modes:", "--tcp", "--udp", "--icmp", "--arp", "--scan", "--flood", "Examples:"} {
+	for _, want := range []string{"Usage: gobox np", "Modes:", "--tcp", "--udp", "--icmp", "--arp", "--scan", "--flood", "Examples:", "interval between packets in seconds (supports decimals)"} {
 		if !strings.Contains(result, want) {
 			t.Fatalf("expected help output to contain %q, got: %s", want, result)
 		}
@@ -427,8 +427,8 @@ func TestNpCmdTcpModeCount(t *testing.T) {
 func TestNpCmdTcpModeInterval(t *testing.T) {
 	skipIfNotLinux(t)
 
-	// Test with custom interval (in microseconds)
-	output, err := runNpCmd([]string{"--tcp", "-p", "59999", "-c", "1", "-i", "100000", "-W", "1", "127.0.0.1"})
+	// Test with custom interval (in seconds)
+	output, err := runNpCmd([]string{"--tcp", "-p", "59999", "-c", "1", "-i", "0.1", "-W", "1", "127.0.0.1"})
 	_ = output
 	_ = err
 }
@@ -686,4 +686,16 @@ func TestNpCmdPingOutputFormat(t *testing.T) {
 	result := string(output)
 	// Should have some output format
 	_ = result
+}
+
+func TestNpCmdNegativeInterval(t *testing.T) {
+	skipIfNotLinux(t)
+
+	_, err := runNpCmd([]string{"--tcp", "-p", "80", "-i", "-1", "-W", "1", "127.0.0.1"})
+	if err == nil {
+		t.Fatal("expected error for negative interval")
+	}
+	if !strings.Contains(err.Error(), "interval must be >= 0") {
+		t.Fatalf("unexpected negative interval error: %v", err)
+	}
 }

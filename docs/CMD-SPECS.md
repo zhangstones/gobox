@@ -383,13 +383,13 @@
 | `gobox netstat -u, --udp` | `netstat -u` | ✅ 一致 | 仅显示 UDP socket |
 | `gobox netstat -x, --unix` | `netstat -x` | ✅ 一致 | 仅显示 Unix domain socket |
 | `gobox netstat -l, --listening` | `netstat -l` | ✅ 一致 | 仅显示监听 socket |
-| `gobox netstat -n, --numeric` | `netstat -n` | ⚠️ 部分一致 | gobox 当前输出本来就是数字地址/端口；该参数主要保留兼容语义 |
+| `gobox netstat -n, --numeric` | `netstat -n` | ⚠️ 部分一致 | gobox 当前默认即输出数字地址/端口；该参数保留兼容入口并显式声明 numeric 语义 |
 | `gobox netstat -p, --programs` | `netstat -p` | ✅ 常用一致 | 显示 PID/Program；常用关联语义对齐，权限受限时结果集合仍以当前 `/proc` 可见性为准 |
 | `gobox netstat -4` | `netstat -4` | ✅ 一致 | 仅显示 IPv4 socket |
 | `gobox netstat -6` | `netstat -6` | ✅ 一致 | 仅显示 IPv6 socket |
 | `gobox netstat -e, --extend` | `netstat -e` | ✅ 常用一致 | 显示扩展列（User/Inode）；列存在性与常用字段语义对齐 |
 | `gobox netstat -o, --timers` | `netstat -o` | ✅ 常用一致 | 显示 timer 信息；字段覆盖常用排障视角 |
-| `gobox netstat -W, --wide` | `netstat -W` | ⚠️ 部分一致 | gobox 默认已不截断地址；该参数作为兼容入口接受 |
+| `gobox netstat -W, --wide` | `netstat -W` | ⚠️ 部分一致 | gobox 默认已不截断地址；该参数作为兼容入口接受并与默认输出等效 |
 | `gobox netstat -r` | `netstat -r` | ⚠️ 部分一致 | 显示 IPv4/IPv6 路由表 |
 | `gobox netstat -i` | `netstat -i` | ⚠️ 部分一致 | 显示网络接口统计 |
 | `gobox netstat -s` | `netstat -s` | ⚠️ 部分一致 | 显示协议统计 |
@@ -458,7 +458,7 @@
 | `gobox np --arp` | `arping -I` | 🆕 gobox扩展 | ARP 模式 |
 | `gobox np -c int` | `ping -c` | ✅ 常用一致 | 数据包数量（默认 4） |
 | `gobox np --flood` | `ping -f` | ✅ 常用一致 | 洪水模式（最大速度）；节流和输出细节不承诺完全同形 |
-| `gobox np -i int` | `ping -i` | ⚠️ 部分一致 | 数据包间隔（微秒，默认 1000000），ping 默认秒 |
+| `gobox np -i float` | `ping -i` | ✅ 常用一致 | 数据包间隔秒数，支持小数秒（默认 1） |
 | `gobox np --icmp` | `ping` | ✅ 常用一致 | ICMP 模式 |
 | `gobox np -l int` | 长连接探测 | 🆕 gobox扩展 | 长连接模式 |
 | `gobox np -p int` | `nc -p` | 🆕 gobox扩展 | 目标端口 |
@@ -488,9 +488,9 @@
 | `gobox ps --long` | `ps -l` | ⚠️ 部分一致 | long 格式输出，展示 `PID/PPID/STAT/TTY/TIME/CMD` 等核心列 |
 | `gobox ps --comm string` | `pgrep -x` | ✅ 一致 | 按进程名精确匹配 |
 | `gobox ps --full string` | `pgrep -f` | ✅ 一致 | 按完整命令行正则匹配；输出默认也保留完整命令行，便于核对命中过滤结果 |
-| `gobox ps -o FIELDS` | `ps -o` | ⚠️ 部分一致 | 自定义输出字段，支持常用字段子集 |
-| `gobox ps --sort FIELD` | `ps --sort` | ⚠️ 部分一致 | GNU 风格排序字段 |
-| `gobox ps aux` | BSD 风格 `ps` 字母参数 | ⚠️ 部分一致 | BSD 风格下默认选择“自己且有 TTY”的进程；`a` 放开 only-yourself 限制，`x` 放开 must-have-tty 限制，`u` 切换到 user-oriented 列布局 |
+| `gobox ps -o FIELDS` | `ps -o` | ✅ 常用一致 | 自定义输出字段支持高频字段：`pid/ppid/uid/user/comm/cmd/args/pcpu/pmem/rss/vsz/vms/tty/stat/start/etime/time`；不支持字段稳定报错 |
+| `gobox ps --sort FIELD` | `ps --sort` | ✅ 常用一致 | GNU 风格排序字段，支持 `pid/ppid/cpu/pcpu/pmem/rss/vsz/vms/comm/cmd/user/start/etime/time`，不支持键稳定报错 |
+| `gobox ps aux` | BSD 风格 `ps` 字母参数 | ✅ 常用一致 | 兼容常见 BSD `aux` 选择语义与 user-oriented 列布局；`a/x/u` 组合按常见原生习惯收敛 |
 | `gobox ps -ww` | `ps -ww` | ✅ 一致 | 取消 `ps` 默认宽度截断，尽量完整显示单行 `CMD` |
 | `gobox ps -i int` | `vmstat -i` (采样间隔) | 🆕 gobox扩展 | CPU 采样间隔（毫秒，默认 500） |
 | `gobox ps --maxcmd N` | `ps -o pid,cmd` (截断) | 🆕 gobox扩展 | 指定命令列最大长度（0=无限制）；显式指定时优先于默认 TTY 宽度策略 |
@@ -509,7 +509,7 @@
 | `gobox top -b` | `top -b` | ✅ 常用一致 | batch 模式输出 |
 | `gobox top -p PID` | `top -p` | ✅ 常用一致 | 只显示指定 PID |
 | `gobox top -u USER` | `top -u` | ✅ 常用一致 | 按用户过滤 |
-| `gobox top -H` | `top -H` | ⚠️ 部分一致 | 接受线程模式参数，当前仍为进程级输出 |
+| `gobox top -H` | `top -H` | ✅ Linux 常用一致 | Linux 下显示线程视图：`PID` 列输出 TID，`-p PID` 按所属进程过滤线程；非 Linux 路径保留降级实现 |
 | `gobox top -i` | `top -i` | ⚠️ 部分一致 | 隐藏采样 CPU 为 0 的进程 |
 | `gobox top -c` | `top -c` | ✅ 常用一致 | 显示完整命令行 |
 | `gobox top -o FIELD` | `top -o` | ⚠️ 部分一致 | 按字段排序 |
@@ -579,9 +579,10 @@
 
 | gobox 参数 | 对应原生命令参数/参考基线 | 实现一致性 | 功能说明 |
 |------------|---------------|------------|----------|
-| `gobox watch COMMAND...` | `watch COMMAND...` | ⚠️ 部分一致 | 周期性执行命令并刷新输出；标题和终端重绘行为为精简实现 |
-| `gobox watch -n SEC COMMAND...` | `watch -n` | ⚠️ 部分一致 | 设置执行间隔秒数 |
-| `gobox watch -t COMMAND...` | `watch -t` | ⚠️ 部分一致 | 不显示标题行 |
+| `gobox watch COMMAND...` | `watch COMMAND...` | ✅ 常用一致 | 默认按覆盖刷新方式周期性执行命令，不滚动追加历史输出 |
+| `gobox watch -n SEC COMMAND...` | `watch -n` | ✅ 一致 | 设置执行间隔秒数 |
+| `gobox watch -t COMMAND...` | `watch -t` | ✅ 一致 | 不显示标题行 |
+| `gobox watch --append COMMAND...` | gobox-only | 🆕 gobox扩展 | 切换到滚动追加输出模式，每轮结果直接向下打印 |
 
 ### timeout
 

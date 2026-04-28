@@ -482,15 +482,15 @@
 | PS-007 | `-r` | structured | `ps -r` | current processes | 排序方向反转 |
 | PS-008 | `--sort FIELD` | contract | gobox-only | current processes | 排序字段生效 |
 | PS-009 | `-ww` | contract | `ps -ww` | long cmdline process | `ps` 默认宽度策略可被 `-ww` 关闭，长命令保持完整单行 |
-| PS-010 | `-o FIELD1,FIELD2` | structured | `ps -o` | current process | 自定义列输出正确 |
+| PS-010 | `-o FIELD1,FIELD2` | structured | `ps -o` | current process | 自定义列输出正确；高频字段映射稳定，不支持字段明确报错 |
 | PS-011 | `--comm string` | structured | `pgrep -x` | current process | 进程名精确匹配符合 `pgrep -x` |
 | PS-012 | `-A` | structured | `ps -A` | current process | all-process alias 可看到当前进程 |
 | PS-013 | `-F` | behavior | `ps -F` | current process | `-F` 必须相对基础 `-p PID` 增加 full-format 列并保留目标 PID |
 | PS-014 | `-u USER` | structured | `ps -u` | current user | 用户过滤命中当前进程集合 |
 | PS-015 | `-p PID` | structured | `ps -p` | current process | PID 过滤只保留目标进程 |
 | PS-016 | `-C NAME` | structured | `ps -C` | current process name | 命令名过滤命中目标进程 |
-| PS-017 | `--sort -FIELD` | structured | `ps --sort` | current processes | GNU 风格降序排序参数生效 |
-| PS-018 | BSD `aux` semantics | behavior | `ps aux` | current process | BSD 风格下默认选择“自己且有 TTY”的进程；`a` 放开 only-yourself 限制，`x` 放开 must-have-tty 限制，`u` 切换到 user-oriented 列布局 |
+| PS-017 | `--sort -FIELD` | structured | `ps --sort` | current processes | GNU 风格降序排序参数生效；不支持字段明确报错 |
+| PS-018 | BSD `aux` semantics | behavior | `ps aux` | current process | BSD 风格 `a/x/u` 组合语义与 user-oriented 列布局保持常见 native 预期 |
 | PS-019 | `--long` | structured | `ps -l` | current process | long 格式输出必须包含 `PID/PPID/STAT/TTY/TIME/CMD` 等核心列 |
 | PS-020 | `--hide-idle` | contract | gobox-only | idle process | 过滤掉采样 CPU 为 0 的进程 |
 
@@ -505,7 +505,7 @@
 | TOP-005 | `-b` | contract | `top -b` | single iteration | batch 模式不输出清屏控制符 |
 | TOP-006 | `-p PID` | structured | `top -p` | current process | PID 过滤命中当前进程 |
 | TOP-007 | `-u USER` | structured | `top -u` | current user | 用户过滤可执行并输出进程表 |
-| TOP-008 | `-H` | contract | `top -H` | single iteration | 线程模式参数被接受 |
+| TOP-008 | `-H` | contract | `top -H` | single iteration | Linux 下显示线程视图，`PID` 列输出 TID，`-p PID` 仍按所属进程过滤 |
 | TOP-009 | `-i` | contract | `top -i` | single iteration | idle 过滤参数被接受 |
 | TOP-010 | `-c` | contract | `top -c` | single iteration | 完整命令行模式被接受 |
 | TOP-011 | `-o FIELD` | contract | `top -o` | single iteration | 排序字段参数被接受 |
@@ -567,9 +567,10 @@
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
-| WATCH-001 | `COMMAND...` | behavior | `watch` | short-lived command + timeout harness | 命令会被周期性执行并输出结果 |
+| WATCH-001 | `COMMAND...` | behavior | `watch` | short-lived command + timeout harness | 命令会被周期性执行，默认使用覆盖刷新而不是滚动追加 |
 | WATCH-002 | `-n SEC` | behavior | `watch -n` | short-lived command + timeout harness | 执行间隔参数影响刷新节奏 |
 | WATCH-003 | `-t` | behavior | `watch -t` | short-lived command + timeout harness | 标题行隐藏行为一致 |
+| WATCH-004 | `--append` | contract | gobox-only | short-lived command + timeout harness | 显式切换到滚动追加输出，且不发送清屏控制序列 |
 
 ### timeout
 

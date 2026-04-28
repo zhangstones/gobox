@@ -87,6 +87,9 @@ gobox <command> [args...]
 # 查看占用较高的进程
 ./gobox ps --sort cpu -r -n 10
 
+# BSD 风格查看进程
+./gobox ps aux
+
 # 全格式查看进程；-f 负责增加列，默认宽度策略仍然生效
 ./gobox ps -f -n 10
 
@@ -96,11 +99,21 @@ gobox <command> [args...]
 # 需要完整命令行时用 -ww 关闭 ps 默认宽度截断
 ./gobox ps -f -ww -n 10
 
+# 查看线程级 top 视图（Linux）
+./gobox top -H -p $$
+
 # 查看内存概况
 ./gobox free -h
 
 # 查看监听中的网络连接
 ./gobox netstat -l -n
+
+# 以 0.1 秒间隔做 TCP 连通性探测
+./gobox np --tcp -p 80 -c 3 -i 0.1 127.0.0.1
+
+# 默认覆盖刷新；需要保留历史输出时显式使用 --append
+./gobox watch -n 1 date
+./gobox watch --append -n 1 date
 
 # 查看合并后的 netstat 帮助
 ./gobox netstat --help

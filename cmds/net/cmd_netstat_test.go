@@ -663,6 +663,9 @@ func TestNetstatCmdHelpMergesShortAndLongFlags(t *testing.T) {
 		"-c, --continuous",
 		"-n, --numeric",
 		"-W, --wide",
+		"already numeric",
+		"does not truncate addresses by default",
+		"currently matches the default socket selection",
 		"--sort FIELD",
 	} {
 		if !strings.Contains(out, want) {

@@ -7,6 +7,25 @@ import (
 	"time"
 )
 
+func TestWatchCmdHelpMentionsDefaultAndAppendModes(t *testing.T) {
+	out, err := captureProcOutput(t, func() error {
+		return WatchCmd([]string{"--help"})
+	})
+	if err != nil {
+		t.Fatalf("WatchCmd help failed: %v", err)
+	}
+	for _, want := range []string{
+		"Usage: gobox watch [-n SEC] [-t] [--append] COMMAND [ARG]...",
+		"refresh in-place by clearing the screen",
+		"--append           append output instead of clearing the screen",
+		"gobox watch --append -n 1 date",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected help to contain %q, got %q", want, out)
+		}
+	}
+}
+
 func TestWatchWithContext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 220*time.Millisecond)
 	defer cancel()
@@ -21,6 +40,9 @@ func TestWatchWithContext(t *testing.T) {
 	}
 	if strings.Count(out, "ok") < 2 {
 		t.Fatalf("expected watch to run multiple iterations, got %q", out)
+	}
+	if strings.Count(out, "[H[J") < 2 {
+		t.Fatalf("expected default watch mode to clear the screen between refreshes, got %q", out)
 	}
 }
 
@@ -90,4 +112,21 @@ func TestWatchCmdOptionsCommandFailureStillPrintsNextIterationsUntilContextStops
 		t.Fatalf("expected failed command output to be shown, got %q", out)
 	}
 
+}
+
+func TestWatchCmdAppendModeSkipsClearScreen(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 220*time.Millisecond)
+	defer cancel()
+	out, err := captureProcCmd(t, func() error {
+		return WatchCmdWithContext(ctx, []string{"-n", "0.05", "-t", "--append", "echo", "ok"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[H[J") {
+		t.Fatalf("expected --append mode to avoid clear-screen output, got %q", out)
+	}
+	if strings.Count(out, "ok") < 2 {
+		t.Fatalf("expected append mode to keep repeated payload output, got %q", out)
+	}
 }
