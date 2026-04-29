@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"time"
+
+	"gobox/cmds/utils"
 )
 
 func WatchCmd(args []string) error {
@@ -49,8 +51,9 @@ func WatchCmdWithContext(ctx context.Context, args []string) error {
 	if delay <= 0 {
 		delay = time.Second
 	}
+	clearScreen := !*appendMode && utils.IsTerminal(os.Stdout)
 	for {
-		if !*appendMode {
+		if clearScreen {
 			fmt.Fprint(os.Stdout, "\033[H\033[J")
 		}
 		if !*noTitle {

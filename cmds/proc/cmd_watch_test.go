@@ -41,8 +41,8 @@ func TestWatchWithContext(t *testing.T) {
 	if strings.Count(out, "ok") < 2 {
 		t.Fatalf("expected watch to run multiple iterations, got %q", out)
 	}
-	if strings.Count(out, "[H[J") < 2 {
-		t.Fatalf("expected default watch mode to clear the screen between refreshes, got %q", out)
+	if strings.Contains(out, "\x1b[H\x1b[J") {
+		t.Fatalf("expected non-tty watch output to avoid clear-screen sequences, got %q", out)
 	}
 }
 
@@ -128,5 +128,19 @@ func TestWatchCmdAppendModeSkipsClearScreen(t *testing.T) {
 	}
 	if strings.Count(out, "ok") < 2 {
 		t.Fatalf("expected append mode to keep repeated payload output, got %q", out)
+	}
+}
+
+func TestWatchCmdDefaultModeSkipsClearScreenWhenStdoutIsNotTTY(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
+	defer cancel()
+	out, err := captureProcCmd(t, func() error {
+		return WatchCmdWithContext(ctx, []string{"-n", "0.05", "-t", "echo", "ok"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "\x1b[H\x1b[J") {
+		t.Fatalf("expected non-tty watch output to avoid clear-screen sequences, got %q", out)
 	}
 }

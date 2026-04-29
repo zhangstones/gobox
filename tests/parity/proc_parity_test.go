@@ -657,7 +657,7 @@ func TestParity_PsCases(t *testing.T) {
 			}
 		}
 
-			invalid := runGoboxMainCLI(t, env.Dir, "", "ps", "-o", "pid,notafield", "-n", "3", "-i", "1")
+		invalid := runGoboxMainCLI(t, env.Dir, "", "ps", "-o", "pid,notafield", "-n", "3", "-i", "1")
 		if invalid.ExitCode == 0 || !strings.Contains(invalid.Stderr, "unsupported output fields") {
 			t.Fatalf("ps -o should reject unsupported fields, got %+v", invalid)
 		}
@@ -829,7 +829,7 @@ func TestParity_PsCases(t *testing.T) {
 		pids := extractLeadingInts(nonEmptyLines(res.Stdout)[1:])
 		assertMonotonic(t, pids, true)
 
-			invalid := runGoboxMainCLI(t, env, "", "ps", "--sort", "nosuchfield", "-n", "5", "-i", "1")
+		invalid := runGoboxMainCLI(t, env, "", "ps", "--sort", "nosuchfield", "-n", "5", "-i", "1")
 		if invalid.ExitCode == 0 || !strings.Contains(invalid.Stderr, "unsupported sort field") {
 			t.Fatalf("ps --sort should reject unsupported fields, got %+v", invalid)
 		}
@@ -1376,8 +1376,8 @@ func TestParity_WatchCases(t *testing.T) {
 		if count := watchPayloadCount(out, "ok"); count < 2 {
 			t.Fatalf("watch should execute command repeatedly, got %d payload lines in %q", count, out)
 		}
-		if strings.Count(out, "\x1b[H\x1b[J") < 2 {
-			t.Fatalf("watch default mode should clear the screen between refreshes, got %q", out)
+		if strings.Contains(out, "\x1b[H\x1b[J") {
+			t.Fatalf("watch should avoid clear-screen sequences when stdout is not a tty, got %q", out)
 		}
 	})
 	t.Run("WATCH-002", func(t *testing.T) {
