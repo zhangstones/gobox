@@ -101,7 +101,7 @@ func NcCmdWithContext(ctx context.Context, args []string) error {
 				concurrent, _ = strconv.Atoi(args[i])
 			}
 		case strings.HasPrefix(arg, "--concurrent="):
-			concurrent, _ = strconv.Atoi(arg[12:])
+			concurrent, _ = strconv.Atoi(arg[13:])
 		case strings.HasPrefix(arg, "-n"):
 			// -nN or -n N (requests)
 			if len(arg) > 2 {
@@ -111,7 +111,7 @@ func NcCmdWithContext(ctx context.Context, args []string) error {
 				totalRequests, _ = strconv.Atoi(args[i])
 			}
 		case strings.HasPrefix(arg, "--requests="):
-			totalRequests, _ = strconv.Atoi(arg[10:])
+			totalRequests, _ = strconv.Atoi(arg[11:])
 		case strings.HasPrefix(arg, "-t"):
 			// -tSEC or -t SEC
 			if len(arg) > 2 {
@@ -131,7 +131,7 @@ func NcCmdWithContext(ctx context.Context, args []string) error {
 				reportInterval, _ = strconv.Atoi(args[i])
 			}
 		case strings.HasPrefix(arg, "--interval="):
-			reportInterval, _ = strconv.Atoi(arg[10:])
+			reportInterval, _ = strconv.Atoi(arg[11:])
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return fmt.Errorf("unknown option: %s", arg)

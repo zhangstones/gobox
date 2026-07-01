@@ -266,7 +266,7 @@ func printDfRow(row dfRow, rows []dfRow, opts dfOptions) {
 	blockSize := uint64(st.Bsize)
 	total := st.Blocks * blockSize
 	free := st.Bavail * blockSize
-	used := total - free
+	used := (st.Blocks - st.Bfree) * blockSize
 	totalText, usedText, freeText := formatDfSize(total, used, free, opts)
 	if opts.showType {
 		fmt.Printf("%-*s %-*s %10s %10s %10s %5s %s\n", sourceWidth, m.Source, typeWidth, m.FSType, totalText, usedText, freeText, percent(used, total), m.Target)

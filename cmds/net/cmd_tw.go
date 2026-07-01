@@ -201,7 +201,7 @@ func MakeStaticHandler(dir string) http.HandlerFunc {
 		// Verify path is within dir
 		absDir, _ := filepath.Abs(dir)
 		absPath, _ := filepath.Abs(path)
-		if !strings.HasPrefix(absPath, absDir) {
+		if absPath != absDir && !strings.HasPrefix(absPath, absDir+string(filepath.Separator)) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}

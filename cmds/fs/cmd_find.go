@@ -88,7 +88,9 @@ func FindCmd(args []string) error {
 		baseDepth := pathDepth(root)
 		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
-				// Continue on permission errors
+				if p == root {
+					return err
+				}
 				return nil
 			}
 			depth := pathDepth(p) - baseDepth
@@ -239,7 +241,25 @@ func globToRegex(pattern string) string {
 			b.WriteString(".*")
 		case '?':
 			b.WriteString(".")
-		case '.', '+', '(', ')', '|', '^', '$', '{', '}', '[', ']', '\\':
+		case '[':
+			// pass bracket expression through verbatim
+			j := i + 1
+			if j < len(pattern) && pattern[j] == '!' {
+				j++
+			}
+			if j < len(pattern) && pattern[j] == ']' {
+				j++
+			}
+			for j < len(pattern) && pattern[j] != ']' {
+				j++
+			}
+			if j < len(pattern) {
+				b.WriteString(pattern[i : j+1])
+				i = j
+			} else {
+				b.WriteString(`\[`)
+			}
+		case '.', '+', '(', ')', '|', '^', '$', '{', '}', ']', '\\':
 			b.WriteByte('\\')
 			b.WriteByte(pattern[i])
 		default:

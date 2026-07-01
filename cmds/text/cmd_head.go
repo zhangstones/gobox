@@ -38,14 +38,11 @@ func HeadCmd(args []string) error {
 				return fmt.Errorf("invalid number of lines: %s", arg[3:])
 			}
 			lines = n
-		case arg == "--lines=":
-			if i+1 >= len(args) {
-				return fmt.Errorf("--lines= requires an argument")
-			}
-			i++
-			n, err := strconv.Atoi(args[i])
+		case strings.HasPrefix(arg, "--lines="):
+			val := arg[len("--lines="):]
+			n, err := strconv.Atoi(val)
 			if err != nil || n < 0 {
-				return fmt.Errorf("invalid number of lines: %s", args[i])
+				return fmt.Errorf("invalid number of lines: %s", val)
 			}
 			lines = n
 		case arg == "-c" || arg == "--bytes":
@@ -64,14 +61,11 @@ func HeadCmd(args []string) error {
 				return fmt.Errorf("invalid number of bytes: %s", arg[3:])
 			}
 			bytes = n
-		case arg == "--bytes=":
-			if i+1 >= len(args) {
-				return fmt.Errorf("--bytes= requires an argument")
-			}
-			i++
-			n, err := strconv.Atoi(args[i])
+		case strings.HasPrefix(arg, "--bytes="):
+			val := arg[len("--bytes="):]
+			n, err := strconv.Atoi(val)
 			if err != nil || n < 0 {
-				return fmt.Errorf("invalid number of bytes: %s", args[i])
+				return fmt.Errorf("invalid number of bytes: %s", val)
 			}
 			bytes = n
 		case arg == "-q" || arg == "--quiet" || arg == "--silent":

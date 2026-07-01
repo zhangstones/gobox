@@ -15,6 +15,8 @@ import (
 	"time"
 	"unsafe"
 
+	ps "github.com/mitchellh/go-ps"
+
 	"gobox/cmds/utils"
 )
 
@@ -193,11 +195,18 @@ func runTopViaPS(batch bool, pids, users string, hideIdle, fullCmd bool, sortFie
 	}
 	i := 0
 	for {
-		curr, err := captureLinuxProcSnapshot()
+		procs, err := ps.Processes()
 		if err != nil {
 			return err
 		}
-		infos := diffProcSnapshots(curr, curr)
+		infos := make([]procInfo, 0, len(procs))
+		for _, p := range procs {
+			infos = append(infos, procInfo{
+				pid:  p.Pid(),
+				ppid: p.PPid(),
+				exe:  p.Executable(),
+			})
+		}
 		if pids != "" {
 			pidFilter, err := parsePIDList(pids)
 			if err != nil {
@@ -214,7 +223,8 @@ func runTopViaPS(batch bool, pids, users string, hideIdle, fullCmd bool, sortFie
 		} else if hideIdle {
 			infos = filterTopInfos(infos, nil, nil, nil, hideIdle, false)
 		}
-		renderTopScreen(curr, curr, infos, fullCmd, batch, readMemTotalBytes(), sortField, topSortColumnIndex(sortField), interactiveTTY, rev)
+		empty := procSnapshot{}
+		renderTopScreen(empty, empty, infos, fullCmd, batch, readMemTotalBytes(), sortField, topSortColumnIndex(sortField), interactiveTTY, rev)
 		i++
 		if iterations != 0 && i >= iterations {
 			return nil

@@ -20,6 +20,7 @@ func setupDfFixture(t *testing.T) string {
 	statfsDfPath = func(_ string, st *syscall.Statfs_t) error {
 		st.Bsize = 1024
 		st.Blocks = 20
+		st.Bfree = 5
 		st.Bavail = 5
 		st.Files = 10
 		st.Ffree = 6
@@ -108,6 +109,7 @@ func TestDfLongFilesystemAndTypeStayAligned(t *testing.T) {
 	statfsDfPath = func(_ string, st *syscall.Statfs_t) error {
 		st.Bsize = 1024
 		st.Blocks = 20
+		st.Bfree = 5
 		st.Bavail = 5
 		return nil
 	}
@@ -235,6 +237,7 @@ func TestDfDefaultDeduplicatesMountTargets(t *testing.T) {
 	statfsDfPath = func(_ string, st *syscall.Statfs_t) error {
 		st.Bsize = 1024
 		st.Blocks = 10
+		st.Bfree = 5
 		st.Bavail = 5
 		st.Files = 10
 		st.Ffree = 8
@@ -264,6 +267,7 @@ func TestDfAllIncludesDuplicateMountTargets(t *testing.T) {
 	statfsDfPath = func(_ string, st *syscall.Statfs_t) error {
 		st.Bsize = 1024
 		st.Blocks = 10
+		st.Bfree = 5
 		st.Bavail = 5
 		return nil
 	}
@@ -292,6 +296,7 @@ func TestDfTypeFiltersAndLocal(t *testing.T) {
 	statfsDfPath = func(_ string, st *syscall.Statfs_t) error {
 		st.Bsize = 1024
 		st.Blocks = 10
+		st.Bfree = 5
 		st.Bavail = 5
 		return nil
 	}
@@ -327,6 +332,7 @@ func TestDfTotalAndPosix(t *testing.T) {
 	statfsDfPath = func(_ string, st *syscall.Statfs_t) error {
 		st.Bsize = 1024
 		st.Blocks = 10
+		st.Bfree = 4
 		st.Bavail = 4
 		return nil
 	}

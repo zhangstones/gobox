@@ -94,13 +94,21 @@ func XargsCmd(args []string) error {
 		return cmd.Run()
 	}
 
+	// -P 0 means unlimited parallelism (GNU xargs behaviour)
+	maxP := *maxProcs
+	if maxP <= 0 {
+		maxP = len(inputs)
+		if maxP == 0 {
+			maxP = 1
+		}
+	}
 	// Process inputs in batches and execute commands in parallel
 	if replaceString != "" {
 		// Replace mode: replace placeholder with each input
-		return executeReplaceMode(cmdArgs, inputs, replaceString, verbose, *maxProcs)
+		return executeReplaceMode(cmdArgs, inputs, replaceString, verbose, maxP)
 	} else {
 		// Append mode: append inputs to command
-		return executeAppendMode(cmdArgs, inputs, *numArgs, verbose, *maxProcs)
+		return executeAppendMode(cmdArgs, inputs, *numArgs, verbose, maxP)
 	}
 }
 

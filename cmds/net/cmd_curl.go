@@ -347,18 +347,22 @@ func parseCurlFormField(spec string) (curlFormField, error) {
 	if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(value) == "" {
 		return curlFormField{}, fmt.Errorf("invalid form field %q", spec)
 	}
-	filePath := strings.TrimSpace(value)
-	if strings.HasPrefix(filePath, "@") {
-		filePath = strings.TrimPrefix(filePath, "@")
-	}
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return curlFormField{}, fmt.Errorf("cannot read form file %s: %w", filePath, err)
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "@") {
+		filePath := strings.TrimPrefix(value, "@")
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return curlFormField{}, fmt.Errorf("cannot read form file %s: %w", filePath, err)
+		}
+		return curlFormField{
+			name:     strings.TrimSpace(name),
+			filename: filepath.Base(filePath),
+			data:     data,
+		}, nil
 	}
 	return curlFormField{
-		name:     strings.TrimSpace(name),
-		filename: filepath.Base(filePath),
-		data:     data,
+		name: strings.TrimSpace(name),
+		data: []byte(value),
 	}, nil
 }
 
@@ -532,7 +536,7 @@ func runSingle(client *http.Client, targetURL, method string, headers []string, 
 
 	// Write headers if requested (or if this is a HEAD request)
 	if showHeaders || head {
-		fmt.Fprintf(output, "HTTP/%.1f %d %s\n", float64(resp.ProtoMajor)+float64(resp.ProtoMinor)/10, resp.StatusCode, resp.Status)
+		fmt.Fprintf(output, "HTTP/%.1f %s\n", float64(resp.ProtoMajor)+float64(resp.ProtoMinor)/10, resp.Status)
 		for k, v := range resp.Header {
 			fmt.Fprintf(output, "%s: %s\n", k, v[0])
 		}

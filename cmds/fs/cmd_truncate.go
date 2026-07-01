@@ -76,7 +76,7 @@ func TruncateCmd(args []string) error {
 			}
 		}
 		if !*noCreate {
-			f, err := os.OpenFile(file, os.O_CREATE, 0o666)
+			f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY, 0o666)
 			if err != nil {
 				return err
 			}

@@ -214,8 +214,8 @@ func md5sumCheck(files []string, warn, status, quiet bool) error {
 					hasError = true
 					continue
 				}
-				// Filename might have spaces, so join remaining parts
-				filename = strings.Join(parts[1:], " ")
+				// Filename might have spaces, so join remaining parts; strip binary-mode prefix
+				filename = strings.TrimPrefix(strings.Join(parts[1:], " "), "*")
 			}
 
 			// Compute actual hash

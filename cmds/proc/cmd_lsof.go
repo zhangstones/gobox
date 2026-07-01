@@ -2,8 +2,10 @@ package proc
 
 import (
 	"bufio"
+	"encoding/hex"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -247,5 +249,27 @@ func procNetEndpoint(value string) string {
 	if err != nil {
 		return value
 	}
-	return fmt.Sprintf("%s:%d", parts[0], port)
+	ih := parts[0]
+	if len(ih) == 8 {
+		var b [4]byte
+		for i := 0; i < 4; i++ {
+			v, err := strconv.ParseUint(ih[i*2:i*2+2], 16, 8)
+			if err != nil {
+				return value
+			}
+			b[3-i] = byte(v)
+		}
+		return fmt.Sprintf("%d.%d.%d.%d:%d", b[0], b[1], b[2], b[3], port)
+	}
+	if len(ih) == 32 {
+		raw, err := hex.DecodeString(ih)
+		if err != nil || len(raw) != 16 {
+			return value
+		}
+		for i := 0; i < 16; i += 4 {
+			raw[i], raw[i+1], raw[i+2], raw[i+3] = raw[i+3], raw[i+2], raw[i+1], raw[i]
+		}
+		return fmt.Sprintf("[%s]:%d", net.IP(raw).String(), port)
+	}
+	return fmt.Sprintf("%s:%d", ih, port)
 }

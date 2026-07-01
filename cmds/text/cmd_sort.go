@@ -334,31 +334,40 @@ func sortLines(lines []string, cfg sortConfig) ([]string, error) {
 		}
 	}
 
-	sort.Slice(entries, func(i, j int) bool {
+	sort.SliceStable(entries, func(i, j int) bool {
 		vi, vj := entries[i].value, entries[j].value
 
-		// Compare based on type
-		var less bool
+		var cmp int
 		switch v := vi.(type) {
 		case float64:
 			vjF := vj.(float64)
-			less = v < vjF
+			if v < vjF {
+				cmp = -1
+			} else if v > vjF {
+				cmp = 1
+			}
 		case time.Month:
 			vjM := vj.(time.Month)
-			less = v < vjM
+			if v < vjM {
+				cmp = -1
+			} else if v > vjM {
+				cmp = 1
+			}
 		case int:
 			vjI := vj.(int)
-			less = v < vjI
+			if v < vjI {
+				cmp = -1
+			} else if v > vjI {
+				cmp = 1
+			}
 		default:
-			vs := vi.(string)
-			vsj := vj.(string)
-			less = strings.Compare(vs, vsj) < 0
+			cmp = strings.Compare(vi.(string), vj.(string))
 		}
 
 		if cfg.reverse {
-			return !less
+			return cmp > 0
 		}
-		return less
+		return cmp < 0
 	})
 
 	result := make([]string, len(entries))

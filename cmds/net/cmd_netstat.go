@@ -998,14 +998,17 @@ func parseIPFromAddr(addr string) string {
 		}
 		return fmt.Sprintf("%d.%d.%d.%d", bytes[0], bytes[1], bytes[2], bytes[3])
 	}
-	// IPv6: 32 hex chars -> 16 bytes
+	// IPv6: 32 hex chars -> 16 bytes stored as 4 little-endian uint32 words
 	if len(ih) == 32 {
 		b, err := hex.DecodeString(ih)
 		if err != nil || len(b) != 16 {
 			return ""
 		}
-		ip := net.IP(b)
-		return ip.String()
+		// byte-swap each 4-byte word
+		for i := 0; i < 16; i += 4 {
+			b[i], b[i+1], b[i+2], b[i+3] = b[i+3], b[i+2], b[i+1], b[i]
+		}
+		return net.IP(b).String()
 	}
 	// fallback: return the hex string
 	return ih

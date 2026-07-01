@@ -186,6 +186,12 @@ func GrepCmd(args []string) error {
 		if err != nil {
 			return fmt.Errorf("invalid regex pattern: %w", err)
 		}
+	} else if opts.ignoreCase {
+		var err error
+		regex, err = regexp.Compile("(?i)" + regexp.QuoteMeta(pattern))
+		if err != nil {
+			return fmt.Errorf("invalid pattern: %w", err)
+		}
 	}
 
 	matchedAny := false
@@ -372,17 +378,11 @@ func grepFindMatches(line, pattern string, regex *regexp.Regexp, opts grepOption
 	if opts.invert {
 		return nil
 	}
-	if opts.fixedString {
-		searchPattern := pattern
-		searchLine := line
-		if opts.ignoreCase {
-			searchPattern = strings.ToLower(pattern)
-			searchLine = strings.ToLower(line)
-		}
+	if opts.fixedString && !opts.ignoreCase {
 		parts := make([]string, 0)
 		start := 0
 		for {
-			idx := strings.Index(searchLine[start:], searchPattern)
+			idx := strings.Index(line[start:], pattern)
 			if idx == -1 {
 				break
 			}

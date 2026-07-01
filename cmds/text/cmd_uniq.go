@@ -178,9 +178,11 @@ func uniqReader(r io.Reader, out io.Writer, showCount, showRepeated, showUnique,
 			}
 		}
 
-		// Check chars if requested
-		if checkChars > 0 && len(result) > checkChars {
-			result = result[:checkChars]
+		// Check chars if requested (rune-aware)
+		if checkChars > 0 {
+			if runes := []rune(result); len(runes) > checkChars {
+				result = string(runes[:checkChars])
+			}
 		}
 
 		// Ignore case if requested

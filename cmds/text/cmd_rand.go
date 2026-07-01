@@ -72,9 +72,10 @@ func RandCmd(args []string) error {
 						cfg.numBytes = n
 						goto doneFlags
 					} else if i+1 < len(args) {
-						n, err := strconv.Atoi(args[i+1])
+						i++
+						n, err := strconv.Atoi(args[i])
 						if err != nil || n < 0 {
-							return fmt.Errorf("invalid number of bytes: %s", args[i+1])
+							return fmt.Errorf("invalid number of bytes: %s", args[i])
 						}
 						cfg.numBytes = n
 						goto doneFlags
@@ -90,7 +91,6 @@ func RandCmd(args []string) error {
 					return fmt.Errorf("unknown option: -%c", arg[j])
 				}
 			}
-			goto doneFlags
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return fmt.Errorf("unknown option: %s", arg)

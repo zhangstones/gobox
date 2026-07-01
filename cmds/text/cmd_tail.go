@@ -456,15 +456,16 @@ func tailFollowByName(fi *tailFileInfo, w io.Writer, lines int, quiet, multipleF
 	if err != nil {
 		return nil // File might not exist yet
 	}
-	defer f.Close()
 
 	stat, err := f.Stat()
 	if err != nil {
+		f.Close()
 		return err
 	}
 
 	ino, dev, err := getFileInode(f)
 	if err != nil {
+		f.Close()
 		return err
 	}
 
@@ -489,10 +490,12 @@ func tailFollowByName(fi *tailFileInfo, w io.Writer, lines int, quiet, multipleF
 		// New content available
 		_, err := f.Seek(fi.offset, io.SeekStart)
 		if err != nil {
+			f.Close()
 			return err
 		}
 		_, err = io.Copy(w, f)
 		if err != nil {
+			f.Close()
 			return err
 		}
 		fi.offset = currentSize
@@ -505,10 +508,8 @@ func tailFollowByName(fi *tailFileInfo, w io.Writer, lines int, quiet, multipleF
 		fi.offset = stat.Size()
 	}
 
-	// Update reader reference
-	if fi.reader != f {
-		fi.reader.Close()
-		fi.reader = f
-	}
+	// Replace reader with fresh handle; close old one
+	fi.reader.Close()
+	fi.reader = f
 	return nil
 }
