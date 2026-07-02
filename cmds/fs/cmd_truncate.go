@@ -51,8 +51,10 @@ func TruncateCmd(args []string) error {
 		targetSize := refSize
 		if *ref == "" {
 			current := int64(0)
-			if info, err := os.Stat(file); err == nil {
+			if info, statErr := os.Stat(file); statErr == nil {
 				current = info.Size()
+			} else if !os.IsNotExist(statErr) {
+				return statErr
 			}
 			parsed, relative, err := parseTruncateSize(*sizeArg)
 			if err != nil {

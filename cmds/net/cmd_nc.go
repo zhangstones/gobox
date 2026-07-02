@@ -600,7 +600,7 @@ func ncBenchmarkClient(host, port string, udp, verbose, numericOnly, forceIPv4, 
 
 	// Print header
 	fmt.Println()
-	fmt.Println("Connecting to localhost:8080")
+	fmt.Printf("Connecting to %s\n", addr)
 	fmt.Println("[ ID] Interval       Transfer     Bandwidth")
 	fmt.Println()
 

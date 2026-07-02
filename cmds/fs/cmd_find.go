@@ -271,11 +271,17 @@ func globToRegex(pattern string) string {
 }
 
 func pathDepth(p string) int {
-	if p == "." || p == "" || p == string(filepath.Separator) {
+	p = filepath.Clean(p)
+	if p == "." {
 		return 0
 	}
-	p = filepath.Clean(p)
-	return len(strings.Split(p, string(filepath.Separator)))
+	count := 0
+	for _, s := range strings.Split(p, string(filepath.Separator)) {
+		if s != "" {
+			count++
+		}
+	}
+	return count
 }
 
 // parseSize parses size specification with optional prefix and suffix

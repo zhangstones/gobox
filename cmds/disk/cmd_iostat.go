@@ -377,6 +377,9 @@ func readCgroupV1(pathBytes, pathServiced string) (map[string]ioCounters, error)
 		}
 	}
 
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no cgroup I/O data found in %s or %s", pathBytes, pathServiced)
+	}
 	return out, nil
 }
 

@@ -137,8 +137,9 @@ func TestTopCursorVisibilitySequences(t *testing.T) {
 }
 
 func TestAdvanceTopSortCyclesColumns(t *testing.T) {
+	// reverse direction should be preserved when cycling columns
 	nextField, nextReverse := advanceTopSort("cpu", false, 1)
-	if nextField != "pmem" || !nextReverse {
+	if nextField != "pmem" || nextReverse {
 		t.Fatalf("unexpected next sort %q reverse=%v", nextField, nextReverse)
 	}
 	prevField, prevReverse := advanceTopSort("pid", true, -1)

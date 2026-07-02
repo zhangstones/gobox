@@ -171,7 +171,11 @@ func findProcesses(pattern, mode string, ppid int) ([]procMatch, error) {
 	}
 	var re *regexp.Regexp
 	if pattern != "" && mode == "full" {
-		re, _ = regexp.Compile(pattern)
+		var err error
+		re, err = regexp.Compile(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("invalid pattern %q: %w", pattern, err)
+		}
 	}
 	var out []procMatch
 	for _, e := range entries {
@@ -208,11 +212,21 @@ func readProcMatch(pid int) (procMatch, error) {
 	if err != nil {
 		return procMatch{}, err
 	}
-	fields := strings.Fields(string(stat))
+	// /proc/PID/stat format: "pid (comm) state ppid ..."
+	// comm may contain spaces; find the last ')' to split correctly.
+	statStr := string(stat)
+	closeIdx := strings.LastIndex(statStr, ")")
 	ppid, start := 0, uint64(0)
-	if len(fields) > 21 {
-		ppid, _ = strconv.Atoi(fields[3])
-		start, _ = strconv.ParseUint(fields[21], 10, 64)
+	if closeIdx >= 0 {
+		afterComm := strings.Fields(statStr[closeIdx+1:])
+		// afterComm: [state, ppid, pgrp, session, tty, ...]
+		// starttime is at offset 19 from state (afterComm[19])
+		if len(afterComm) > 1 {
+			ppid, _ = strconv.Atoi(afterComm[1])
+		}
+		if len(afterComm) > 19 {
+			start, _ = strconv.ParseUint(afterComm[19], 10, 64)
+		}
 	}
 	commBytes, _ := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "comm"))
 	cmdBytes, _ := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))

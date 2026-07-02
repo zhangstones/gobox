@@ -799,7 +799,7 @@ func advanceTopSort(sortField string, reverse bool, delta int) (string, bool) {
 		return sortField, reverse
 	}
 	idx = ((idx+delta)%n + n) % n
-	return topSortColumns[idx], true
+	return topSortColumns[idx], reverse
 }
 
 func readTopInput(fd int, events chan<- topInputEvent, stop <-chan struct{}) {

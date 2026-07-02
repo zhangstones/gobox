@@ -76,10 +76,10 @@ func WcCmd(args []string) error {
 			}
 			argIndex++
 		default:
-			if len(arg) > 0 && arg[0] == '-' {
+			if len(arg) > 0 && arg[0] == '-' && arg != "-" {
 				return fmt.Errorf("unknown option: %s", arg)
 			}
-			// Not a flag, must be a filename
+			// Not a flag (or "-" meaning stdin), must be a filename
 			goto doneFlags
 		}
 	}
@@ -138,6 +138,9 @@ doneFlags:
 }
 
 func wcFile(filename string) (wcResult, error) {
+	if filename == "-" {
+		return wcReader(os.Stdin, "")
+	}
 	file, err := os.Open(filename)
 	if err != nil {
 		return wcResult{}, fmt.Errorf("cannot open %s: %w", filename, err)

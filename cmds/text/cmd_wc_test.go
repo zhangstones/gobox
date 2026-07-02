@@ -319,12 +319,12 @@ func TestWcStdinWithFlags(t *testing.T) {
 }
 
 func TestWcStdinDash(t *testing.T) {
-	// Note: Current implementation does not support "-" for stdin
-	// It tries to open "-" as a literal filename
-	_, err := runWcCmdWithStdin([]string{"-"}, "hello world\n")
-	// Expected to fail since "-" is treated as a filename
-	if err == nil {
-		t.Fatalf("wc - should fail (not supported)")
+	out, err := runWcCmdWithStdin([]string{"-"}, "hello world\n")
+	if err != nil {
+		t.Fatalf("wc - should read stdin: %v", err)
+	}
+	if !strings.Contains(out, "1") {
+		t.Fatalf("wc - expected line count 1, got %q", out)
 	}
 }
 

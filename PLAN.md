@@ -32,35 +32,35 @@ Issues found by automated code review. Fix order: 高危 → 中危 → 低危.
 
 ## 中危（功能错误，不崩溃）
 
-- [ ] `fs/cmd_df.go:299` — `-H`（SI）与 `-h`（二进制）输出相同，SI 失效
-- [ ] `fs/cmd_du.go:200` — 默认输出原始字节而非 1K 块
-- [ ] `fs/cmd_find.go:253` — pathDepth 根路径下差 1，-maxdepth 1 误剪根的直接子目录
-- [ ] `fs/cmd_readpath.go:71` — 多路径时 `-n` 被忽略
-- [ ] `fs/cmd_stat.go:92` — formatStat map 迭代顺序随机，含格式符的文件名输出不确定
-- [ ] `fs/cmd_truncate.go:53` — 相对模式 Stat 错误静默，截断目标值错误
+- [x] `fs/cmd_df.go:299` — `-H`（SI）与 `-h`（二进制）输出相同，SI 失效
+- [x] `fs/cmd_du.go:200` — 默认输出原始字节而非 1K 块
+- [x] `fs/cmd_find.go:253` — pathDepth 根路径下差 1，-maxdepth 1 误剪根的直接子目录
+- [ ] `fs/cmd_readpath.go:71` — 多路径时 `-n` 被忽略（测试已确认当前行为是有意设计）
+- [x] `fs/cmd_stat.go:92` — formatStat map 迭代顺序随机，含格式符的文件名输出不确定
+- [x] `fs/cmd_truncate.go:53` — 相对模式 Stat 错误静默，截断目标值错误
 - [ ] `net/cmd_curl.go:662` — bench 吞吐量用最慢请求延迟计算，结果错误
 - [ ] `net/cmd_ifstat.go:213` — 首个采样未 sleep，首行流量数据虚高
 - [ ] `net/cmd_ip.go:84` — 表格模式用数组索引而非内核接口 index，有空洞时编号错误
-- [ ] `net/cmd_nc.go:601` — benchmark client 硬编码输出 `"Connecting to localhost:8080"`
-- [ ] `net/cmd_netstat.go:1129` — tcpStateName 先 ToUpper 再 case "0a" 永远不匹配
+- [x] `net/cmd_nc.go:601` — benchmark client 硬编码输出 `"Connecting to localhost:8080"`
+- [ ] `net/cmd_netstat.go:1129` — tcpStateName 先 ToUpper 再 case "0a" 永远不匹配（实际无功能问题，两种格式均有 case）
 - [ ] `net/cmd_np.go:651` — scan 模式错误计数器从不递增，摘要显示 0 errors
 - [ ] `net/cmd_np.go:763` — ping 摘要硬编码 "netping" 而非实际目标
 - [ ] `net/cmd_np.go:321` — UDP ping 只测本地 socket 创建时间，不测网络延迟
 - [ ] `net/cmd_nslookup_dig.go:475` — dig 每次发两次 DNS 请求，显示第一次（被丢弃）的时间
 - [ ] `net/cmd_nslookup_dig.go:54` — 参数解析阶段发起真实 DNS 查询
-- [ ] `proc/cmd_free.go:97` — 表头 6 列，数据行 5/3 列，表格对不齐
-- [ ] `proc/cmd_kill.go:207` — 进程名含空格时 Fields 导致字段偏移，ppid 解析错误
-- [ ] `proc/cmd_kill.go:175` — regexp.Compile 错误被丢弃，无效正则静默降级
+- [x] `proc/cmd_free.go:97` — 表头 6 列，数据行 5/3 列，表格对不齐
+- [x] `proc/cmd_kill.go:207` — 进程名含空格时 Fields 导致字段偏移，ppid 解析错误
+- [x] `proc/cmd_kill.go:175` — regexp.Compile 错误被丢弃，无效正则静默降级
 - [ ] `proc/cmd_timeout.go:80` — 信号发送失败时错误丢弃，可能永久阻塞
-- [ ] `proc/cmd_top.go:791` — 切换列时排序方向强制降序，覆盖用户设置
-- [ ] `disk/cmd_ioperf.go:388` — 非 time-based 模式 duration 硬编码 1.0，IOPS 计算错误
-- [ ] `disk/cmd_ioperf.go:229` — Truncate 错误静默，磁盘满时测试继续
-- [ ] `disk/cmd_iostat.go:311` — readCgroupV1 两读都失败时返回 nil error
-- [ ] `disk/cmd_sha256sum.go:150` — check 模式文件不存在只显示 FAILED 不打印原因
-- [ ] `text/cmd_sed.go:44` — `-i .bak` 备份后缀是死代码，备份功能永远不触发
-- [ ] `text/cmd_sed.go:121` — in-place 检测靠位置猜测，有其他 flag 时静默跳过写回
-- [ ] `text/cmd_sort.go:74` — `-h` 触发 human-numeric-sort 而非 help
-- [ ] `text/cmd_wc.go:78` — `-` 被当作未知选项拒绝而非读 stdin
+- [x] `proc/cmd_top.go:791` — 切换列时排序方向强制降序，覆盖用户设置
+- [x] `disk/cmd_ioperf.go:388` — 非 time-based 模式 duration 硬编码 1.0，IOPS 计算错误
+- [x] `disk/cmd_ioperf.go:229` — Truncate 错误静默，磁盘满时测试继续
+- [x] `disk/cmd_iostat.go:311` — readCgroupV1 两读都失败时返回 nil error
+- [x] `disk/cmd_sha256sum.go:150` — check 模式文件不存在只显示 FAILED 不打印原因
+- [x] `text/cmd_sed.go:44` — `-i .bak` 备份后缀是死代码，备份功能永远不触发
+- [x] `text/cmd_sed.go:121` — in-place 检测靠位置猜测，有其他 flag 时静默跳过写回
+- [x] `text/cmd_sort.go:74` — `-h` 触发 human-numeric-sort 而非 help（去掉 help case 中死代码 `-h`，保留 `--help`）
+- [x] `text/cmd_wc.go:78` — `-` 被当作未知选项拒绝而非读 stdin
 
 ---
 

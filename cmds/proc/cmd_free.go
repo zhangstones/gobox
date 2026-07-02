@@ -100,7 +100,7 @@ func printFree(m map[string]uint64, human, miB, giB bool) {
 	if swapTotal > swapFree {
 		swapUsed = swapTotal - swapFree
 	}
-	fmt.Printf("%13s %12s %12s %12s %12s %12s\n", "total", "used", "free", "buff/cache", "available", "")
+	fmt.Printf("%13s %12s %12s %12s %12s\n", "total", "used", "free", "buff/cache", "available")
 	fmt.Printf("Mem:  %12s %12s %12s %12s %12s\n", formatMem(total, human, miB, giB), formatMem(used, human, miB, giB), formatMem(free, human, miB, giB), formatMem(buffCache, human, miB, giB), formatMem(available, human, miB, giB))
 	fmt.Printf("Swap: %12s %12s %12s\n", formatMem(swapTotal, human, miB, giB), formatMem(swapUsed, human, miB, giB), formatMem(swapFree, human, miB, giB))
 }

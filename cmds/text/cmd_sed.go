@@ -13,11 +13,12 @@ import (
 // sedCmd implements a subset of sed functionality
 func SedCmd(args []string) error {
 	var (
-		quiet       bool
-		inPlace     string
-		expressions []string
-		scriptFile  string
-		showHelp    bool
+		quiet        bool
+		inPlace      string
+		inPlaceSeen  bool
+		expressions  []string
+		scriptFile   string
+		showHelp     bool
 	)
 
 	// Manual flag parsing to handle -i.bak style
@@ -44,15 +45,11 @@ func SedCmd(args []string) error {
 		case arg == "-i":
 			// -i without backup suffix
 			inPlace = ""
-			// Mark that we saw -i, but don't consume next arg
-			// Next arg should be the script or file
+			inPlaceSeen = true
 		case strings.HasPrefix(arg, "-i") && len(arg) > 2:
 			// Handle -i.bak style
 			inPlace = arg[2:]
-		case strings.HasPrefix(arg, "-i") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-"):
-			// Handle -i backup (separate arg)
-			i++
-			inPlace = args[i]
+			inPlaceSeen = true
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return fmt.Errorf("unknown option: %s", arg)
@@ -118,7 +115,7 @@ doneFlags:
 
 	// Process files
 	for _, file := range files {
-		if inPlace != "" || (i > 0 && args[i-1] == "-i") {
+		if inPlaceSeen {
 			if err := sedFileInPlace(file, commands, quiet, inPlace); err != nil {
 				return err
 			}

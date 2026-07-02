@@ -148,7 +148,13 @@ func sha256sumCheck(files []string, warn, status, quiet bool) error {
 				continue
 			}
 			actual, err := sha256File(name)
-			if err != nil || !strings.EqualFold(actual, expected) {
+			if err != nil {
+				failed = true
+				if !status && !quiet {
+					fmt.Fprintf(os.Stderr, "sha256sum: %s: %v\n", name, err)
+					fmt.Printf("%s: FAILED\n", name)
+				}
+			} else if !strings.EqualFold(actual, expected) {
 				failed = true
 				if !status && !quiet {
 					fmt.Printf("%s: FAILED\n", name)

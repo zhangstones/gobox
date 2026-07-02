@@ -197,5 +197,6 @@ func printDuRow(size int64, path string, human bool) {
 		fmt.Printf("%s\t%s\n", utils.HumanSize(size), path)
 		return
 	}
-	fmt.Printf("%d\t%s\n", size, path)
+	blocks := (size + 1023) / 1024
+	fmt.Printf("%d\t%s\n", blocks, path)
 }

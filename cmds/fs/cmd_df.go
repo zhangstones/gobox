@@ -297,7 +297,7 @@ func humanSizeBase(b uint64, unit uint64) string {
 	value := float64(b) / float64(div)
 	suf := "KMGTPE"[exp]
 	if unit == 1000 {
-		return fmt.Sprintf("%.1f%c", value, suf)
+		return fmt.Sprintf("%.1f%cB", value, suf)
 	}
 	return fmt.Sprintf("%.1f%c", value, suf)
 }

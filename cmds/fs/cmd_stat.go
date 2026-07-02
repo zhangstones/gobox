@@ -89,18 +89,13 @@ func StatCmd(args []string) error {
 }
 
 func formatStat(format, name string, info os.FileInfo) string {
-	repl := map[string]string{
-		"%n": name,
-		"%s": fmt.Sprintf("%d", info.Size()),
-		"%F": fileType(info),
-		"%a": fmt.Sprintf("%o", info.Mode().Perm()),
-		"%y": info.ModTime().Format("2006-01-02 15:04:05.000000000 -0700"),
-		"%Y": fmt.Sprintf("%d", info.ModTime().Unix()),
-	}
 	out := format
-	for k, v := range repl {
-		out = strings.ReplaceAll(out, k, v)
-	}
+	out = strings.ReplaceAll(out, "%n", name)
+	out = strings.ReplaceAll(out, "%s", fmt.Sprintf("%d", info.Size()))
+	out = strings.ReplaceAll(out, "%F", fileType(info))
+	out = strings.ReplaceAll(out, "%a", fmt.Sprintf("%o", info.Mode().Perm()))
+	out = strings.ReplaceAll(out, "%y", info.ModTime().Format("2006-01-02 15:04:05.000000000 -0700"))
+	out = strings.ReplaceAll(out, "%Y", fmt.Sprintf("%d", info.ModTime().Unix()))
 	return out
 }
 

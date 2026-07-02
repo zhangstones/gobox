@@ -121,7 +121,7 @@ func SortCmd(args []string) error {
 			cfg.output = args[i]
 		case arg == "--output=":
 			cfg.output = arg[9:]
-		case arg == "-h" || arg == "--help":
+		case arg == "--help":
 			printSortUsage(os.Stdout)
 			return nil
 		case strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--"):

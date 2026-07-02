@@ -195,6 +195,8 @@ func IoperfCmd(args []string) error {
 	// Determine effective runtime
 	runDuration := time.Duration(*runtimeSec) * time.Second
 
+	benchStart := time.Now()
+
 	// Launch jobs
 	for jobID := 0; jobID < *numJobs; jobID++ {
 		wg.Add(1)
@@ -227,8 +229,9 @@ func IoperfCmd(args []string) error {
 			// Pre-allocate file if writing
 			if *rwMode == "write" || *rwMode == "randwrite" || *rwMode == "readwrite" {
 				if err := file.Truncate(sizeBytes); err != nil {
-					// Try to at least allocate what we can
-					// Continue anyway for read tests
+					fmt.Fprintf(os.Stderr, "ioperf: job %d: truncate %s: %v\n", jid, jobFilename, err)
+					resultChan <- result
+					return
 				}
 			}
 
@@ -385,11 +388,11 @@ func IoperfCmd(args []string) error {
 	}
 
 	// Calculate duration
-	duration := 1.0
+	elapsed := time.Since(benchStart).Seconds()
+	duration := elapsed
 	if *timeBased && *runtimeSec > 0 {
 		duration = float64(*runtimeSec)
-	} else if totalReadOps+totalWriteOps > 0 {
-		// Estimate based on ops
+	} else if elapsed < 0.001 {
 		duration = 1.0
 	}
 
