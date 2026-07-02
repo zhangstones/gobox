@@ -582,33 +582,19 @@ func ncBenchmarkClient(host, port string, udp, verbose, numericOnly, forceIPv4, 
 		}(c)
 	}
 
-	// Report timer
-	ticker := time.NewTicker(intervalDuration)
-	defer ticker.Stop()
-
-	reportChan := make(chan struct{})
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				reportChan <- struct{}{}
-			case <-time.After(intervalDuration):
-				return
-			}
-		}
-	}()
-
 	// Print header
 	fmt.Println()
 	fmt.Printf("Connecting to %s\n", addr)
 	fmt.Println("[ ID] Interval       Transfer     Bandwidth")
 	fmt.Println()
 
-	// Wait for completion
+	// Report timer — use ticker directly in the select to avoid race with time.After.
+	ticker := time.NewTicker(intervalDuration)
+	defer ticker.Stop()
+
 	doneChan := make(chan struct{})
 	go func() {
 		wg.Wait()
-		ticker.Stop()
 		close(doneChan)
 	}()
 
@@ -620,7 +606,7 @@ func ncBenchmarkClient(host, port string, udp, verbose, numericOnly, forceIPv4, 
 
 	for !finished {
 		select {
-		case <-reportChan:
+		case <-ticker.C:
 			duration := time.Since(startTime)
 			if duration.Seconds() < 0.1 {
 				continue
@@ -641,6 +627,7 @@ func ncBenchmarkClient(host, port string, udp, verbose, numericOnly, forceIPv4, 
 			oldTotalReqs = totalRequestsCompleted
 			reportNum++
 		case <-doneChan:
+			ticker.Stop()
 			finished = true
 		}
 	}
