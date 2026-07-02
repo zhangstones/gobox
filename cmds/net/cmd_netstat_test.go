@@ -75,7 +75,8 @@ func TestParseIPFromAddr(t *testing.T) {
 	if got := parseIPFromAddr("0100007F:0035"); got != "127.0.0.1" {
 		t.Fatalf("expected IPv4 127.0.0.1, got %q", got)
 	}
-	if got := parseIPFromAddr("00000000000000000000000000000001:0035"); got != "::1" {
+	// ::1 in /proc/net/tcp6 is stored as 4 little-endian uint32 words: last word 0x01000000
+	if got := parseIPFromAddr("00000000000000000000000001000000:0035"); got != "::1" {
 		t.Fatalf("expected IPv6 ::1, got %q", got)
 	}
 	if got := parseIPFromAddr("bad"); got != "" {
