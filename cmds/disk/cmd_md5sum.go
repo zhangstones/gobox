@@ -94,12 +94,11 @@ func Md5sumCmd(args []string) error {
 }
 
 func md5sumStdin(tag, quiet bool) error {
-	data, err := io.ReadAll(os.Stdin)
-	if err != nil {
+	h := md5.New()
+	if _, err := io.Copy(h, os.Stdin); err != nil {
 		return err
 	}
-	hash := md5.Sum(data)
-	hashStr := fmt.Sprintf("%x", hash)
+	hashStr := fmt.Sprintf("%x", h.Sum(nil))
 	if tag {
 		fmt.Printf("MD5 (stdin) = %s\n", hashStr)
 	} else if quiet {
@@ -159,8 +158,6 @@ func md5sumCheck(files []string, warn, status, quiet bool) error {
 			hasError = true
 			continue
 		}
-		defer f.Close()
-
 		scanner := bufio.NewScanner(f)
 		lineNum := 0
 		for scanner.Scan() {
@@ -260,7 +257,7 @@ func md5sumCheck(files []string, warn, status, quiet bool) error {
 			}
 			hasError = true
 		}
-
+		f.Close()
 	}
 
 	if hasError {

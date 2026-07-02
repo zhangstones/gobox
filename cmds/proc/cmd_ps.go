@@ -569,10 +569,8 @@ func captureLinuxProcSnapshot() (procSnapshot, error) {
 		return procSnapshot{}, err
 	}
 	pageSize := int64(os.Getpagesize())
-	bootTime := readBootTime()
+	total, cpu, bootTime := readProcStatOnce()
 	now := time.Now()
-	total, _ := readTotalJiffies()
-	cpu, _ := readCPUTimes()
 
 	snapshot := procSnapshot{
 		totalJiffies: total,
@@ -595,10 +593,8 @@ func captureLinuxThreadSnapshot() (procSnapshot, error) {
 		return procSnapshot{}, err
 	}
 	pageSize := int64(os.Getpagesize())
-	bootTime := readBootTime()
+	total, cpu, bootTime := readProcStatOnce()
 	now := time.Now()
-	total, _ := readTotalJiffies()
-	cpu, _ := readCPUTimes()
 
 	snapshot := procSnapshot{
 		totalJiffies: total,
@@ -1054,6 +1050,50 @@ func readMemTotalBytes() int64 {
 		return v * 1024
 	}
 	return 0
+}
+
+// readProcStatOnce reads /proc/stat once and returns total jiffies, per-cpu times,
+// and boot time — avoiding three separate opens of the same file.
+func readProcStatOnce() (total int64, cpu cpuTimes, bootTime time.Time) {
+	f, err := os.Open("/proc/stat")
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.HasPrefix(line, "cpu "):
+			fields := strings.Fields(line)
+			parseU := func(idx int) uint64 {
+				if idx >= len(fields) {
+					return 0
+				}
+				v, _ := strconv.ParseUint(fields[idx], 10, 64)
+				return v
+			}
+			for _, v := range fields[1:] {
+				n, _ := strconv.ParseInt(v, 10, 64)
+				total += n
+			}
+			cpu.user = parseU(1)
+			cpu.nice = parseU(2)
+			cpu.system = parseU(3)
+			cpu.idle = parseU(4)
+			cpu.iowait = parseU(5)
+			cpu.irq = parseU(6)
+			cpu.softirq = parseU(7)
+			cpu.steal = parseU(8)
+		case strings.HasPrefix(line, "btime "):
+			fields := strings.Fields(line)
+			if len(fields) == 2 {
+				sec, _ := strconv.ParseInt(fields[1], 10, 64)
+				bootTime = time.Unix(sec, 0)
+			}
+		}
+	}
+	return
 }
 
 func readTotalJiffies() (int64, error) {

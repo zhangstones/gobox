@@ -266,10 +266,61 @@ func grepFile(path, pattern string, regex *regexp.Regexp, opts grepOptions) (gre
 }
 
 func grepReader(r io.Reader, pattern string, regex *regexp.Regexp, opts grepOptions, filename string) (grepResult, error) {
+	// When context or filesWithoutMatch requires seeing all lines, buffer first.
+	if opts.beforeContext > 0 || opts.filesWithoutMatch {
+		scanner := bufio.NewScanner(r)
+		var lines []string
+		for scanner.Scan() {
+			lines = append(lines, scanner.Text())
+		}
+		if err := scanner.Err(); err != nil {
+			name := filename
+			if name == "" {
+				name = "stdin"
+			}
+			return grepResult{}, fmt.Errorf("error reading %s: %w", name, err)
+		}
+		return grepLines(lines, pattern, regex, opts, filename)
+	}
+	return grepReaderStream(r, pattern, regex, opts, filename)
+}
+
+// grepReaderStream processes lines one at a time when no before-context buffering is needed.
+func grepReaderStream(r io.Reader, pattern string, regex *regexp.Regexp, opts grepOptions, filename string) (grepResult, error) {
 	scanner := bufio.NewScanner(r)
-	lines := make([]string, 0)
+	matches := 0
+	lineNum := 0
+	afterRemain := 0 // lines still to print from afterContext window
+
 	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+		line := scanner.Text()
+		lineNum++
+		matched := grepLineMatches(line, pattern, regex, opts)
+		if matched {
+			matches++
+			if opts.quiet {
+				return grepResult{matches: matches, matched: true}, nil
+			}
+			if opts.filesWithMatches {
+				fmt.Fprintln(os.Stdout, filename)
+				return grepResult{matches: matches, matched: true}, nil
+			}
+			afterRemain = opts.afterContext
+		}
+		if matched || afterRemain > 0 {
+			if !opts.count && !opts.quiet && !opts.filesWithMatches {
+				if opts.onlyMatching && matched {
+					for _, part := range grepFindMatches(line, pattern, regex, opts) {
+						printGrepLineWithOptions(part, filename, lineNum, opts)
+					}
+				} else if !opts.onlyMatching {
+					printGrepLineWithOptions(line, filename, lineNum, opts)
+				}
+			}
+			if !matched && afterRemain > 0 {
+				afterRemain--
+			}
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		name := filename
@@ -278,7 +329,15 @@ func grepReader(r io.Reader, pattern string, regex *regexp.Regexp, opts grepOpti
 		}
 		return grepResult{}, fmt.Errorf("error reading %s: %w", name, err)
 	}
-	return grepLines(lines, pattern, regex, opts, filename)
+	matched := matches > 0
+	if opts.count && !opts.quiet {
+		if opts.showFilename && filename != "" {
+			fmt.Printf("%s:%d\n", filename, matches)
+		} else {
+			fmt.Println(matches)
+		}
+	}
+	return grepResult{matches: matches, matched: matched}, nil
 }
 
 func grepLines(lines []string, pattern string, regex *regexp.Regexp, opts grepOptions, filename string) (grepResult, error) {

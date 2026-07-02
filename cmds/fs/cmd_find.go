@@ -83,6 +83,15 @@ func FindCmd(args []string) error {
 			paths, *name, *pathPattern, *typ, *negate, *maxdepth, *mindepth, *empty, *size, *atime, *mtime)
 	}
 
+	// Compile path pattern regex once before walking.
+	var pathPatternRe *regexp.Regexp
+	if *pathPattern != "" {
+		cleanPat := filepath.ToSlash(filepath.Clean(*pathPattern))
+		if re, err := regexp.Compile(globToRegex(cleanPat)); err == nil {
+			pathPatternRe = re
+		}
+	}
+
 	for _, root := range paths {
 		root = filepath.Clean(root)
 		baseDepth := pathDepth(root)
@@ -126,8 +135,9 @@ func FindCmd(args []string) error {
 				}
 			}
 
-			if matched && *pathPattern != "" {
-				matched = matchPathPattern(*pathPattern, p)
+			if matched && pathPatternRe != nil {
+				candidate := filepath.ToSlash(filepath.Clean(p))
+				matched = pathPatternRe.MatchString(candidate)
 			}
 
 			// empty filter

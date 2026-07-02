@@ -1,6 +1,7 @@
 package text
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"io"
@@ -53,13 +54,11 @@ func StringsCmd(args []string) error {
 }
 
 func stringsFromReader(name string, r io.Reader, minLen int, withFile bool, offsetBase string) error {
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return err
-	}
-	start := 0
-	buf := make([]rune, 0)
-	flush := func(end int) {
+	br := bufio.NewReader(r)
+	var buf []rune
+	var start, offset int64
+
+	print := func() {
 		if len(buf) < minLen {
 			return
 		}
@@ -69,28 +68,36 @@ func stringsFromReader(name string, r io.Reader, minLen int, withFile bool, offs
 		if offsetBase != "" {
 			switch offsetBase {
 			case "o":
-				fmt.Printf("%7s ", strconv.FormatInt(int64(start), 8))
+				fmt.Printf("%7s ", strconv.FormatInt(start, 8))
 			case "d":
 				fmt.Printf("%7d ", start)
 			case "x":
-				fmt.Printf("%7s ", strconv.FormatInt(int64(start), 16))
+				fmt.Printf("%7s ", strconv.FormatInt(start, 16))
 			}
 		}
 		fmt.Println(string(buf))
-		_ = end
 	}
-	for i, b := range data {
-		r := rune(b)
-		if unicode.IsPrint(r) && b < 0x80 {
-			if len(buf) == 0 {
-				start = i
+
+	for {
+		b, err := br.ReadByte()
+		if err != nil {
+			if err == io.EOF {
+				break
 			}
-			buf = append(buf, r)
+			return err
+		}
+		ch := rune(b)
+		if unicode.IsPrint(ch) && b < 0x80 {
+			if len(buf) == 0 {
+				start = offset
+			}
+			buf = append(buf, ch)
 		} else {
-			flush(i)
+			print()
 			buf = buf[:0]
 		}
+		offset++
 	}
-	flush(len(data))
+	print()
 	return nil
 }

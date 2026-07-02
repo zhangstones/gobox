@@ -143,9 +143,10 @@ func DfCmd(args []string) error {
 	if opts.total {
 		rows = append(rows, totalDfRow(rows, opts))
 	}
-	printDfHeader(rows, opts)
+	sourceWidth, typeWidth := dfColumnWidths(rows, opts)
+	printDfHeader(sourceWidth, typeWidth, opts)
 	for _, row := range rows {
-		printDfRow(row, rows, opts)
+		printDfRow(row, sourceWidth, typeWidth, opts)
 	}
 	if len(rows) == 0 && rowErr != nil {
 		return rowErr
@@ -223,8 +224,7 @@ func dfColumnWidths(rows []dfRow, opts dfOptions) (int, int) {
 	return sourceWidth, typeWidth
 }
 
-func printDfHeader(rows []dfRow, opts dfOptions) {
-	sourceWidth, typeWidth := dfColumnWidths(rows, opts)
+func printDfHeader(sourceWidth, typeWidth int, opts dfOptions) {
 	blockHeader := "1K-blocks"
 	if opts.human {
 		blockHeader = "Size"
@@ -250,8 +250,7 @@ func printDfHeader(rows []dfRow, opts dfOptions) {
 	fmt.Printf("%-*s %10s %10s %10s %5s %s\n", sourceWidth, "Filesystem", blockHeader, "Used", "Available", "Use%", "Mounted on")
 }
 
-func printDfRow(row dfRow, rows []dfRow, opts dfOptions) {
-	sourceWidth, typeWidth := dfColumnWidths(rows, opts)
+func printDfRow(row dfRow, sourceWidth, typeWidth int, opts dfOptions) {
 	m := row.mount
 	st := row.stat
 	if opts.inodes {

@@ -66,14 +66,14 @@ Issues found by automated code review. Fix order: 高危 → 中危 → 低危.
 
 ## 低危（性能 / 资源泄漏）
 
-- [ ] `fs/cmd_df.go:253` — dfColumnWidths 每行调用，O(n²)
-- [ ] `fs/cmd_find.go:225` — regexp.Compile 每次文件访问时重新编译
-- [ ] `proc/cmd_ps.go:572` — /proc/stat 每次 snapshot 读三次，共六次
-- [ ] `proc/cmd_xargs.go:161` — ready channel 强制串行化 goroutine 启动
-- [ ] `disk/cmd_ioperf.go:350` — goroutine 本地变量用 atomic，热路径无谓开销
-- [ ] `disk/cmd_iostat.go:220` — /proc/diskstats 读入后双重拷贝
-- [ ] `disk/cmd_md5sum.go:97` — io.ReadAll(stdin) 全量加载，应流式
-- [ ] `disk/cmd_md5sum.go:162` — defer f.Close() 在 for 循环内，文件描述符泄漏
-- [ ] `text/cmd_grep.go:263` — 无 context flag 时仍全量缓冲输入
-- [ ] `text/cmd_strings.go:56` — io.ReadAll 全量加载大二进制文件
-- [ ] `text/cmd_tail.go:183` — slice 追加后 re-slice，backing array 无法 GC
+- [x] `fs/cmd_df.go:253` — dfColumnWidths 每行调用，O(n²)
+- [x] `fs/cmd_find.go:225` — regexp.Compile 每次文件访问时重新编译
+- [x] `proc/cmd_ps.go:572` — /proc/stat 每次 snapshot 读三次，共六次
+- [x] `proc/cmd_xargs.go:161` — ready channel 强制串行化 goroutine 启动
+- [x] `disk/cmd_ioperf.go:350` — goroutine 本地变量用 atomic，热路径无谓开销
+- [x] `disk/cmd_iostat.go:220` — /proc/diskstats 读入后双重拷贝
+- [x] `disk/cmd_md5sum.go:97` — io.ReadAll(stdin) 全量加载，应流式
+- [x] `disk/cmd_md5sum.go:162` — defer f.Close() 在 for 循环内，文件描述符泄漏
+- [x] `text/cmd_grep.go:263` — 无 context flag 时仍全量缓冲输入
+- [x] `text/cmd_strings.go:56` — io.ReadAll 全量加载大二进制文件
+- [x] `text/cmd_tail.go:183` — slice 追加后 re-slice，backing array 无法 GC

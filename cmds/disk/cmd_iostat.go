@@ -2,6 +2,7 @@ package disk
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -218,7 +219,7 @@ func readDiskstats(path string) (map[string]ioCounters, error) {
 	}
 
 	out := make(map[string]ioCounters)
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) < 14 {
@@ -274,7 +275,7 @@ func readCgroupV2(path string) (map[string]ioCounters, error) {
 	}
 
 	out := make(map[string]ioCounters)
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -312,7 +313,7 @@ func readCgroupV1(pathBytes, pathServiced string) (map[string]ioCounters, error)
 	out := make(map[string]ioCounters)
 
 	if data, err := readFileIostat(pathBytes); err == nil {
-		scanner := bufio.NewScanner(strings.NewReader(string(data)))
+		scanner := bufio.NewScanner(bytes.NewReader(data))
 		for scanner.Scan() {
 			fields := strings.Fields(scanner.Text())
 			if len(fields) < 3 {
@@ -345,7 +346,7 @@ func readCgroupV1(pathBytes, pathServiced string) (map[string]ioCounters, error)
 	}
 
 	if data, err := readFileIostat(pathServiced); err == nil {
-		scanner := bufio.NewScanner(strings.NewReader(string(data)))
+		scanner := bufio.NewScanner(bytes.NewReader(data))
 		for scanner.Scan() {
 			fields := strings.Fields(scanner.Text())
 			if len(fields) < 3 {

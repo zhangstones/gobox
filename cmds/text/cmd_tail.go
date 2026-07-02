@@ -177,19 +177,27 @@ func printTailUsage(w io.Writer) {
 }
 
 func tailReader(r io.Reader, w io.Writer, n int) error {
-	var lines []string
+	if n <= 0 {
+		_, err := io.Copy(io.Discard, r)
+		return err
+	}
+	buf := make([]string, n)
+	count := 0
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-		if len(lines) > n {
-			lines = lines[1:]
-		}
+		buf[count%n] = scanner.Text()
+		count++
 	}
 	if err := scanner.Err(); err != nil {
 		return err
 	}
-	for _, line := range lines {
-		fmt.Fprintln(w, line)
+	start, total := 0, count
+	if count > n {
+		start = count % n
+		total = n
+	}
+	for i := 0; i < total; i++ {
+		fmt.Fprintln(w, buf[(start+i)%n])
 	}
 	return nil
 }

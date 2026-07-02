@@ -350,14 +350,14 @@ func IoperfCmd(args []string) error {
 						continue
 					}
 
-					// Record stats
+					// Record stats (result is goroutine-local, no atomic needed)
 					if isRead {
-						atomic.AddInt64(&result.readOps, 1)
-						atomic.AddInt64(&result.readBytes, int64(n))
+						result.readOps++
+						result.readBytes += int64(n)
 						result.readLatencies = append(result.readLatencies, ioDuration)
 					} else {
-						atomic.AddInt64(&result.writeOps, 1)
-						atomic.AddInt64(&result.writeBytes, int64(n))
+						result.writeOps++
+						result.writeBytes += int64(n)
 						result.writeLatencies = append(result.writeLatencies, ioDuration)
 					}
 				}

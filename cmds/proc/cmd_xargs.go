@@ -160,7 +160,6 @@ func parseXargsInputs(r io.Reader, delimiter string) ([]string, error) {
 // executeReplaceMode replaces the placeholder with inputs
 func executeReplaceMode(baseCmd []string, inputs []string, replaceString string, verbose bool, maxProcs int) error {
 	semaphore := make(chan struct{}, maxProcs)
-	ready := make(chan struct{})
 	var wg sync.WaitGroup
 	var lastErr error
 	var mu sync.Mutex
@@ -171,9 +170,6 @@ func executeReplaceMode(baseCmd []string, inputs []string, replaceString string,
 		go func(inp string) {
 			defer wg.Done()
 			defer func() { <-semaphore }() // Release semaphore after completion
-
-			// Signal that this goroutine has acquired the semaphore
-			ready <- struct{}{}
 
 			// Build command with replacement
 			cmdArgs := make([]string, len(baseCmd))
@@ -197,7 +193,6 @@ func executeReplaceMode(baseCmd []string, inputs []string, replaceString string,
 				mu.Unlock()
 			}
 		}(input)
-		<-ready // Wait for goroutine to acquire semaphore before launching next one
 	}
 
 	wg.Wait()
@@ -211,7 +206,6 @@ func executeAppendMode(baseCmd []string, inputs []string, batchSize int, verbose
 	}
 
 	semaphore := make(chan struct{}, maxProcs)
-	ready := make(chan struct{})
 	var wg sync.WaitGroup
 	var lastErr error
 	var mu sync.Mutex
@@ -229,9 +223,6 @@ func executeAppendMode(baseCmd []string, inputs []string, batchSize int, verbose
 		go func(batchItems []string) {
 			defer wg.Done()
 			defer func() { <-semaphore }() // Release semaphore after completion
-
-			// Signal that this goroutine has acquired the semaphore
-			ready <- struct{}{}
 
 			// Build command with batch items
 			cmdArgs := make([]string, len(baseCmd))
@@ -252,7 +243,6 @@ func executeAppendMode(baseCmd []string, inputs []string, batchSize int, verbose
 				mu.Unlock()
 			}
 		}(batch)
-		<-ready // Wait for goroutine to acquire semaphore before launching next one
 	}
 
 	wg.Wait()
