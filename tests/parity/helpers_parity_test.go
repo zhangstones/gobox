@@ -99,6 +99,13 @@ func runGoboxCLI(t *testing.T, dir string, stdin string, args ...string) parityR
 		os.Stdout = wOut
 		os.Stderr = wErr
 
+		// Drain pipes concurrently to prevent deadlock when output exceeds the
+		// pipe buffer (64 KB on Linux).
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _, _ = io.Copy(&stdoutBuf, rOut) }()
+		go func() { defer wg.Done(); _, _ = io.Copy(&stderrBuf, rErr) }()
+
 		err = invokeGobox(args)
 		if rIn != nil {
 			_ = rIn.Close()
@@ -109,8 +116,7 @@ func runGoboxCLI(t *testing.T, dir string, stdin string, args ...string) parityR
 		os.Stderr = oldStderr
 		os.Stdin = oldStdin
 
-		_, _ = io.Copy(&stdoutBuf, rOut)
-		_, _ = io.Copy(&stderrBuf, rErr)
+		wg.Wait()
 		_ = rOut.Close()
 		_ = rErr.Close()
 
