@@ -52,14 +52,8 @@ func DigCmd(args []string) error {
 			if host == "" {
 				host = arg
 			} else if dnsServer == "" && !strings.HasPrefix(arg, "@") {
-				// Could be alternate DNS server position
-				if _, err := net.LookupHost(arg); err == nil {
-					// It's a valid host, treat as second host arg
-					host = arg
-				} else {
-					// Treat as DNS server
-					dnsServer = arg
-				}
+				// Treat second positional as DNS server
+				dnsServer = arg
 			}
 		}
 		i++
@@ -471,16 +465,11 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 	// Query section
 	fmt.Printf("\n;; Query: %s. %s IN %s\n", host, "300", queryType)
 
-	// Get query time
-	start := time.Now()
-	_, _ = resolver.LookupHost(context.Background(), host)
-	elapsed := time.Since(start)
-	_ = elapsed // Could show query time
-
 	// Answer section
 	fmt.Printf("\n;; ANSWER SECTION:\n")
 	hasAnswer := false
 
+	queryStart := time.Now()
 	switch queryType {
 	case "A":
 		ips, err := resolver.LookupHost(context.Background(), host)
@@ -556,7 +545,7 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 	}
 
 	// Footer
-	fmt.Printf("\n;; Query time: %d msec\n", elapsed.Milliseconds())
+	fmt.Printf("\n;; Query time: %d msec\n", time.Since(queryStart).Milliseconds())
 	fmt.Printf(";; SERVER: %s#53(%s)\n", dnsServer, dnsServer)
 	fmt.Printf(";; WHEN: %s\n", time.Now().Format("Mon Jan 2 15:04:05 MST 2006"))
 

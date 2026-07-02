@@ -65,7 +65,7 @@ func ipAddr(oneLine bool) error {
 	if err != nil {
 		return err
 	}
-	for idx, iface := range ifaces {
+	for _, iface := range ifaces {
 		addrs, _ := ipInterfaceAddrs(iface)
 		state := "DOWN"
 		if iface.Flags&net.FlagUp != 0 {
@@ -81,7 +81,7 @@ func ipAddr(oneLine bool) error {
 			}
 			continue
 		}
-		fmt.Printf("%d: %s: <%s> mtu %d state %s\n", idx+1, iface.Name, iface.Flags.String(), iface.MTU, state)
+		fmt.Printf("%d: %s: <%s> mtu %d state %s\n", iface.Index, iface.Name, iface.Flags.String(), iface.MTU, state)
 		for _, addr := range addrs {
 			fam := "inet"
 			if strings.Contains(addr.String(), ":") {
@@ -98,12 +98,12 @@ func ipLink(stats bool) error {
 	if err != nil {
 		return err
 	}
-	for idx, iface := range ifaces {
+	for _, iface := range ifaces {
 		state := "DOWN"
 		if iface.Flags&net.FlagUp != 0 {
 			state = "UP"
 		}
-		fmt.Printf("%d: %s: <%s> mtu %d state %s\n", idx+1, iface.Name, iface.Flags.String(), iface.MTU, state)
+		fmt.Printf("%d: %s: <%s> mtu %d state %s\n", iface.Index, iface.Name, iface.Flags.String(), iface.MTU, state)
 		fmt.Printf("    link/ether %s\n", iface.HardwareAddr.String())
 		if stats {
 			s := readIfaceStats(iface.Name)

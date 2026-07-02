@@ -599,6 +599,7 @@ func runBench(client *http.Client, targetURL, method string, headers []string, p
 	}
 
 	// Prepare work channel
+	benchStart := time.Now()
 	workCh := make(chan int, concurrent)
 	results := make(chan benchResult, totalRequests)
 
@@ -667,7 +668,10 @@ func runBench(client *http.Client, targetURL, method string, headers []string, p
 	p90 := latencies[len(latencies)*90/100]
 	p99 := latencies[len(latencies)*99/100]
 
-	totalTime := latencies[len(latencies)-1].Seconds()
+	totalTime := time.Since(benchStart).Seconds()
+	if totalTime < 0.001 {
+		totalTime = 0.001
+	}
 	throughput := float64(len(latencies)) / totalTime
 
 	fmt.Fprintf(os.Stdout, "Requests: %d, Concurrency: %d, Failed: %d\n", totalRequests, concurrent, failed)

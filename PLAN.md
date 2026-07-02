@@ -35,23 +35,23 @@ Issues found by automated code review. Fix order: 高危 → 中危 → 低危.
 - [x] `fs/cmd_df.go:299` — `-H`（SI）与 `-h`（二进制）输出相同，SI 失效
 - [x] `fs/cmd_du.go:200` — 默认输出原始字节而非 1K 块
 - [x] `fs/cmd_find.go:253` — pathDepth 根路径下差 1，-maxdepth 1 误剪根的直接子目录
-- [ ] `fs/cmd_readpath.go:71` — 多路径时 `-n` 被忽略（测试已确认当前行为是有意设计）
+- [~] `fs/cmd_readpath.go:71` — 多路径时 `-n` 被忽略（有意设计：多路径时路径间始终需要分隔符，测试已验证此行为）
 - [x] `fs/cmd_stat.go:92` — formatStat map 迭代顺序随机，含格式符的文件名输出不确定
 - [x] `fs/cmd_truncate.go:53` — 相对模式 Stat 错误静默，截断目标值错误
-- [ ] `net/cmd_curl.go:662` — bench 吞吐量用最慢请求延迟计算，结果错误
-- [ ] `net/cmd_ifstat.go:213` — 首个采样未 sleep，首行流量数据虚高
-- [ ] `net/cmd_ip.go:84` — 表格模式用数组索引而非内核接口 index，有空洞时编号错误
+- [x] `net/cmd_curl.go:662` — bench 吞吐量用最慢请求延迟计算，结果错误
+- [~] `net/cmd_ifstat.go:213` — 首个采样未 sleep（有意设计：有限次运行时第一行立即输出避免卡顿，代码注释已说明）
+- [x] `net/cmd_ip.go:84` — 表格模式用数组索引而非内核接口 index，有空洞时编号错误
 - [x] `net/cmd_nc.go:601` — benchmark client 硬编码输出 `"Connecting to localhost:8080"`
-- [ ] `net/cmd_netstat.go:1129` — tcpStateName 先 ToUpper 再 case "0a" 永远不匹配（实际无功能问题，两种格式均有 case）
-- [ ] `net/cmd_np.go:651` — scan 模式错误计数器从不递增，摘要显示 0 errors
-- [ ] `net/cmd_np.go:763` — ping 摘要硬编码 "netping" 而非实际目标
-- [ ] `net/cmd_np.go:321` — UDP ping 只测本地 socket 创建时间，不测网络延迟
-- [ ] `net/cmd_nslookup_dig.go:475` — dig 每次发两次 DNS 请求，显示第一次（被丢弃）的时间
-- [ ] `net/cmd_nslookup_dig.go:54` — 参数解析阶段发起真实 DNS 查询
+- [~] `net/cmd_netstat.go:1129` — tcpStateName 先 ToUpper 再 case "0a"（dead code 但不影响正确性，两种格式均有 case）
+- [~] `net/cmd_np.go:651` — scan 模式错误计数器从不递增（TCP 扫描无法区分端口关闭和网络错误，需 OS 级错误类型判断，超出当前范围）
+- [x] `net/cmd_np.go:763` — ping 摘要硬编码 "netping" 而非实际目标
+- [~] `net/cmd_np.go:321` — UDP ping 只测本地 socket 创建时间（UDP 无连接，测量真实 RTT 需自定义协议，超出当前范围）
+- [x] `net/cmd_nslookup_dig.go:475` — dig 每次发两次 DNS 请求，显示第一次（被丢弃）的时间
+- [x] `net/cmd_nslookup_dig.go:54` — 参数解析阶段发起真实 DNS 查询
 - [x] `proc/cmd_free.go:97` — 表头 6 列，数据行 5/3 列，表格对不齐
 - [x] `proc/cmd_kill.go:207` — 进程名含空格时 Fields 导致字段偏移，ppid 解析错误
 - [x] `proc/cmd_kill.go:175` — regexp.Compile 错误被丢弃，无效正则静默降级
-- [ ] `proc/cmd_timeout.go:80` — 信号发送失败时错误丢弃，可能永久阻塞
+- [~] `proc/cmd_timeout.go:80` — 信号发送失败时错误丢弃（进程已退出时 done channel 会立即关闭，不会阻塞；signal 失败不影响正确性）
 - [x] `proc/cmd_top.go:791` — 切换列时排序方向强制降序，覆盖用户设置
 - [x] `disk/cmd_ioperf.go:388` — 非 time-based 模式 duration 硬编码 1.0，IOPS 计算错误
 - [x] `disk/cmd_ioperf.go:229` — Truncate 错误静默，磁盘满时测试继续

@@ -252,7 +252,7 @@ func npTCP(opts *npOptions) error {
 	}
 
 	if opts.quiet || opts.verbose {
-		printNpStats(sent, received, errors, minLatency, maxLatency, totalLatency)
+		printNpStats(opts.host, sent, received, errors, minLatency, maxLatency, totalLatency)
 	}
 
 	return nil
@@ -384,7 +384,7 @@ func npUDP(opts *npOptions) error {
 	}
 
 	if opts.quiet || opts.verbose {
-		printNpStats(sent, received, errors, minLatency, maxLatency, totalLatency)
+		printNpStats(opts.host, sent, received, errors, minLatency, maxLatency, totalLatency)
 	}
 
 	return nil
@@ -481,7 +481,7 @@ func npICMP(opts *npOptions) error {
 	}
 
 	if opts.quiet || opts.verbose {
-		printNpStats(sent, received, errors, minLatency, maxLatency, totalLatency)
+		printNpStats(opts.host, sent, received, errors, minLatency, maxLatency, totalLatency)
 	}
 
 	return nil
@@ -758,9 +758,9 @@ func npProgressReporter(sent, received, errors *int64, opts *npOptions, stopChan
 	}
 }
 
-func printNpStats(sent, received, errors, minLatency, maxLatency, totalLatency int64) {
+func printNpStats(host string, sent, received, errors, minLatency, maxLatency, totalLatency int64) {
 	fmt.Println()
-	fmt.Printf("--- %s ping statistics ---\n", "netping")
+	fmt.Printf("--- %s ping statistics ---\n", host)
 	fmt.Printf("%d packets transmitted, %d packets received, %d errors\n",
 		sent, received, errors)
 
