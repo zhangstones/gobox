@@ -37,15 +37,16 @@ type parityEnv struct {
 }
 
 type parityCase struct {
-	ID            string
-	Name          string
-	GoboxArgs     []string
-	NativeCommand string
-	NativeArgs    []string
-	Setup         func(t *testing.T, env *parityEnv)
-	Stdin         string
-	Normalize     func(string) string
-	Assert        func(t *testing.T, gobox, native parityResult)
+	ID               string
+	Name             string
+	GoboxArgs        []string
+	NativeCommand    string
+	NativeArgs       []string
+	Setup            func(t *testing.T, env *parityEnv)
+	Stdin            string
+	Normalize        func(string) string
+	NormalizeFactory func(env *parityEnv) func(string) string
+	Assert           func(t *testing.T, gobox, native parityResult)
 }
 
 var parityExecMu sync.Mutex
@@ -405,7 +406,9 @@ func runExactParityCases(t *testing.T, cases []parityCase) {
 			gobox := runGoboxCLI(t, env.Dir, tc.Stdin, tc.GoboxArgs...)
 			native := runNativeCLI(t, env.Dir, tc.Stdin, tc.NativeCommand, tc.NativeArgs...)
 			normalize := tc.Normalize
-			if normalize == nil {
+			if tc.NormalizeFactory != nil {
+				normalize = tc.NormalizeFactory(env)
+			} else if normalize == nil {
 				normalize = normalizeText
 			}
 			gobox.Stdout = normalize(gobox.Stdout)
@@ -470,6 +473,12 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+// sortedLines normalizes whitespace and sorts lines alphabetically.
+// Use as a Normalize func when line ordering may vary (e.g. grep -r).
+func sortedLines(s string) string {
+	return strings.Join(sortedNonEmptyLines(s), "\n")
 }
 
 func sameStringSet(a, b string) bool {
@@ -1038,6 +1047,102 @@ func startLocalDNSServer(t *testing.T, ip string) (string, string, func()) {
 					return
 				}
 				resp := buildDNSAResponse(msg, net.ParseIP(ip).To4())
+				binary.BigEndian.PutUint16(lenBuf[:], uint16(len(resp)))
+				_, _ = c.Write(lenBuf[:])
+				_, _ = c.Write(resp)
+			}(conn)
+		}
+	}()
+
+	return host, port, func() {
+		_ = udpConn.Close()
+		_ = tcpLn.Close()
+		<-done
+		<-tcpDone
+	}
+}
+
+// buildDNSNXDOMAINResponse builds a DNS response with RCODE=3 (NXDOMAIN) and no answer.
+func buildDNSNXDOMAINResponse(query []byte) []byte {
+	if len(query) < 12 {
+		return nil
+	}
+	qEnd := 12
+	for qEnd < len(query) {
+		labelLen := int(query[qEnd])
+		qEnd++
+		if labelLen == 0 {
+			break
+		}
+		qEnd += labelLen
+	}
+	if qEnd+4 > len(query) {
+		return nil
+	}
+	question := query[12 : qEnd+4]
+	resp := make([]byte, 0, 12+len(question))
+	resp = append(resp, query[0], query[1]) // transaction ID
+	resp = append(resp, 0x81, 0x83)        // flags: QR=1, RD=1, RA=1, RCODE=3 (NXDOMAIN)
+	resp = append(resp, 0x00, 0x01)        // QDCOUNT=1
+	resp = append(resp, 0x00, 0x00)        // ANCOUNT=0 (no answers)
+	resp = append(resp, 0x00, 0x00)        // NSCOUNT=0
+	resp = append(resp, 0x00, 0x00)        // ARCOUNT=0
+	resp = append(resp, question...)
+	return resp
+}
+
+// startLocalNXDOMAINServer starts a local DNS server that returns NXDOMAIN for all queries.
+func startLocalNXDOMAINServer(t *testing.T) (string, string, func()) {
+	t.Helper()
+	udpConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen nxdomain dns udp: %v", err)
+	}
+	host, port, err := net.SplitHostPort(udpConn.LocalAddr().String())
+	if err != nil {
+		_ = udpConn.Close()
+		t.Fatalf("split nxdomain dns addr: %v", err)
+	}
+	tcpLn, err := net.Listen("tcp", net.JoinHostPort(host, port))
+	if err != nil {
+		_ = udpConn.Close()
+		t.Fatalf("listen nxdomain dns tcp: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 512)
+		for {
+			n, addr, err := udpConn.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			resp := buildDNSNXDOMAINResponse(buf[:n])
+			_, _ = udpConn.WriteTo(resp, addr)
+		}
+	}()
+
+	tcpDone := make(chan struct{})
+	go func() {
+		defer close(tcpDone)
+		for {
+			conn, err := tcpLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				var lenBuf [2]byte
+				if _, err := io.ReadFull(c, lenBuf[:]); err != nil {
+					return
+				}
+				msgLen := int(binary.BigEndian.Uint16(lenBuf[:]))
+				msg := make([]byte, msgLen)
+				if _, err := io.ReadFull(c, msg); err != nil {
+					return
+				}
+				resp := buildDNSNXDOMAINResponse(msg)
 				binary.BigEndian.PutUint16(lenBuf[:], uint16(len(resp)))
 				_, _ = c.Write(lenBuf[:])
 				_, _ = c.Write(resp)

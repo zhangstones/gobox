@@ -115,6 +115,12 @@ func TestParity_Md5sumCases(t *testing.T) {
 				if gobox.ExitCode != native.ExitCode {
 					t.Fatalf("md5sum --status exit mismatch %d != %d", gobox.ExitCode, native.ExitCode)
 				}
+				if gobox.Stdout != "" {
+					t.Fatalf("md5sum --status should produce no stdout, got: %q", gobox.Stdout)
+				}
+				if gobox.Stderr != "" {
+					t.Fatalf("md5sum --status should produce no stderr, got: %q", gobox.Stderr)
+				}
 			},
 		},
 	})
@@ -127,11 +133,82 @@ func TestParity_Md5sumCases(t *testing.T) {
 		if gobox.ExitCode != native.ExitCode {
 			t.Fatalf("md5sum --warn exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 		}
-		if findLineContaining(strings.ToLower(gobox.Stdout+gobox.Stderr), "improperly formatted") == "" {
-			t.Fatalf("md5sum --warn missing gobox warning: %+v", gobox)
+		// Warning must appear on stderr only — stdout must be empty.
+		if gobox.Stdout != "" {
+			t.Fatalf("md5sum --warn: warning should be on stderr only, got stdout: %q", gobox.Stdout)
+		}
+		if findLineContaining(strings.ToLower(gobox.Stderr), "improperly formatted") == "" {
+			t.Fatalf("md5sum --warn missing gobox warning on stderr: %+v", gobox)
 		}
 		if findLineContaining(strings.ToLower(native.Stdout+native.Stderr), "improperly formatted") == "" {
 			t.Fatalf("md5sum --warn missing native warning: %+v", native)
+		}
+	})
+
+	t.Run("MD5-005-mixed", func(t *testing.T) {
+		// Mixed file: one valid checksum line and one malformed line.
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "good.txt"), "hello")
+		sum := runNativeCLI(t, env, "", "md5sum", "good.txt")
+		content := normalizeText(sum.Stdout) + "\n" + "not a valid checksum line\n"
+		writeFile(t, filepath.Join(env, "checksums.md5"), content)
+		gobox := runGoboxCLI(t, env, "", "md5sum", "--warn", "--check", "checksums.md5")
+		if gobox.ExitCode == 0 {
+			t.Fatalf("md5sum --warn with malformed line should fail, got exit 0: %+v", gobox)
+		}
+		if findLineContaining(strings.ToLower(gobox.Stderr), "improperly formatted") == "" {
+			t.Fatalf("md5sum --warn mixed: missing per-line warning on stderr: %+v", gobox)
+		}
+		// Valid file result should appear on stdout.
+		if findLineContaining(gobox.Stdout, "good.txt") == "" {
+			t.Fatalf("md5sum --warn mixed: valid file result missing from stdout: %+v", gobox)
+		}
+	})
+
+	t.Run("MD5-006", func(t *testing.T) {
+		// --quiet in compute mode (no --check) should behave identically to without --quiet.
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "file.txt"), "hello")
+		gobox := runGoboxCLI(t, env, "", "md5sum", "--quiet", "file.txt")
+		native := runNativeCLI(t, env, "", "md5sum", "--quiet", "file.txt")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("md5sum --quiet file exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		if normalizeText(gobox.Stdout) != normalizeText(native.Stdout) {
+			t.Fatalf("md5sum --quiet file stdout mismatch\ngobox=%q\nnative=%q", gobox.Stdout, native.Stdout)
+		}
+	})
+
+	t.Run("MD5-stdin", func(t *testing.T) {
+		env := t.TempDir()
+		gobox := runGoboxCLI(t, env, "hello\n", "md5sum")
+		native := runNativeCLI(t, env, "hello\n", "md5sum")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("md5sum stdin exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		if normalizeText(gobox.Stdout) != normalizeText(native.Stdout) {
+			t.Fatalf("md5sum stdin stdout mismatch\ngobox=%q\nnative=%q", gobox.Stdout, native.Stdout)
+		}
+	})
+
+	t.Run("MD5-failed", func(t *testing.T) {
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "data.txt"), "hello")
+		sum := runNativeCLI(t, env, "", "md5sum", "data.txt")
+		writeFile(t, filepath.Join(env, "checksums.md5"), normalizeText(sum.Stdout)+"\n")
+		// Tamper with the file after generating the checksum.
+		writeFile(t, filepath.Join(env, "data.txt"), "TAMPERED")
+		gobox := runGoboxCLI(t, env, "", "md5sum", "--check", "checksums.md5")
+		if gobox.ExitCode == 0 {
+			t.Fatalf("md5sum --check with tampered file should fail, got exit 0: %+v", gobox)
+		}
+		if findLineContaining(gobox.Stdout, "FAILED") == "" {
+			t.Fatalf("md5sum --check with tampered file: missing FAILED in stdout: %+v", gobox)
+		}
+		// Native behaviour for reference.
+		native := runNativeCLI(t, env, "", "md5sum", "--check", "checksums.md5")
+		if native.ExitCode == 0 {
+			t.Fatalf("native md5sum --check with tampered file should fail")
 		}
 	})
 }
@@ -181,12 +258,28 @@ func TestParity_IostatCases(t *testing.T) {
 				}
 			}
 		}
+		// At least one field across all rows must carry a scaled unit suffix
+		// (K/s, M/s or G/s) confirming that -H actually scales the values.
+		hasHumanUnit := false
+		for _, row := range rows {
+			for _, field := range row[1:] {
+				if strings.HasSuffix(field, "K/s") || strings.HasSuffix(field, "M/s") || strings.HasSuffix(field, "G/s") {
+					hasHumanUnit = true
+				}
+			}
+		}
+		if !hasHumanUnit {
+			t.Fatalf("iostat -H: no field in any row has a K/s, M/s or G/s unit suffix; output:\n%s", gobox.Stdout)
+		}
 	})
 
 	t.Run("IOSTAT-004", func(t *testing.T) {
 		gobox := runGoboxCLI(t, t.TempDir(), "", "iostat", "-z", "-n", "1")
 		native := runNativeCLI(t, t.TempDir(), "", "iostat", "-z", "1", "1")
 		assertIostatStructuredParity(t, gobox, native)
+		// Verifying that -z actually suppresses zero-I/O devices requires a
+		// reliable zero-I/O device that cannot be guaranteed in CI.
+		t.Skip("requires reliable zero-I/O device to verify -z suppresses zero-activity devices")
 	})
 
 	t.Run("IOSTAT-005", func(t *testing.T) {
@@ -212,6 +305,19 @@ func TestParity_IostatCases(t *testing.T) {
 		for _, row := range rows {
 			if len(row) != len(header) {
 				t.Fatalf("iostat --cgroup expected structured device row width=%d header=%d row=%v", len(row), len(header), row)
+			}
+		}
+		// Validate that all cgroup numeric fields are non-negative numbers.
+		for _, row := range rows {
+			for _, field := range row[1:] {
+				s := strings.TrimSuffix(field, "/s")
+				v, err := strconv.ParseFloat(s, 64)
+				if err != nil {
+					t.Fatalf("iostat --cgroup: non-parseable field %q in row %v", field, row)
+				}
+				if v < 0 {
+					t.Fatalf("iostat --cgroup: negative I/O field %q (value %.4f) in row %v", field, v, row)
+				}
 			}
 		}
 	})
@@ -243,29 +349,87 @@ func TestParity_IostatCases(t *testing.T) {
 			t.Fatalf("iostat --help should use grouped help text, got %q", res.Stdout)
 		}
 	})
+
+	t.Run("IOSTAT-008", func(t *testing.T) {
+		res := runGoboxCLI(t, t.TempDir(), "", "iostat", "-n", "0")
+		if res.ExitCode == 0 {
+			t.Fatalf("iostat -n 0 should fail, got exit 0: %+v", res)
+		}
+	})
+
+	t.Run("IOSTAT-009", func(t *testing.T) {
+		res := runGoboxCLI(t, t.TempDir(), "", "iostat", "abc")
+		if res.ExitCode == 0 {
+			t.Fatalf("iostat abc should fail, got exit 0: %+v", res)
+		}
+	})
+
+	t.Run("IOSTAT-010", func(t *testing.T) {
+		res := runGoboxCLI(t, t.TempDir(), "", "iostat", "1", "2", "3")
+		if res.ExitCode == 0 {
+			t.Fatalf("iostat 1 2 3 should fail, got exit 0: %+v", res)
+		}
+	})
+
+	t.Run("IOSTAT-011", func(t *testing.T) {
+		res := runGoboxCLI(t, t.TempDir(), "", "iostat", "-n", "2")
+		if res.ExitCode != 0 {
+			t.Fatalf("iostat -n 2 failed: %+v", res)
+		}
+		// Two samples produce two Device header lines separated by a blank line.
+		count := strings.Count(res.Stdout, "Device")
+		if count < 2 {
+			t.Fatalf("iostat -n 2 should produce 2 output blocks (>=2 Device headers), got %d:\n%s", count, res.Stdout)
+		}
+	})
 }
 
 func TestParity_IoperfCases(t *testing.T) {
 	if runtime.GOOS == "linux" {
 		for _, tc := range []struct {
-			id   string
-			args []string
+			id    string
+			args  []string
+			check func(t *testing.T, env string, args []string, res parityResult)
 		}{
-			{"IOPERF-001", []string{"ioperf", "--filename", "io.dat", "--bs", "4k", "--size", "32K", "--runtime", "1"}},
-			{"IOPERF-002", []string{"ioperf", "--filename", "io.dat", "--direct", "0", "--size", "32K", "--runtime", "1"}},
-			{"IOPERF-003", []string{"ioperf", "--filename", "io.dat", "--size", "32K", "--runtime", "1"}},
-			{"IOPERF-004", []string{"ioperf", "--filename", "io.dat", "--fsync", "1", "--size", "32K", "--runtime", "1"}},
-			{"IOPERF-005", []string{"ioperf", "--filename", "io.dat", "--group_reporting", "--numjobs", "2", "--size", "32K", "--runtime", "1"}},
-			{"IOPERF-007", []string{"ioperf", "--filename", "io.dat", "--write_hist_log", "hist", "--time_based", "--runtime", "1", "--size", "1M"}},
-			{"IOPERF-008", []string{"ioperf", "--filename", "io.dat", "--numjobs", "2", "--size", "32K", "--runtime", "1"}},
-			{"IOPERF-009", []string{"ioperf", "--filename", "io.dat", "--percentile_list", "95", "--size", "32K", "--runtime", "1"}},
-			{"IOPERF-010", []string{"ioperf", "--filename", "io.dat", "--rate", "1M", "--size", "32K", "--runtime", "1"}},
-			{"IOPERF-011", []string{"ioperf", "--filename", "io.dat", "--runtime", "1", "--size", "32K"}},
-			{"IOPERF-012", []string{"ioperf", "--filename", "io.dat", "--rw", "read", "--size", "32K", "--runtime", "1"}},
-			{"IOPERF-013", []string{"ioperf", "--filename", "io.dat", "--rw", "readwrite", "--rwmixread", "70", "--size", "32K", "--runtime", "1"}},
-			{"IOPERF-014", []string{"ioperf", "--filename", "io.dat", "--size", "32K", "--runtime", "1"}},
-			{"IOPERF-015", []string{"ioperf", "--filename", "io.dat", "--sync", "sync", "--size", "32K", "--runtime", "1"}},
-			{"IOPERF-016", []string{"ioperf", "--filename", "io.dat", "--time_based", "--runtime", "1", "--size", "32K"}},
+			{"IOPERF-001", []string{"ioperf", "--filename", "io.dat", "--bs", "4k", "--size", "32K", "--runtime", "1"}, nil},
+			{"IOPERF-002", []string{"ioperf", "--filename", "io.dat", "--direct", "0", "--size", "32K", "--runtime", "1"}, nil},
+			{"IOPERF-003", []string{"ioperf", "--filename", "io.dat", "--size", "32K", "--runtime", "1"}, nil},
+			{"IOPERF-004", []string{"ioperf", "--filename", "io.dat", "--fsync", "1", "--size", "32K", "--runtime", "1"}, nil},
+			{"IOPERF-005", []string{"ioperf", "--filename", "io.dat", "--group_reporting", "--numjobs", "2", "--size", "32K", "--runtime", "1"}, nil},
+			{"IOPERF-007", []string{"ioperf", "--filename", "io.dat", "--write_hist_log", "hist", "--time_based", "--runtime", "1", "--size", "1M"},
+				func(t *testing.T, env string, args []string, res parityResult) {
+					// Histogram log name: {prefix}_read_hist.1.log (default rw=read).
+					logPath := filepath.Join(env, "hist_read_hist.1.log")
+					info, err := os.Stat(logPath)
+					if err != nil {
+						t.Fatalf("IOPERF-007: histogram log missing at %s: %v", logPath, err)
+					}
+					if info.Size() == 0 {
+						t.Fatalf("IOPERF-007: histogram log is empty: %s", logPath)
+					}
+					data, err := os.ReadFile(logPath)
+					if err != nil {
+						t.Fatalf("IOPERF-007: read histogram log: %v", err)
+					}
+					for _, line := range strings.Split(string(data), "\n") {
+						parts := strings.Split(strings.TrimSpace(line), ",")
+						if len(parts) >= 3 {
+							return // found a valid mode,bucket,count CSV line
+						}
+					}
+					t.Fatalf("IOPERF-007: histogram log missing mode,bucket,count CSV lines:\n%s", data)
+				}},
+			{"IOPERF-008", []string{"ioperf", "--filename", "io.dat", "--numjobs", "2", "--size", "32K", "--runtime", "1"}, nil},
+			{"IOPERF-009", []string{"ioperf", "--filename", "io.dat", "--percentile_list", "95", "--size", "32K", "--runtime", "1"}, nil},
+			{"IOPERF-010", []string{"ioperf", "--filename", "io.dat", "--rate", "1M", "--size", "32K", "--runtime", "1"}, nil},
+			{"IOPERF-011", []string{"ioperf", "--filename", "io.dat", "--runtime", "1", "--size", "32K"}, nil},
+			{"IOPERF-012", []string{"ioperf", "--filename", "io.dat", "--rw", "read", "--size", "32K", "--runtime", "1"}, nil},
+			{"IOPERF-013", []string{"ioperf", "--filename", "io.dat", "--rw", "readwrite", "--rwmixread", "70", "--size", "32K", "--runtime", "1"}, nil},
+			{"IOPERF-014", []string{"ioperf", "--filename", "io.dat", "--size", "32K", "--runtime", "1"}, nil},
+			{"IOPERF-015", []string{"ioperf", "--filename", "io.dat", "--sync", "sync", "--size", "32K", "--runtime", "1"}, nil},
+			// IOPERF-016 was a duplicate of IOPERF-011; now tests randread (distinct scenario).
+			{"IOPERF-016", []string{"ioperf", "--filename", "io.dat", "--rw", "randread", "--size", "32K", "--runtime", "1"}, nil},
+			{"IOPERF-017", []string{"ioperf", "--filename", "io.dat", "--rw", "randwrite", "--size", "32K", "--runtime", "1"}, nil},
 		} {
 			t.Run(tc.id, func(t *testing.T) {
 				env := t.TempDir()
@@ -281,6 +445,31 @@ func TestParity_IoperfCases(t *testing.T) {
 				res := runGoboxCLI(t, env, "", args...)
 				if res.ExitCode != 0 {
 					t.Fatalf("%s failed: %+v", tc.id, res)
+				}
+				// Content check: verify READ:/WRITE: summary lines based on --rw mode.
+				rwMode := "read" // default
+				for i, a := range args {
+					if a == "--rw" && i+1 < len(args) {
+						rwMode = args[i+1]
+						break
+					}
+				}
+				switch rwMode {
+				case "read", "randread":
+					if findLineWithPrefix(res.Stdout, "READ:") == "" {
+						t.Fatalf("%s missing READ: line in stdout: %+v", tc.id, res)
+					}
+				case "write", "randwrite":
+					if findLineWithPrefix(res.Stdout, "WRITE:") == "" {
+						t.Fatalf("%s missing WRITE: line in stdout: %+v", tc.id, res)
+					}
+				case "readwrite":
+					if findLineWithPrefix(res.Stdout, "READ:") == "" || findLineWithPrefix(res.Stdout, "WRITE:") == "" {
+						t.Fatalf("%s missing READ:/WRITE: lines in stdout: %+v", tc.id, res)
+					}
+				}
+				if tc.check != nil {
+					tc.check(t, env, args, res)
 				}
 			})
 		}
@@ -530,8 +719,8 @@ func TestParity_IoperfFioCases(t *testing.T) {
 				if err != nil {
 					t.Fatalf("stat fio file: %v", err)
 				}
-				if goboxInfo.Size() < 32*1024 || nativeInfo.Size() < 32*1024 {
-					t.Fatalf("size not applied gobox=%d native=%d", goboxInfo.Size(), nativeInfo.Size())
+				if goboxInfo.Size() != 32*1024 || nativeInfo.Size() != 32*1024 {
+					t.Fatalf("size not exactly 32K: gobox=%d native=%d", goboxInfo.Size(), nativeInfo.Size())
 				}
 			},
 		},
@@ -548,19 +737,33 @@ func TestParity_IoperfFioCases(t *testing.T) {
 			},
 		},
 		{
+			// IOPERF-016 was a duplicate of IOPERF-011 (read + time_based).
+			// Now tests randread — a genuinely different I/O pattern.
 			id: "IOPERF-016",
 			setup: func(t *testing.T, goboxFile, nativeFile string) {
 				writeFile(t, goboxFile, strings.Repeat("c", 32*1024))
 				writeFile(t, nativeFile, strings.Repeat("c", 32*1024))
 			},
 			goboxArgs: func(env, goboxFile string) []string {
-				return []string{"ioperf", "--filename", goboxFile, "--rw", "read", "--size", "32K", "--time_based", "--runtime", "1"}
+				return []string{"ioperf", "--filename", goboxFile, "--rw", "randread", "--size", "32K", "--time_based", "--runtime", "1"}
 			},
 			fioArgs: func(env, nativeFile string) []string {
-				return []string{"--filename=" + nativeFile, "--rw=read", "--size=32K", "--time_based=1", "--runtime=1"}
+				return []string{"--filename=" + nativeFile, "--rw=randread", "--size=32K", "--time_based=1", "--runtime=1"}
 			},
 			assert: func(t *testing.T, env, goboxFile, nativeFile string, gobox, native parityResult) {
 				assertReadWrite(t, gobox, native, true, false)
+			},
+		},
+		{
+			id: "IOPERF-017",
+			goboxArgs: func(env, goboxFile string) []string {
+				return []string{"ioperf", "--filename", goboxFile, "--rw", "randwrite", "--size", "32K"}
+			},
+			fioArgs: func(env, nativeFile string) []string {
+				return []string{"--filename=" + nativeFile, "--rw=randwrite", "--size=32K"}
+			},
+			assert: func(t *testing.T, env, goboxFile, nativeFile string, gobox, native parityResult) {
+				assertReadWrite(t, gobox, native, false, true)
 			},
 		},
 	} {
@@ -589,6 +792,36 @@ func TestParity_IoperfFioCases(t *testing.T) {
 		res := runGoboxCLI(t, env, "", "ioperf", "--filename", filepath.Join(env, "io.dat"), "--size", "64K", "--runtime", "1", "--time_based", "--iodepth", "2")
 		if res.ExitCode != 0 {
 			t.Fatalf("ioperf failed: %+v", res)
+		}
+	})
+
+	t.Run("IOPERF-latency", func(t *testing.T) {
+		env := t.TempDir()
+		res := runGoboxCLI(t, env, "", "ioperf", "--filename", filepath.Join(env, "io.dat"),
+			"--rw", "write", "--size", "32K", "--latency")
+		if res.ExitCode != 0 {
+			t.Fatalf("ioperf --latency failed: %+v", res)
+		}
+		if findLineContaining(res.Stdout, "Latency histogram") == "" && findLineContaining(res.Stdout, "latency distribution") == "" {
+			t.Fatalf("ioperf --latency missing histogram output in stdout: %+v", res)
+		}
+	})
+
+	t.Run("IOPERF-err-invalid-rw", func(t *testing.T) {
+		env := t.TempDir()
+		res := runGoboxCLI(t, env, "", "ioperf", "--filename", filepath.Join(env, "io.dat"),
+			"--rw", "badmode", "--size", "32K")
+		if res.ExitCode == 0 {
+			t.Fatalf("ioperf with invalid --rw should fail, got exit 0: %+v", res)
+		}
+	})
+
+	t.Run("IOPERF-err-rwmixread-without-readwrite", func(t *testing.T) {
+		env := t.TempDir()
+		res := runGoboxCLI(t, env, "", "ioperf", "--filename", filepath.Join(env, "io.dat"),
+			"--rw", "read", "--rwmixread", "70", "--size", "32K")
+		if res.ExitCode == 0 {
+			t.Fatalf("ioperf --rwmixread without readwrite mode should fail, got exit 0: %+v", res)
 		}
 	})
 }
@@ -656,6 +889,12 @@ func TestParity_Sha256sumCases(t *testing.T) {
 				if gobox.ExitCode != native.ExitCode {
 					t.Fatalf("sha256sum --status exit mismatch %d != %d", gobox.ExitCode, native.ExitCode)
 				}
+				if gobox.Stdout != "" {
+					t.Fatalf("sha256sum --status should produce no stdout, got: %q", gobox.Stdout)
+				}
+				if gobox.Stderr != "" {
+					t.Fatalf("sha256sum --status should produce no stderr, got: %q", gobox.Stderr)
+				}
 			},
 		},
 	})
@@ -668,11 +907,53 @@ func TestParity_Sha256sumCases(t *testing.T) {
 		if gobox.ExitCode != native.ExitCode {
 			t.Fatalf("sha256sum --warn exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 		}
-		if findLineContaining(strings.ToLower(gobox.Stdout+gobox.Stderr), "improperly formatted") == "" {
-			t.Fatalf("sha256sum --warn missing gobox warning: %+v", gobox)
+		// Warning must be on stderr, not stdout.
+		if gobox.Stdout != "" {
+			t.Fatalf("sha256sum --warn: warning should be on stderr only, got stdout: %q", gobox.Stdout)
+		}
+		if findLineContaining(strings.ToLower(gobox.Stderr), "improperly formatted") == "" {
+			t.Fatalf("sha256sum --warn missing gobox warning on stderr: %+v", gobox)
 		}
 		if findLineContaining(strings.ToLower(native.Stdout+native.Stderr), "improperly formatted") == "" {
 			t.Fatalf("sha256sum --warn missing native warning: %+v", native)
+		}
+	})
+
+	t.Run("SHA256-failed", func(t *testing.T) {
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "data.txt"), "hello")
+		sum := runNativeCLI(t, env, "", "sha256sum", "data.txt")
+		writeFile(t, filepath.Join(env, "checksums.sha256"), normalizeText(sum.Stdout)+"\n")
+		// Tamper with the file after generating the checksum.
+		writeFile(t, filepath.Join(env, "data.txt"), "TAMPERED")
+		gobox := runGoboxCLI(t, env, "", "sha256sum", "--check", "checksums.sha256")
+		if gobox.ExitCode == 0 {
+			t.Fatalf("sha256sum --check with tampered file should fail, got exit 0: %+v", gobox)
+		}
+		if findLineContaining(gobox.Stdout, "FAILED") == "" {
+			t.Fatalf("sha256sum --check with tampered file: missing FAILED in stdout: %+v", gobox)
+		}
+		native := runNativeCLI(t, env, "", "sha256sum", "--check", "checksums.sha256")
+		if native.ExitCode == 0 {
+			t.Fatalf("native sha256sum --check with tampered file should fail")
+		}
+	})
+
+	t.Run("SHA256-tag-check", func(t *testing.T) {
+		// Generate checksum in BSD tag format, then verify --check can read it back.
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "input.txt"), "hello")
+		tag := runGoboxCLI(t, env, "", "sha256sum", "--tag", "input.txt")
+		if tag.ExitCode != 0 {
+			t.Fatalf("sha256sum --tag failed: %+v", tag)
+		}
+		writeFile(t, filepath.Join(env, "checksums.sha256"), normalizeText(tag.Stdout)+"\n")
+		check := runGoboxCLI(t, env, "", "sha256sum", "--check", "checksums.sha256")
+		if check.ExitCode != 0 {
+			t.Fatalf("sha256sum --check of BSD tag output failed: %+v", check)
+		}
+		if findLineContaining(check.Stdout, "OK") == "" {
+			t.Fatalf("sha256sum --check of BSD tag: missing OK in stdout: %+v", check)
 		}
 	})
 }
@@ -717,6 +998,19 @@ func assertIostatStructuredParity(t *testing.T, gobox, native parityResult) {
 	if len(iostatCommonDeviceRows(goboxRows, nativeRows)) == 0 {
 		t.Fatalf("iostat common-device structured comparison found no shared rows\ngobox=%v\nnative=%v", goboxRows, nativeRows)
 	}
+	// Validate that all gobox numeric fields are parseable and non-negative.
+	for _, row := range goboxRows {
+		for _, field := range row[1:] {
+			s := strings.TrimSuffix(field, "/s")
+			v, err := strconv.ParseFloat(s, 64)
+			if err != nil {
+				t.Fatalf("gobox iostat: non-parseable numeric field %q in row %v", field, row)
+			}
+			if v < 0 {
+				t.Fatalf("gobox iostat: negative field %q (value %.4f) in row %v", field, v, row)
+			}
+		}
+	}
 }
 
 func iostatDeviceSet(out string) map[string]struct{} {
@@ -751,8 +1045,10 @@ func findLineContaining(out, needle string) string {
 
 func TestParity_Md5InternalSanity(t *testing.T) {
 	h := md5.Sum([]byte("hello"))
-	if fmt.Sprintf("%x", h[:]) == "" {
-		t.Fatal("unexpected empty md5")
+	got := fmt.Sprintf("%x", h[:])
+	// Known-correct MD5 of the ASCII string "hello".
+	const want = "5d41402abc4b2a76b9719d911017c592"
+	if got != want {
+		t.Fatalf("md5 sanity: expected %s, got %s", want, got)
 	}
-
 }

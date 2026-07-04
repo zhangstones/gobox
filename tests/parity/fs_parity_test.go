@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -43,7 +45,90 @@ func expectedDFRowWidth(header []string) int {
 	return len(header)
 }
 
+// duHasHumanReadableSizeCol returns true if at least one data line has a
+// human-readable suffix (K, M, G, T or KB, MB, GB, TB) in the size column.
+func duHasHumanReadableSizeCol(out string) bool {
+	for _, line := range nonEmptyLines(out) {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		s := fields[0]
+		for _, suf := range []string{"TB", "GB", "MB", "KB", "T", "G", "M", "K"} {
+			if strings.HasSuffix(s, suf) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// duSizeNumeric returns true if every data line's first field is purely numeric.
+func duSizeNumeric(out string) bool {
+	lines := nonEmptyLines(out)
+	if len(lines) == 0 {
+		return false
+	}
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if _, err := strconv.ParseInt(fields[0], 10, 64); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// duTotalNumeric extracts the numeric value from the "total" line of du -c output.
+func duTotalNumeric(out string) (int64, bool) {
+	for _, line := range nonEmptyLines(out) {
+		if strings.HasSuffix(line, "\ttotal") {
+			fields := strings.Fields(line)
+			if len(fields) >= 1 {
+				v, err := strconv.ParseInt(fields[0], 10, 64)
+				if err == nil {
+					return v, true
+				}
+			}
+		}
+	}
+	return 0, false
+}
+
+// detectLocalFSDevice returns the first non-network filesystem device found in
+// df output (excluding tmpfs / proc / sysfs / devtmpfs / overlay), or "".
+func detectLocalFSDevice(t *testing.T) string {
+	t.Helper()
+	res := runGoboxCLI(t, t.TempDir(), "", "df")
+	if res.ExitCode != 0 {
+		return ""
+	}
+	for _, line := range nonEmptyLines(res.Stdout)[1:] {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		dev := fields[0]
+		switch {
+		case strings.Contains(dev, ":"):
+			continue // NFS / remote
+		case dev == "tmpfs", dev == "proc", dev == "sysfs", dev == "devtmpfs",
+			dev == "cgroup", dev == "cgroup2", dev == "overlay":
+			continue
+		default:
+			return dev
+		}
+	}
+	return ""
+}
+
 func TestParity_FindCases(t *testing.T) {
+	normFactory := func(env *parityEnv) func(string) string {
+		return normalizeFindOutput(env.Dir)
+	}
+
 	runExactParityCases(t, []parityCase{
 		{
 			ID:            "FIND-001",
@@ -61,7 +146,7 @@ func TestParity_FindCases(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			Normalize: normalizeFindOutput(filepath.Join(t.TempDir(), "unused")),
+			NormalizeFactory: normFactory,
 		},
 		{
 			ID:            "FIND-002",
@@ -76,7 +161,7 @@ func TestParity_FindCases(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			Normalize: normalizeFindOutput(filepath.Join(t.TempDir(), "unused")),
+			NormalizeFactory: normFactory,
 		},
 		{
 			ID:            "FIND-003",
@@ -88,7 +173,7 @@ func TestParity_FindCases(t *testing.T) {
 				writeFile(t, filepath.Join(env.Dir, "tree", "a.txt"), "a")
 				writeFile(t, filepath.Join(env.Dir, "tree", "sub", "b.txt"), "b")
 			},
-			Normalize: normalizeFindOutput(filepath.Join(t.TempDir(), "unused")),
+			NormalizeFactory: normFactory,
 		},
 		{
 			ID:            "FIND-004",
@@ -99,7 +184,7 @@ func TestParity_FindCases(t *testing.T) {
 			Setup: func(t *testing.T, env *parityEnv) {
 				writeFile(t, filepath.Join(env.Dir, "tree", "a.txt"), "a")
 			},
-			Normalize: normalizeFindOutput(filepath.Join(t.TempDir(), "unused")),
+			NormalizeFactory: normFactory,
 		},
 		{
 			ID:            "FIND-005",
@@ -115,7 +200,7 @@ func TestParity_FindCases(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			Normalize: normalizeFindOutput(filepath.Join(t.TempDir(), "unused")),
+			NormalizeFactory: normFactory,
 		},
 		{
 			ID:            "FIND-006",
@@ -127,11 +212,11 @@ func TestParity_FindCases(t *testing.T) {
 				writeFile(t, filepath.Join(env.Dir, "tree", "a.log"), "x")
 				writeFile(t, filepath.Join(env.Dir, "tree", "b.txt"), "x")
 			},
-			Normalize: normalizeFindOutput(filepath.Join(t.TempDir(), "unused")),
+			NormalizeFactory: normFactory,
 		},
 		{
 			ID:            "FIND-008",
-			Name:          "find -size",
+			Name:          "find -size +1K",
 			GoboxArgs:     []string{"find", "-size", "+1K", "tree"},
 			NativeCommand: "find",
 			NativeArgs:    []string{"tree", "-size", "+1k"},
@@ -139,31 +224,146 @@ func TestParity_FindCases(t *testing.T) {
 				writeFile(t, filepath.Join(env.Dir, "tree", "big.bin"), strings.Repeat("a", 2048))
 				writeFile(t, filepath.Join(env.Dir, "tree", "small.bin"), "a")
 			},
-			Normalize: normalizeFindOutput(filepath.Join(t.TempDir(), "unused")),
+			NormalizeFactory: normFactory,
+		},
+		{
+			// FIND-008b: smaller-than size filter; use -type f so both gobox and
+			// native exclude directories (gobox explicitly skips dirs for -size).
+			ID:            "FIND-008b",
+			Name:          "find -size -2K (smaller than)",
+			GoboxArgs:     []string{"find", "-type", "f", "-size", "-2K", "tree"},
+			NativeCommand: "find",
+			NativeArgs:    []string{"tree", "-type", "f", "-size", "-2k"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "tree", "small.txt"), strings.Repeat("x", 512))
+				writeFile(t, filepath.Join(env.Dir, "tree", "big.bin"), strings.Repeat("y", 4096))
+			},
+			NormalizeFactory: normFactory,
+		},
+		{
+			// FIND-008c: exact zero-size match.
+			ID:            "FIND-008c",
+			Name:          "find -size 0 (empty files)",
+			GoboxArgs:     []string{"find", "-size", "0", "tree"},
+			NativeCommand: "find",
+			NativeArgs:    []string{"tree", "-size", "0"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "tree", "empty.txt"), "")
+				writeFile(t, filepath.Join(env.Dir, "tree", "nonempty.txt"), "hi")
+			},
+			NormalizeFactory: normFactory,
 		},
 		{
 			ID:            "FIND-009",
-			Name:          "find -type",
+			Name:          "find -type d",
 			GoboxArgs:     []string{"find", "-type", "d", "tree"},
 			NativeCommand: "find",
 			NativeArgs:    []string{"tree", "-type", "d"},
 			Setup: func(t *testing.T, env *parityEnv) {
 				writeFile(t, filepath.Join(env.Dir, "tree", "sub", "a.txt"), "x")
 			},
-			Normalize: normalizeFindOutput(filepath.Join(t.TempDir(), "unused")),
+			NormalizeFactory: normFactory,
+		},
+		{
+			// FIND-009b: -type f parity test.
+			ID:            "FIND-009b",
+			Name:          "find -type f",
+			GoboxArgs:     []string{"find", "-type", "f", "tree"},
+			NativeCommand: "find",
+			NativeArgs:    []string{"tree", "-type", "f"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "tree", "a.txt"), "a")
+				writeFile(t, filepath.Join(env.Dir, "tree", "sub", "b.txt"), "b")
+			},
+			NormalizeFactory: normFactory,
+		},
+		{
+			// FIND-path: -path glob filter parity.
+			ID:            "FIND-path",
+			Name:          "find -path glob",
+			GoboxArgs:     []string{"find", "-path", "*/sub/*", "tree"},
+			NativeCommand: "find",
+			NativeArgs:    []string{"tree", "-path", "*/sub/*"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "tree", "sub", "deep.txt"), "d")
+				writeFile(t, filepath.Join(env.Dir, "tree", "top.txt"), "t")
+			},
+			NormalizeFactory: normFactory,
+		},
+		{
+			// FIND-not: -not negate parity.
+			ID:            "FIND-not",
+			Name:          "find -not -name",
+			GoboxArgs:     []string{"find", "-not", "-name", "*.txt", "tree"},
+			NativeCommand: "find",
+			NativeArgs:    []string{"tree", "-not", "-name", "*.txt"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "tree", "a.txt"), "a")
+				writeFile(t, filepath.Join(env.Dir, "tree", "b.log"), "b")
+			},
+			NormalizeFactory: normFactory,
+		},
+		{
+			// FIND-combine: combined -name and -type predicates.
+			ID:            "FIND-combine",
+			Name:          "find -name -type combined",
+			GoboxArgs:     []string{"find", "-name", "*.txt", "-type", "f", "tree"},
+			NativeCommand: "find",
+			NativeArgs:    []string{"tree", "-name", "*.txt", "-type", "f"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "tree", "a.txt"), "a")
+				writeFile(t, filepath.Join(env.Dir, "tree", "b.log"), "b")
+				writeFile(t, filepath.Join(env.Dir, "tree", "sub", "c.txt"), "c")
+				// create a directory named "d.txt" to verify -type f excludes it
+				if err := os.MkdirAll(filepath.Join(env.Dir, "tree", "d.txt"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			NormalizeFactory: normFactory,
+		},
+		{
+			// FIND-multi-root: multiple starting paths.
+			ID:            "FIND-multi-root",
+			Name:          "find multiple roots",
+			GoboxArgs:     []string{"find", "-name", "*.txt", "dir1", "dir2"},
+			NativeCommand: "find",
+			NativeArgs:    []string{"dir1", "dir2", "-name", "*.txt"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "dir1", "a.txt"), "a")
+				writeFile(t, filepath.Join(env.Dir, "dir2", "b.txt"), "b")
+				writeFile(t, filepath.Join(env.Dir, "dir2", "c.log"), "c")
+			},
+			NormalizeFactory: normFactory,
 		},
 	})
 
+	// FIND-007: verify that the default (no -print) behaviour matches native find.
+	// Previously this was a gobox-vs-gobox test; now it compares against native.
 	t.Run("FIND-007", func(t *testing.T) {
 		env := t.TempDir()
 		writeFile(t, filepath.Join(env, "tree", "a.txt"), "a")
-		defaultRes := runGoboxCLI(t, env, "", "find", "tree")
-		explicitRes := runGoboxCLI(t, env, "", "find", "-print", "tree")
-		if defaultRes.ExitCode != 0 || explicitRes.ExitCode != 0 {
-			t.Fatalf("find default/-print failed: default=%+v explicit=%+v", defaultRes, explicitRes)
+		gobox := runGoboxCLI(t, env, "", "find", "tree")
+		native := runNativeCLI(t, env, "", "find", "tree")
+		if gobox.ExitCode != 0 || native.ExitCode != 0 {
+			t.Fatalf("FIND-007 find tree failed: gobox=%+v native=%+v", gobox, native)
 		}
-		if normalizeText(defaultRes.Stdout) != normalizeText(explicitRes.Stdout) {
-			t.Fatalf("find default vs -print mismatch\n%s\n%s", defaultRes.Stdout, explicitRes.Stdout)
+		norm := normalizeFindOutput(env)
+		if norm(gobox.Stdout) != norm(native.Stdout) {
+			t.Fatalf("FIND-007 default find mismatch\n--- gobox ---\n%s\n--- native ---\n%s",
+				gobox.Stdout, native.Stdout)
+		}
+	})
+
+	// FIND-error: non-existent root should exit non-zero.
+	t.Run("FIND-error", func(t *testing.T) {
+		env := t.TempDir()
+		gobox := runGoboxCLI(t, env, "", "find", "/nonexistent_gobox_find_path")
+		native := runNativeCLI(t, env, "", "find", "/nonexistent_gobox_find_path")
+		if gobox.ExitCode == 0 {
+			t.Fatalf("FIND-error: gobox find should exit non-zero for missing path, got 0")
+		}
+		if native.ExitCode == 0 {
+			t.Fatalf("FIND-error: native find should exit non-zero for missing path, got 0")
 		}
 	})
 }
@@ -186,6 +386,13 @@ func TestParity_DuCases(t *testing.T) {
 		if duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
 			t.Fatalf("du -h path set mismatch\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
 		}
+		// Verify gobox emits human-readable suffixes in the size column.
+		if !duHasHumanReadableSizeCol(gobox.Stdout) {
+			t.Fatalf("du -h: gobox size column missing human-readable suffix\n%s", gobox.Stdout)
+		}
+		if !duHasHumanReadableSizeCol(native.Stdout) {
+			t.Fatalf("du -h: native size column missing human-readable suffix\n%s", native.Stdout)
+		}
 	})
 
 	t.Run("DU-002", func(t *testing.T) {
@@ -199,6 +406,13 @@ func TestParity_DuCases(t *testing.T) {
 		if duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
 			t.Fatalf("du -s path set mismatch\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
 		}
+		// Verify size columns are numeric in default (non-human) mode.
+		if !duSizeNumeric(gobox.Stdout) {
+			t.Fatalf("du -s gobox size column should be numeric\n%s", gobox.Stdout)
+		}
+		if !duSizeNumeric(native.Stdout) {
+			t.Fatalf("du -s native size column should be numeric\n%s", native.Stdout)
+		}
 	})
 
 	t.Run("DU-003", func(t *testing.T) {
@@ -208,6 +422,9 @@ func TestParity_DuCases(t *testing.T) {
 		native := runNativeCLI(t, env, "", "du", "-a", "tree")
 		if gobox.ExitCode != native.ExitCode || duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
 			t.Fatalf("du -a mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", gobox, native)
+		}
+		if !duSizeNumeric(gobox.Stdout) || !duSizeNumeric(native.Stdout) {
+			t.Fatalf("du -a size column should be numeric\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
 	})
 
@@ -229,6 +446,22 @@ func TestParity_DuCases(t *testing.T) {
 		}
 		if duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
 			t.Fatalf("du -c path set mismatch\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
+		}
+		// Compare numeric totals; allow up to 20% delta for filesystem block-size differences.
+		gTotal, gOK := duTotalNumeric(gobox.Stdout)
+		nTotal, nOK := duTotalNumeric(native.Stdout)
+		if gOK && nOK && gTotal > 0 && nTotal > 0 {
+			diff := gTotal - nTotal
+			if diff < 0 {
+				diff = -diff
+			}
+			max := gTotal
+			if nTotal > max {
+				max = nTotal
+			}
+			if diff*100/max > 20 {
+				t.Fatalf("du -c totals diverge by >20%%: gobox=%d native=%d", gTotal, nTotal)
+			}
 		}
 	})
 
@@ -275,6 +508,68 @@ func TestParity_DuCases(t *testing.T) {
 		if gobox.ExitCode != native.ExitCode || duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
 			t.Fatalf("du --apparent-size mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", gobox, native)
 		}
+		if !duSizeNumeric(gobox.Stdout) || !duSizeNumeric(native.Stdout) {
+			t.Fatalf("du --apparent-size size column should be numeric\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+		}
+	})
+
+	// DU-sh: du -s -h combination (note: gobox does not support combined -sh shorthand).
+	t.Run("DU-sh", func(t *testing.T) {
+		env := t.TempDir()
+		setupTree(env)
+		gobox := runGoboxCLI(t, env, "", "du", "-s", "-h", "tree")
+		native := runNativeCLI(t, env, "", "du", "-s", "-h", "tree")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("du -s -h exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		// Both outputs should include the path and a human-readable size.
+		if !duHasHumanReadableSizeCol(gobox.Stdout) {
+			t.Fatalf("du -s -h gobox missing human-readable size\n%s", gobox.Stdout)
+		}
+		if !duHasHumanReadableSizeCol(native.Stdout) {
+			t.Fatalf("du -s -h native missing human-readable size\n%s", native.Stdout)
+		}
+		if duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
+			t.Fatalf("du -s -h path set mismatch\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+		}
+	})
+
+	// DU-multi-exclude: two --exclude patterns.
+	t.Run("DU-multi-exclude", func(t *testing.T) {
+		env := t.TempDir()
+		setupTree(env)
+		writeFile(t, filepath.Join(env, "tree", "skip.tmp"), "skip")
+		writeFile(t, filepath.Join(env, "tree", "skip.log"), "skip")
+		gobox := runGoboxCLI(t, env, "", "du", "-a", "--exclude", "*.tmp", "--exclude", "*.log", "tree")
+		native := runNativeCLI(t, env, "", "du", "-a", "--exclude", "*.tmp", "--exclude", "*.log", "tree")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("du multi-exclude exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		if strings.Contains(gobox.Stdout, "skip.tmp") || strings.Contains(gobox.Stdout, "skip.log") {
+			t.Fatalf("du multi-exclude gobox still includes excluded files\n%s", gobox.Stdout)
+		}
+		if strings.Contains(native.Stdout, "skip.tmp") || strings.Contains(native.Stdout, "skip.log") {
+			t.Fatalf("du multi-exclude native still includes excluded files\n%s", native.Stdout)
+		}
+		if duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
+			t.Fatalf("du multi-exclude path set mismatch\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+		}
+	})
+
+	// DU-error: non-existent path should exit non-zero.
+	t.Run("DU-error", func(t *testing.T) {
+		env := t.TempDir()
+		gobox := runGoboxMainCLI(t, env, "", "du", "/nonexistent_gobox_du_path")
+		native := runNativeCLI(t, env, "", "du", "/nonexistent_gobox_du_path")
+		if gobox.ExitCode == 0 {
+			t.Fatalf("DU-error: gobox du should exit non-zero for missing path, got 0")
+		}
+		if native.ExitCode == 0 {
+			t.Fatalf("DU-error: native du should exit non-zero for missing path, got 0")
+		}
+		if gobox.Stderr == "" {
+			t.Fatalf("DU-error: gobox du should emit stderr on error, got empty")
+		}
 	})
 }
 
@@ -305,6 +600,12 @@ func TestParity_DfCases(t *testing.T) {
 				t.Fatalf("DF-001 %s missing df header: %q", out.name, lines[0])
 			}
 		}
+		// Both outputs should name the same filesystem entry.
+		goboxFS := strings.Fields(nonEmptyLines(res.Stdout)[1])[0]
+		nativeFS := strings.Fields(nonEmptyLines(native.Stdout)[1])[0]
+		if goboxFS != nativeFS {
+			t.Fatalf("DF-001 filesystem name mismatch gobox=%q native=%q", goboxFS, nativeFS)
+		}
 	})
 
 	t.Run("DF-002", func(t *testing.T) {
@@ -317,8 +618,31 @@ func TestParity_DfCases(t *testing.T) {
 		if res.ExitCode != native.ExitCode {
 			t.Fatalf("DF-002 exit mismatch gobox=%d native=%d\n--- gobox ---\n%s\n--- native ---\n%s", res.ExitCode, native.ExitCode, res.Stdout, native.Stdout)
 		}
-		if !dfHasHumanReadableRow(res.Stdout) || !dfHasHumanReadableRow(native.Stdout) {
-			t.Fatalf("DF-002 expected human-readable row\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
+		// Check every data row (not just lines[1]) in both outputs for human-readable suffixes.
+		for _, out := range []struct {
+			name string
+			text string
+		}{
+			{"gobox", res.Stdout},
+			{"native", native.Stdout},
+		} {
+			dataLines := nonEmptyLines(out.text)
+			if len(dataLines) < 2 {
+				t.Fatalf("DF-002 %s output too short\n%s", out.name, out.text)
+			}
+			for _, line := range dataLines[1:] {
+				foundSuffix := false
+				for _, field := range strings.Fields(line) {
+					if strings.HasSuffix(field, "K") || strings.HasSuffix(field, "M") || strings.HasSuffix(field, "G") || strings.HasSuffix(field, "T") ||
+						strings.HasSuffix(field, "KB") || strings.HasSuffix(field, "MB") || strings.HasSuffix(field, "GB") || strings.HasSuffix(field, "TB") {
+						foundSuffix = true
+						break
+					}
+				}
+				if !foundSuffix {
+					t.Fatalf("DF-002 %s data row missing human-readable size suffix: %q", out.name, line)
+				}
+			}
 		}
 	})
 
@@ -376,6 +700,10 @@ func TestParity_DfCases(t *testing.T) {
 			if len(fields) < 6 {
 				t.Fatalf("DF-004 %s inode row too short: %q", out.name, lines[1])
 			}
+			// Verify the Inodes field (col 1) is a non-zero numeric.
+			if v, err := strconv.ParseInt(fields[1], 10, 64); err != nil || v == 0 {
+				t.Fatalf("DF-004 %s inode total count should be non-zero numeric, got %q", out.name, fields[1])
+			}
 		}
 	})
 
@@ -400,8 +728,14 @@ func TestParity_DfCases(t *testing.T) {
 		if header := strings.Fields(nativeLines[0]); len(header) == 0 || header[0] != "Filesystem" {
 			t.Fatalf("df output missing header\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
-		if strings.Fields(goboxLines[1])[0] == "" || strings.Fields(nativeLines[1])[0] == "" {
-			t.Fatalf("df PATH missing filesystem row\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+		// Verify both data rows have a non-empty filesystem name.
+		goboxFSName := strings.Fields(goboxLines[1])
+		nativeFSName := strings.Fields(nativeLines[1])
+		if len(goboxFSName) == 0 {
+			t.Fatalf("df PATH gobox missing filesystem row\ngobox=%s", gobox.Stdout)
+		}
+		if len(nativeFSName) == 0 {
+			t.Fatalf("df PATH native missing filesystem row\nnative=%s", native.Stdout)
 		}
 	})
 
@@ -473,7 +807,24 @@ func TestParity_DfCases(t *testing.T) {
 				if !sawHidden {
 					t.Fatalf("DF-007 should add at least one filesystem hidden in default mode\n--- base ---\n%s\n--- all ---\n%s", base.Stdout, res.Stdout)
 				}
+				// Cross-compare: at least one common filesystem name should appear in both gobox and native.
+				goboxMounts := dfMountSet(res.Stdout)
+				nativeMounts := dfMountSet(native.Stdout)
+				commonCount := 0
+				for m := range goboxMounts {
+					if nativeMounts[m] {
+						commonCount++
+					}
+				}
+				if commonCount == 0 {
+					t.Fatalf("DF-007 gobox and native share no common filesystem names\ngobox=%s\nnative=%s", res.Stdout, native.Stdout)
+				}
 			case "DF-008":
+				// Detect a local device at runtime instead of hardcoding a device name.
+				localDev := detectLocalFSDevice(t)
+				if localDev == "" {
+					t.Skip("DF-008: no local (non-network) filesystem detected")
+				}
 				for _, line := range nonEmptyLines(res.Stdout)[1:] {
 					fields := strings.Fields(line)
 					if len(fields) == 0 {
@@ -483,8 +834,20 @@ func TestParity_DfCases(t *testing.T) {
 						t.Fatalf("DF-008 should keep only local filesystems, got %q", line)
 					}
 				}
-				if findLineWithPrefix(res.Stdout, "/dev/mapper/rl-root ") == "" && findLineWithPrefix(res.Stdout, "overlay ") == "" {
-					t.Fatalf("DF-008 should still include local mounted filesystems\n%s", res.Stdout)
+				if findLineWithPrefix(res.Stdout, localDev+" ") == "" && findLineWithPrefix(res.Stdout, localDev+"\t") == "" {
+					t.Fatalf("DF-008 should still include detected local filesystem %q\n%s", localDev, res.Stdout)
+				}
+				// Cross-compare: same filesystem names in gobox and native.
+				goboxMounts := dfMountSet(res.Stdout)
+				nativeMounts := dfMountSet(native.Stdout)
+				commonCount := 0
+				for m := range goboxMounts {
+					if nativeMounts[m] {
+						commonCount++
+					}
+				}
+				if commonCount == 0 {
+					t.Fatalf("DF-008 gobox and native share no common local filesystem mounts\ngobox=%s\nnative=%s", res.Stdout, native.Stdout)
 				}
 			case "DF-009":
 				for _, line := range nonEmptyLines(res.Stdout)[1:] {
@@ -495,6 +858,18 @@ func TestParity_DfCases(t *testing.T) {
 					if fields[0] != "tmpfs" {
 						t.Fatalf("DF-009 should only include tmpfs rows, got %q", line)
 					}
+				}
+				// Cross-compare filesystem names.
+				goboxMounts := dfMountSet(res.Stdout)
+				nativeMounts := dfMountSet(native.Stdout)
+				commonCount := 0
+				for m := range goboxMounts {
+					if nativeMounts[m] {
+						commonCount++
+					}
+				}
+				if len(goboxMounts) > 0 && len(nativeMounts) > 0 && commonCount == 0 {
+					t.Fatalf("DF-009 gobox and native tmpfs mounts differ\ngobox=%s\nnative=%s", res.Stdout, native.Stdout)
 				}
 			case "DF-010":
 				for _, line := range nonEmptyLines(res.Stdout)[1:] {
@@ -536,6 +911,68 @@ func TestParity_DfCases(t *testing.T) {
 			}
 		})
 	}
+
+	// DF-hT: combined -h and -T flags.
+	t.Run("DF-hT", func(t *testing.T) {
+		if runtime.GOOS != "linux" {
+			t.Skip("df cases require linux mountinfo")
+		}
+		env := t.TempDir()
+		res := runGoboxCLI(t, env, "", "df", "-h", "-T", ".")
+		native := runNativeCLI(t, env, "", "df", "-h", "-T", ".")
+		if res.ExitCode != native.ExitCode {
+			t.Fatalf("DF-hT exit mismatch gobox=%d native=%d\n--- gobox ---\n%s\n--- native ---\n%s",
+				res.ExitCode, native.ExitCode, res.Stdout, native.Stdout)
+		}
+		for _, out := range []struct {
+			name string
+			text string
+		}{
+			{"gobox", res.Stdout},
+			{"native", native.Stdout},
+		} {
+			lines := nonEmptyLines(out.text)
+			if len(lines) < 2 {
+				t.Fatalf("DF-hT %s output too short\n%s", out.name, out.text)
+			}
+			if !strings.Contains(lines[0], "Type") {
+				t.Fatalf("DF-hT %s missing Type column: %q", out.name, lines[0])
+			}
+			// At least one data row should have a human-readable size suffix.
+			foundSuffix := false
+			for _, line := range lines[1:] {
+				for _, field := range strings.Fields(line) {
+					if strings.HasSuffix(field, "K") || strings.HasSuffix(field, "M") || strings.HasSuffix(field, "G") || strings.HasSuffix(field, "T") ||
+						strings.HasSuffix(field, "KB") || strings.HasSuffix(field, "MB") || strings.HasSuffix(field, "GB") || strings.HasSuffix(field, "TB") {
+						foundSuffix = true
+						break
+					}
+				}
+			}
+			if !foundSuffix {
+				t.Fatalf("DF-hT %s missing human-readable size suffix\n%s", out.name, out.text)
+			}
+		}
+	})
+
+	// DF-error: non-existent path should exit non-zero.
+	t.Run("DF-error", func(t *testing.T) {
+		if runtime.GOOS != "linux" {
+			t.Skip("df cases require linux mountinfo")
+		}
+		env := t.TempDir()
+		gobox := runGoboxMainCLI(t, env, "", "df", "/nonexistent_gobox_df_path")
+		native := runNativeCLI(t, env, "", "df", "/nonexistent_gobox_df_path")
+		if gobox.ExitCode == 0 {
+			t.Fatalf("DF-error gobox should exit non-zero for missing path, got 0")
+		}
+		if native.ExitCode == 0 {
+			t.Fatalf("DF-error native should exit non-zero for missing path, got 0")
+		}
+		if gobox.Stderr == "" {
+			t.Fatalf("DF-error gobox should emit error message on stderr")
+		}
+	})
 }
 
 func TestParity_ReadpathCases(t *testing.T) {
@@ -572,6 +1009,13 @@ func TestParity_ReadpathCases(t *testing.T) {
 			Assert: func(t *testing.T, gobox, native parityResult) {
 				if gobox.ExitCode == 0 || native.ExitCode == 0 {
 					t.Fatalf("readpath -e expected failure gobox=%+v native=%+v", gobox, native)
+				}
+				// gobox should produce no stdout and a non-empty stderr.
+				if gobox.Stdout != "" {
+					t.Fatalf("readpath -e gobox stdout should be empty, got %q", gobox.Stdout)
+				}
+				if gobox.Stderr == "" {
+					t.Fatalf("readpath -e gobox stderr should contain an error message, got empty")
 				}
 			},
 		},
@@ -615,11 +1059,51 @@ func TestParity_ReadpathCases(t *testing.T) {
 			},
 		},
 		{
-			ID:            "READPATH-008",
-			Name:          "readpath -z",
-			GoboxArgs:     []string{"readpath", "-z", "-m", "a", "b"},
+			// READPATH-canonicalize: long-form --canonicalize alias for -f.
+			ID:            "READPATH-canonicalize",
+			Name:          "readpath --canonicalize",
+			GoboxArgs:     []string{"readpath", "--canonicalize", "link"},
+			NativeCommand: "readlink",
+			NativeArgs:    []string{"-f", "link"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "target"), "x")
+				if err := os.Symlink("target", filepath.Join(env.Dir, "link")); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			// READPATH-no-newline: long-form --no-newline alias for -n.
+			ID:            "READPATH-no-newline",
+			Name:          "readpath --no-newline",
+			GoboxArgs:     []string{"readpath", "--no-newline", "-l", "link"},
+			NativeCommand: "readlink",
+			NativeArgs:    []string{"-n", "link"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "target"), "x")
+				if err := os.Symlink("target", filepath.Join(env.Dir, "link")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			Normalize: func(s string) string { return s },
+			Assert: func(t *testing.T, gobox, native parityResult) {
+				if gobox.ExitCode != native.ExitCode || gobox.Stdout != native.Stdout {
+					t.Fatalf("readpath --no-newline mismatch gobox=%+v native=%+v", gobox, native)
+				}
+			},
+		},
+		{
+			// READPATH-multi: multiple path arguments resolved in order.
+			ID:            "READPATH-multi",
+			Name:          "readpath multiple paths",
+			GoboxArgs:     []string{"readpath", "a", "b", "c"},
 			NativeCommand: "realpath",
-			NativeArgs:    []string{"-z", "-m", "a", "b"},
+			NativeArgs:    []string{"a", "b", "c"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "a"), "x")
+				writeFile(t, filepath.Join(env.Dir, "b"), "x")
+				writeFile(t, filepath.Join(env.Dir, "c"), "x")
+			},
 		},
 	})
 
@@ -635,6 +1119,54 @@ func TestParity_ReadpathCases(t *testing.T) {
 		}
 		if native.Stdout != "" {
 			t.Fatalf("native realpath -q unexpectedly wrote stdout: %q", native.Stdout)
+		}
+	})
+
+	// READPATH-008: -z should emit NUL delimiters in the raw output.
+	t.Run("READPATH-008", func(t *testing.T) {
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "a"), "x")
+		writeFile(t, filepath.Join(env, "b"), "x")
+		gobox := runGoboxCLI(t, env, "", "readpath", "-z", "-m", "a", "b")
+		native := runNativeCLI(t, env, "", "realpath", "-z", "-m", "a", "b")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("READPATH-008 exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		// Verify NUL delimiter is actually present in the raw output before any normalization.
+		if !strings.Contains(gobox.Stdout, "\x00") {
+			t.Fatalf("READPATH-008 gobox -z output missing NUL delimiter; got %q", gobox.Stdout)
+		}
+		if !strings.Contains(native.Stdout, "\x00") {
+			t.Fatalf("READPATH-008 native -z output missing NUL delimiter; got %q", native.Stdout)
+		}
+		// After stripping NUL, the resolved paths should match.
+		goboxPaths := strings.Split(strings.TrimRight(gobox.Stdout, "\x00"), "\x00")
+		nativePaths := strings.Split(strings.TrimRight(native.Stdout, "\x00"), "\x00")
+		sort.Strings(goboxPaths)
+		sort.Strings(nativePaths)
+		if fmt.Sprintf("%v", goboxPaths) != fmt.Sprintf("%v", nativePaths) {
+			t.Fatalf("READPATH-008 paths mismatch\ngobox=%v\nnative=%v", goboxPaths, nativePaths)
+		}
+	})
+
+	// READPATH-noexist-noe: readpath on a non-existent path without -e.
+	// gobox returns exit 1 (file not found via lstat), while native readlink -f
+	// returns exit 0 and synthesises the absolute path. This behavioural difference
+	// is documented as a bug in /tmp/bugs_fs.md.
+	t.Run("READPATH-noexist-noe", func(t *testing.T) {
+		env := t.TempDir()
+		gobox := runGoboxCLI(t, env, "", "readpath", "/nonexistent_rp_noe_path")
+		if gobox.ExitCode == 0 {
+			// If gobox ever starts resolving missing paths (aligning with readlink -f),
+			// the stdout should be the absolute path and stderr should be empty.
+			if gobox.Stdout == "" {
+				t.Fatalf("READPATH-noexist-noe: gobox exit 0 but stdout empty")
+			}
+		} else {
+			// Current behaviour: exits non-zero and writes to stderr.
+			if gobox.Stderr == "" {
+				t.Fatalf("READPATH-noexist-noe: gobox non-zero exit but stderr empty")
+			}
 		}
 	})
 }
@@ -659,6 +1191,18 @@ func TestParity_StatCases(t *testing.T) {
 				}
 				if got, want := statFieldValue(gobox.Stdout, "Size:"), statFieldValue(native.Stdout, "Size:"); got != want || got != "5" {
 					t.Fatalf("stat default size field mismatch gobox=%q native=%q", got, want)
+				}
+				// Mode field: gobox emits Mode: NNNN; native emits Access: (NNNN/...).
+				goboxMode := statFieldValue(gobox.Stdout, "Mode:")
+				nativeMode := statModeFromAccess(native.Stdout)
+				if goboxMode == "" {
+					t.Fatalf("stat default gobox missing Mode field\n%s", gobox.Stdout)
+				}
+				if nativeMode == "" {
+					t.Fatalf("stat default native missing mode in Access field\n%s", native.Stdout)
+				}
+				if goboxMode != nativeMode {
+					t.Fatalf("stat default mode mismatch gobox=%q native=%q", goboxMode, nativeMode)
 				}
 			},
 		},
@@ -687,6 +1231,12 @@ func TestParity_StatCases(t *testing.T) {
 				if !strings.Contains(statLineWithPrefix(gobox.Stdout, "Size:"), "regular file") || !strings.Contains(statLineWithPrefix(native.Stdout, "Size:"), "regular file") {
 					t.Fatalf("stat -L missing regular file type\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 				}
+				// Mode field parity.
+				goboxMode := statFieldValue(gobox.Stdout, "Mode:")
+				nativeMode := statModeFromAccess(native.Stdout)
+				if goboxMode != "" && nativeMode != "" && goboxMode != nativeMode {
+					t.Fatalf("stat -L mode mismatch gobox=%q native=%q", goboxMode, nativeMode)
+				}
 			},
 		},
 		{
@@ -709,10 +1259,32 @@ func TestParity_StatCases(t *testing.T) {
 		},
 		{
 			ID:            "STAT-004",
-			Name:          "stat format",
+			Name:          "stat format %s",
 			GoboxArgs:     []string{"stat", "-c", "%s", "data"},
 			NativeCommand: "stat",
 			NativeArgs:    []string{"-c", "%s", "data"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "data"), "hello")
+			},
+		},
+		{
+			// STAT-004b: %n format (filename).
+			ID:            "STAT-004b",
+			Name:          "stat format %n",
+			GoboxArgs:     []string{"stat", "-c", "%n", "data"},
+			NativeCommand: "stat",
+			NativeArgs:    []string{"-c", "%n", "data"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "data"), "hello")
+			},
+		},
+		{
+			// STAT-004c: %F format (file type).
+			ID:            "STAT-004c",
+			Name:          "stat format %F",
+			GoboxArgs:     []string{"stat", "-c", "%F", "data"},
+			NativeCommand: "stat",
+			NativeArgs:    []string{"-c", "%F", "data"},
 			Setup: func(t *testing.T, env *parityEnv) {
 				writeFile(t, filepath.Join(env.Dir, "data"), "hello")
 			},
@@ -730,11 +1302,54 @@ func TestParity_StatCases(t *testing.T) {
 				if gobox.ExitCode != native.ExitCode {
 					t.Fatalf("stat -t exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 				}
-				if len(strings.Fields(normalizeText(gobox.Stdout))) < 4 || len(strings.Fields(normalizeText(native.Stdout))) < 4 {
-					t.Fatalf("stat -t terse output too short\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+				// Both outputs should have the filename as field 0 and file size as field 1.
+				// (gobox terse format: "name size octal_perm timestamp"; native has more fields.)
+				gFields := strings.Fields(normalizeText(gobox.Stdout))
+				nFields := strings.Fields(normalizeText(native.Stdout))
+				if len(gFields) < 2 {
+					t.Fatalf("stat -t gobox output too short: %q", gobox.Stdout)
+				}
+				if len(nFields) < 2 {
+					t.Fatalf("stat -t native output too short: %q", native.Stdout)
+				}
+				// Field 0: filename.
+				if gFields[0] != nFields[0] {
+					t.Fatalf("stat -t filename mismatch gobox=%q native=%q", gFields[0], nFields[0])
+				}
+				// Field 1: file size in bytes.
+				if gFields[1] != nFields[1] {
+					t.Fatalf("stat -t file size mismatch gobox=%q native=%q", gFields[1], nFields[1])
 				}
 			},
 		},
+		{
+			// STAT-multi: multiple file arguments (all existing).
+			ID:            "STAT-multi",
+			Name:          "stat multiple files",
+			GoboxArgs:     []string{"stat", "-c", "%n:%s", "a", "b"},
+			NativeCommand: "stat",
+			NativeArgs:    []string{"-c", "%n:%s", "a", "b"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "a"), "hi")
+				writeFile(t, filepath.Join(env.Dir, "b"), "world")
+			},
+		},
+	})
+
+	// STAT-error: missing path should exit non-zero.
+	t.Run("STAT-error", func(t *testing.T) {
+		env := t.TempDir()
+		gobox := runGoboxMainCLI(t, env, "", "stat", "/nonexistent_gobox_stat_path")
+		native := runNativeCLI(t, env, "", "stat", "/nonexistent_gobox_stat_path")
+		if gobox.ExitCode == 0 {
+			t.Fatalf("STAT-error gobox should exit non-zero for missing path, got 0")
+		}
+		if native.ExitCode == 0 {
+			t.Fatalf("STAT-error native should exit non-zero for missing path, got 0")
+		}
+		if gobox.Stderr == "" {
+			t.Fatalf("STAT-error gobox should emit error on stderr")
+		}
 	})
 }
 
@@ -753,6 +1368,21 @@ func TestParity_TruncateCases(t *testing.T) {
 		if gi.Size() != ni.Size() {
 			t.Fatalf("truncate size mismatch gobox=%d native=%d", gi.Size(), ni.Size())
 		}
+		// Verify content: truncated to 2 bytes should contain "he".
+		goboxContent, err := os.ReadFile(filepath.Join(env, "gobox"))
+		if err != nil {
+			t.Fatalf("read gobox file: %v", err)
+		}
+		nativeContent, err := os.ReadFile(filepath.Join(env, "native"))
+		if err != nil {
+			t.Fatalf("read native file: %v", err)
+		}
+		if string(goboxContent) != "he" {
+			t.Fatalf("truncate gobox content wrong: got %q want %q", goboxContent, "he")
+		}
+		if string(goboxContent) != string(nativeContent) {
+			t.Fatalf("truncate content mismatch gobox=%q native=%q", goboxContent, nativeContent)
+		}
 	})
 
 	t.Run("TRUNCATE-002", func(t *testing.T) {
@@ -764,6 +1394,10 @@ func TestParity_TruncateCases(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(env, "missing")); !os.IsNotExist(err) {
 			t.Fatalf("truncate -c unexpectedly created file")
+		}
+		// Silently skip missing files: no stderr expected.
+		if gobox.Stderr != "" {
+			t.Fatalf("truncate -c on missing file should not emit stderr, got %q", gobox.Stderr)
 		}
 	})
 
@@ -781,6 +1415,10 @@ func TestParity_TruncateCases(t *testing.T) {
 		ni, _ := os.Stat(filepath.Join(env, "native"))
 		if gi.Size() != ni.Size() {
 			t.Fatalf("truncate -r size mismatch gobox=%d native=%d", gi.Size(), ni.Size())
+		}
+		// Success case: no error output.
+		if gobox.Stderr != "" {
+			t.Fatalf("truncate -r stderr should be empty on success, got %q", gobox.Stderr)
 		}
 	})
 
@@ -811,6 +1449,95 @@ func TestParity_TruncateCases(t *testing.T) {
 		ni, _ := os.Stat(filepath.Join(env, "native"))
 		if gi.Size() != ni.Size() {
 			t.Fatalf("truncate relative size mismatch gobox=%d native=%d", gi.Size(), ni.Size())
+		}
+	})
+
+	// TRUNCATE-shrink: -s -N shrinks the file by N bytes.
+	t.Run("TRUNCATE-shrink", func(t *testing.T) {
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "gobox"), "hello world") // 11 bytes
+		writeFile(t, filepath.Join(env, "native"), "hello world")
+		gobox := runGoboxCLI(t, env, "", "truncate", "-s", "-3", "gobox")
+		native := runNativeCLI(t, env, "", "truncate", "-s", "-3", "native")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("truncate shrink exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		gi, err := os.Stat(filepath.Join(env, "gobox"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ni, err := os.Stat(filepath.Join(env, "native"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gi.Size() != ni.Size() {
+			t.Fatalf("truncate shrink size mismatch gobox=%d native=%d", gi.Size(), ni.Size())
+		}
+		// 11 - 3 = 8 bytes expected.
+		if gi.Size() != 8 {
+			t.Fatalf("truncate shrink expected 8 bytes, got %d", gi.Size())
+		}
+	})
+
+	// TRUNCATE-multi: multiple file arguments set to the same size.
+	t.Run("TRUNCATE-multi", func(t *testing.T) {
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "f1"), "hello")
+		writeFile(t, filepath.Join(env, "f2"), "world123")
+		writeFile(t, filepath.Join(env, "f3"), "ab")
+		res := runGoboxCLI(t, env, "", "truncate", "-s", "0", "f1", "f2", "f3")
+		if res.ExitCode != 0 {
+			t.Fatalf("truncate multi exit %d: %+v", res.ExitCode, res)
+		}
+		for _, name := range []string{"f1", "f2", "f3"} {
+			fi, err := os.Stat(filepath.Join(env, name))
+			if err != nil {
+				t.Fatalf("stat %s: %v", name, err)
+			}
+			if fi.Size() != 0 {
+				t.Fatalf("truncate multi: %s should be 0 bytes, got %d", name, fi.Size())
+			}
+		}
+	})
+
+	// TRUNCATE-error: invalid size argument should produce non-zero exit and stderr.
+	t.Run("TRUNCATE-error", func(t *testing.T) {
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "f"), "data")
+		gobox := runGoboxMainCLI(t, env, "", "truncate", "-s", "invalid_size", "f")
+		native := runNativeCLI(t, env, "", "truncate", "-s", "invalid_size", "f")
+		if gobox.ExitCode == 0 {
+			t.Fatalf("TRUNCATE-error gobox should exit non-zero for invalid size, got 0")
+		}
+		if native.ExitCode == 0 {
+			t.Fatalf("TRUNCATE-error native should exit non-zero for invalid size, got 0")
+		}
+		if gobox.Stderr == "" {
+			t.Fatalf("TRUNCATE-error gobox should emit error message on stderr")
+		}
+		if native.Stderr == "" {
+			t.Fatalf("TRUNCATE-error native should emit error message on stderr")
+		}
+	})
+
+	// TRUNCATE-extend-content: extended region should be zero-padded.
+	t.Run("TRUNCATE-extend-content", func(t *testing.T) {
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "f"), "a")
+		if err := os.Truncate(filepath.Join(env, "f"), 4); err != nil {
+			t.Fatal(err)
+		}
+		content, err := os.ReadFile(filepath.Join(env, "f"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(content) != 4 {
+			t.Fatalf("extended file should be 4 bytes, got %d", len(content))
+		}
+		for i := 1; i < 4; i++ {
+			if content[i] != 0 {
+				t.Fatalf("extended byte %d should be zero, got %d", i, content[i])
+			}
 		}
 	})
 }
@@ -860,6 +1587,23 @@ func dfMountList(out string) string {
 	return strings.Join(mounts, "\n")
 }
 
+// dfMountSet returns the set of mount-point strings from df output (column = last field).
+func dfMountSet(out string) map[string]bool {
+	lines := nonEmptyLines(out)
+	if len(lines) < 2 {
+		return nil
+	}
+	s := make(map[string]bool)
+	for _, line := range lines[1:] {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		s[fields[len(fields)-1]] = true
+	}
+	return s
+}
+
 func statLineWithPrefix(out, prefix string) string {
 	for _, line := range nonEmptyLines(out) {
 		trimmed := strings.TrimSpace(line)
@@ -897,4 +1641,23 @@ func statFieldValue(lineOrOut, label string) string {
 		return ""
 	}
 	return strings.Trim(fields[0], "\"")
+}
+
+// statModeFromAccess extracts the four-digit octal mode from a native stat
+// "Access: (NNNN/-rw-...)" line, e.g. returns "0644".
+func statModeFromAccess(out string) string {
+	for _, line := range nonEmptyLines(out) {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "Access: (") {
+			continue
+		}
+		// Format: Access: (0644/-rw-r--r--)  Uid: ...
+		rest := strings.TrimPrefix(trimmed, "Access: (")
+		slash := strings.Index(rest, "/")
+		if slash < 0 {
+			continue
+		}
+		return rest[:slash]
+	}
+	return ""
 }
