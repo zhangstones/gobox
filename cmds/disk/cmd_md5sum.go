@@ -89,9 +89,21 @@ func Md5sumCmd(args []string) error {
 		return md5sumCheck(files, warn, status, quiet)
 	}
 
+	if quiet {
+		return md5sumQuietError{}
+	}
+
 	// Default: compute mode
 	return md5sumFiles(files, tag, quiet)
 }
+
+type md5sumQuietError struct{}
+
+func (md5sumQuietError) Error() string {
+	return "the --quiet option is meaningful only when verifying checksums"
+}
+func (md5sumQuietError) ExitCode() int          { return 1 }
+func (md5sumQuietError) SuppressCLIError() bool { return false }
 
 func md5sumStdin(tag, quiet bool) error {
 	h := md5.New()
@@ -237,7 +249,7 @@ func md5sumCheck(files []string, warn, status, quiet bool) error {
 
 			actualHash := fmt.Sprintf("%x", hash)
 
-			if !quiet {
+			if !quiet && !status {
 				if actualHash == expectedHash {
 					fmt.Printf("%s: OK\n", filename)
 				} else {

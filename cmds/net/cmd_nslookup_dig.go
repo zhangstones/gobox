@@ -2,6 +2,7 @@ package net
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -166,11 +167,17 @@ func lookupA(host string, resolver *net.Resolver) error {
 		}
 		return fmt.Errorf("lookup failed: %w", err)
 	}
+	hadV4 := false
 	for _, ip := range ips {
 		// Only show IPv4 addresses for A records
 		if net.ParseIP(ip).To4() != nil {
+			hadV4 = true
 			fmt.Printf("Name:   %s\nAddress: %s\n\n", host, ip)
 		}
+	}
+	if !hadV4 {
+		fmt.Printf("** server can't find %s: NXDOMAIN\n", host)
+		return errors.New("no A records found")
 	}
 	return nil
 }
@@ -184,13 +191,19 @@ func lookupAAAA(host string, resolver *net.Resolver) error {
 		return fmt.Errorf("lookup failed: %w", err)
 	}
 	fmt.Printf("Name:   %s\n", host)
+	hadV6 := false
 	for _, addr := range addrs {
 		ip := net.ParseIP(addr)
 		if ip != nil && ip.To4() == nil {
+			hadV6 = true
 			fmt.Printf("Address: %s\n", addr)
 		}
 	}
 	fmt.Println()
+	if !hadV6 {
+		fmt.Printf("** server can't find %s: NXDOMAIN\n", host)
+		return errors.New("no AAAA records found")
+	}
 	return nil
 }
 

@@ -264,24 +264,28 @@ func printNetstatSockets(allSockets, tcpOnly, udpOnly, unixOnly, listeningOnly, 
 	}
 
 	// Sorting
-	switch strings.ToLower(sortBy) {
-	case "recvq":
-		sort.Slice(conns, func(i, j int) bool { return conns[i].RxQueue > conns[j].RxQueue })
-	case "sendq":
-		sort.Slice(conns, func(i, j int) bool { return conns[i].TxQueue > conns[j].TxQueue })
-	case "local":
-		sort.Slice(conns, func(i, j int) bool { return conns[i].LocalPort < conns[j].LocalPort })
-	case "remote":
-		sort.Slice(conns, func(i, j int) bool { return conns[i].RemotePort < conns[j].RemotePort })
-	case "pid":
-		sort.Slice(conns, func(i, j int) bool {
-			pi := inodeToPid[conns[i].Inode]
-			pj := inodeToPid[conns[j].Inode]
-			if pi == pj {
-				return conns[i].Inode < conns[j].Inode
-			}
-			return pi < pj
-		})
+	if sortBy != "" {
+		switch strings.ToLower(sortBy) {
+		case "recvq":
+			sort.Slice(conns, func(i, j int) bool { return conns[i].RxQueue > conns[j].RxQueue })
+		case "sendq":
+			sort.Slice(conns, func(i, j int) bool { return conns[i].TxQueue > conns[j].TxQueue })
+		case "local":
+			sort.Slice(conns, func(i, j int) bool { return conns[i].LocalPort < conns[j].LocalPort })
+		case "remote":
+			sort.Slice(conns, func(i, j int) bool { return conns[i].RemotePort < conns[j].RemotePort })
+		case "pid":
+			sort.Slice(conns, func(i, j int) bool {
+				pi := inodeToPid[conns[i].Inode]
+				pj := inodeToPid[conns[j].Inode]
+				if pi == pj {
+					return conns[i].Inode < conns[j].Inode
+				}
+				return pi < pj
+			})
+		default:
+			return fmt.Errorf("invalid sort key %q (expected recvq|sendq|local|remote|pid)", sortBy)
+		}
 	}
 
 	rows := make([]netstatSocketRow, 0, len(conns))

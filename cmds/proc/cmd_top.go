@@ -34,7 +34,7 @@ func TopCmd(args []string) error {
 	fullCmd := fsFlags.Bool("c", false, "show full command lines")
 	orderBy := fsFlags.String("o", "", "sort by field")
 	sortBy := fsFlags.String("sort", "cpu", "sort by: pid|cpu|rss|vms|cmd")
-	rev := fsFlags.Bool("r", true, "reverse sort order")
+	rev := fsFlags.Bool("r", false, "reverse sort order")
 
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox top [OPTION]...")
@@ -68,11 +68,16 @@ func TopCmd(args []string) error {
 		*sortBy = normalizeTopOrderBy(*orderBy)
 	}
 	sortField, sortReverse := normalizePSSortField(*sortBy)
-	if sortReverse {
-		*rev = !*rev
-	}
 	if sortField == "" {
 		sortField = "cpu"
+	}
+	descendingDefault := topSortDefaultDescending(sortField)
+	effectiveRev := *rev
+	if sortReverse {
+		effectiveRev = !effectiveRev
+	}
+	if descendingDefault {
+		effectiveRev = !effectiveRev
 	}
 
 	iterations := *count
@@ -82,7 +87,7 @@ func TopCmd(args []string) error {
 	interactiveTTY := !*batch && utils.IsTerminal(os.Stdout)
 
 	if runtime.GOOS != "linux" {
-		return runTopViaPS(*batch, *pids, *users, *hideIdle, *fullCmd, sortField, *rev, delay, iterations)
+		return runTopViaPS(*batch, *pids, *users, *hideIdle, *fullCmd, sortField, effectiveRev, delay, iterations)
 	}
 
 	var pidFilter map[int]bool
@@ -133,7 +138,7 @@ func TopCmd(args []string) error {
 
 	i := 0
 	currentSort := sortField
-	currentReverse := *rev
+	currentReverse := effectiveRev
 	sortIndex := topSortColumnIndex(currentSort)
 	firstDraw := true
 	for {
@@ -692,6 +697,14 @@ func pluralSuffix(v int) string {
 
 func bytesToMiB(v uint64) float64 {
 	return float64(v) / 1024.0 / 1024.0
+}
+
+func topSortDefaultDescending(sortField string) bool {
+	switch sortField {
+	case "cpu", "pcpu", "rss", "vms", "size", "time", "etime", "pid", "ppid":
+		return true
+	}
+	return false
 }
 
 func topSortColumnIndex(sortField string) int {

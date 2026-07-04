@@ -77,7 +77,7 @@ func ipAddr(oneLine bool) error {
 				if strings.Contains(addr.String(), ":") {
 					fam = "inet6"
 				}
-				fmt.Printf("%d: %s    %s %s scope global %s\n", iface.Index, iface.Name, fam, addr.String(), iface.Name)
+				fmt.Printf("%d: %s    %s %s scope %s %s\n", iface.Index, iface.Name, fam, addr.String(), ipAddrScope(iface.Name, addr), iface.Name)
 			}
 			continue
 		}
@@ -104,7 +104,11 @@ func ipLink(stats bool) error {
 			state = "UP"
 		}
 		fmt.Printf("%d: %s: <%s> mtu %d state %s\n", iface.Index, iface.Name, iface.Flags.String(), iface.MTU, state)
-		fmt.Printf("    link/ether %s\n", iface.HardwareAddr.String())
+		if iface.Flags&net.FlagLoopback != 0 {
+			fmt.Printf("    link/loopback\n")
+		} else {
+			fmt.Printf("    link/ether %s\n", iface.HardwareAddr.String())
+		}
 		if stats {
 			s := readIfaceStats(iface.Name)
 			fmt.Printf("    RX: bytes %d packets %d errors %d dropped %d\n", s["rx_bytes"], s["rx_packets"], s["rx_errors"], s["rx_dropped"])
@@ -200,4 +204,19 @@ func ipNeighFromReader(r io.Reader) error {
 		fmt.Println(line)
 	}
 	return scanner.Err()
+}
+
+// ipAddrScope returns the scope name to print for an address on the given
+// interface. Loopback addresses (127.0.0.0/8, ::1) get scope host; link-local
+// addresses (169.254.0.0/16, fe80::/10) get scope link; everything else is
+// scope global.
+func ipAddrScope(ifName string, addr net.Addr) string {
+	s := addr.String()
+	if strings.HasPrefix(s, "127.") || s == "::1" || strings.HasPrefix(s, "::1/") {
+		return "host"
+	}
+	if strings.HasPrefix(s, "169.254.") || strings.HasPrefix(s, "fe80:") || strings.HasPrefix(s, "fe80::") {
+		return "link"
+	}
+	return "global"
 }

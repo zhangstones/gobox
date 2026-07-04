@@ -571,27 +571,29 @@ func TestMd5sumCmdQuietMode(t *testing.T) {
 		t.Fatalf("write test file: %v", err)
 	}
 
-	// -q flag in compute mode suppresses error messages
-	stdout, stderr, err := runMd5sumCmdFull([]string{"-q", testFile}, "")
-	if err != nil {
-		t.Fatalf("md5sum -q failed: %v, stdout=%q stderr=%q", err, stdout, stderr)
+	// Per GNU coreutils, --quiet is only meaningful in -c (check) mode.
+// In compute mode it must exit 1 with an error message.
+	stdout, _, err := runMd5sumCmdFull([]string{"-q", testFile}, "")
+	if err == nil {
+		t.Fatalf("md5sum -q in compute mode should fail, got nil error")
 	}
-	if stderr != "" {
-		t.Fatalf("expected quiet mode to suppress stderr, got %q", stderr)
+	if !strings.Contains(err.Error(), "--quiet") {
+		t.Errorf("expected error mentioning --quiet, got: %v", err)
 	}
-	if strings.TrimSpace(stdout) != "5d41402abc4b2a76b9719d911017c592" {
-		t.Fatalf("expected quiet mode to print only digest, got %q", stdout)
+	if stdout != "" {
+		t.Errorf("expected no stdout on -q in compute mode, got %q", stdout)
 	}
 }
 
 func TestMd5sumCmdQuietModeNonExistent(t *testing.T) {
-	// -q should suppress error messages
-	stdout, stderr, err := runMd5sumCmdFull([]string{"-q", "/nonexistent/file.txt"}, "")
-	if err != nil {
-		t.Fatalf("expected quiet compute mode missing file to stay non-fatal, got %v", err)
+	// Per GNU coreutils, --quiet is only meaningful in -c (check) mode.
+	// In compute mode it must exit 1 regardless of file existence.
+	_, _, err := runMd5sumCmdFull([]string{"-q", "/nonexistent/file.txt"}, "")
+	if err == nil {
+		t.Fatalf("md5sum -q in compute mode should fail, got nil error")
 	}
-	if stdout != "" || stderr != "" {
-		t.Fatalf("expected quiet mode to suppress output for missing file, stdout=%q stderr=%q", stdout, stderr)
+	if !strings.Contains(err.Error(), "--quiet") {
+		t.Errorf("expected error mentioning --quiet, got: %v", err)
 	}
 }
 
@@ -669,17 +671,15 @@ func TestMd5sumCmdCheckStatusMode(t *testing.T) {
 	}
 
 	// Use cmd.Dir to run command in the directory
-	// -s (status) mode returns error code but does NOT suppress output
-	// Only -q (quiet) suppresses the "file: OK/FAILED" output
+	// -s (status) mode per GNU coreutils must suppress all output (stdout and stderr),
+	// only the exit code conveys success/failure.
 	output, err := runMd5sumCmd([]string{"-c", "-s", "test.txt.md5"}, dir)
 	if err != nil {
 		t.Fatalf("md5sum -c -s failed: %v, output: %s", err, output)
 	}
 
-	result := string(output)
-	// Status mode does NOT suppress OK output - that only happens with quiet mode
-	if !strings.Contains(result, "test.txt: OK") {
-		t.Errorf("expected 'test.txt: OK' in output, got: %s", result)
+	if len(output) != 0 {
+		t.Errorf("--status must produce no output, got: %s", output)
 	}
 }
 
@@ -701,8 +701,8 @@ func TestMd5sumCmdCheckStatusModeFailure(t *testing.T) {
 
 	// Use cmd.Dir to run command in the directory
 	stdout, stderr, err := runMd5sumCmdFull([]string{"-c", "-s", "test.txt.md5"}, dir)
-	if !strings.Contains(stdout, "test.txt: FAILED") {
-		t.Fatalf("expected failed status output, stdout=%q stderr=%q", stdout, stderr)
+	if stdout != "" {
+		t.Fatalf("--status must produce no stdout on FAILED, got %q", stdout)
 	}
 	if stderr != "" {
 		t.Fatalf("expected no stderr for checksum mismatch, got %q", stderr)
@@ -803,15 +803,14 @@ func TestMd5sumCmdTagAndQuietTogether(t *testing.T) {
 		t.Fatalf("write test file: %v", err)
 	}
 
-	// Both --tag and -q should work together
-	output, err := runMd5sumCmd([]string{"--tag", "-q", testFile}, "")
-	if err != nil {
-		t.Fatalf("md5sum --tag -q failed: %v, output: %s", err, output)
+	// Per GNU coreutils, --quiet is only meaningful in -c (check) mode.
+	// In compute mode it must exit 1 with an error message.
+	_, err := runMd5sumCmd([]string{"--tag", "-q", testFile}, "")
+	if err == nil {
+		t.Fatalf("md5sum --tag -q in compute mode should fail, got nil error")
 	}
-
-	result := strings.TrimSpace(string(output))
-	if !strings.Contains(result, "MD5 (") {
-		t.Errorf("expected BSD style output, got: %s", result)
+	if !strings.Contains(err.Error(), "--quiet") {
+		t.Errorf("expected error mentioning --quiet, got: %v", err)
 	}
 }
 
