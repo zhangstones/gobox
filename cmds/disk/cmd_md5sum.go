@@ -233,6 +233,9 @@ func md5sumCheck(files []string, warn, status, quiet bool) error {
 				if !quiet {
 					fmt.Fprintf(os.Stderr, "md5sum: %s: %v\n", filename, err)
 				}
+				if !quiet && !status {
+					fmt.Printf("%s: FAILED open or read\n", filename)
+				}
 				hasError = true
 				continue
 			}

@@ -348,6 +348,7 @@ func totalDfRow(rows []dfRow, opts dfOptions) dfRow {
 		blockSize := uint64(st.Bsize)
 		total.stat.Blocks += (st.Blocks * blockSize) / 1024
 		total.stat.Bavail += (st.Bavail * blockSize) / 1024
+		total.stat.Bfree += (st.Bfree * blockSize) / 1024
 	}
 	return total
 }

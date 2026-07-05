@@ -17,7 +17,7 @@ import (
 )
 
 // O_DIRECT flag value for Linux
-const O_DIRECT = 0x40000
+const O_DIRECT = 0x4000
 
 // O_DSYNC flag value for Linux
 const O_DSYNC = 0x1000
@@ -202,7 +202,6 @@ func IoperfCmd(args []string) error {
 		wg.Add(1)
 		go func(jid int) {
 			defer wg.Done()
-			result := jobResult{jobID: jid}
 
 			// Create job-specific filename
 			jobFilename := *filename
@@ -221,7 +220,7 @@ func IoperfCmd(args []string) error {
 			file, err := os.OpenFile(jobFilename, fileFlags, 0644)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "ioperf: job %d: failed to open %s: %v\n", jid, jobFilename, err)
-				resultChan <- result
+				resultChan <- jobResult{jobID: jid}
 				return
 			}
 			defer file.Close()
@@ -230,26 +229,23 @@ func IoperfCmd(args []string) error {
 			if *rwMode == "write" || *rwMode == "randwrite" || *rwMode == "readwrite" {
 				if err := file.Truncate(sizeBytes); err != nil {
 					fmt.Fprintf(os.Stderr, "ioperf: job %d: truncate %s: %v\n", jid, jobFilename, err)
-					resultChan <- result
+					resultChan <- jobResult{jobID: jid}
 					return
 				}
 			}
 
-			// Allocate buffer for I/O
-			buf := make([]byte, bsBytes)
-			for i := range buf {
-				buf[i] = byte(i % 256)
-			}
-
-			// Track position for sequential modes
-			var pos int64 = 0
 			maxPos := sizeBytes - bsBytes
 			if maxPos < 0 {
 				maxPos = 0
 			}
+			numBlocks := sizeBytes / bsBytes
+			if numBlocks < 1 {
+				numBlocks = 1
+			}
 
-			// Track ops for time-based mode
+			// Track ops for time-based mode; shared across concurrent iodepth workers.
 			var opsCompleted int64
+			var sharedBlockIdx int64
 			startTime := time.Now()
 			deadline := startTime.Add(runDuration)
 
@@ -262,108 +258,116 @@ func IoperfCmd(args []string) error {
 				}
 			}
 
-			// Random for randread/randwrite
-			rng := NewRand(int64(jid)*1234567 + time.Now().UnixNano())
-
 			depth := *ioDepth
 			if depth < 1 {
 				depth = 1
 			}
 
-			// Main I/O loop
-			for {
-				// Check exit conditions
-				if *timeBased {
-					if time.Now().After(deadline) {
-						break
-					}
-				} else {
-					if atomic.LoadInt64(&opsCompleted) >= totalOps {
-						break
-					}
-				}
+			// Each iodepth slot runs as its own concurrent worker so --iodepth
+			// actually submits multiple in-flight I/Os instead of one at a time.
+			var workerWG sync.WaitGroup
+			var resultMu sync.Mutex
+			aggResult := jobResult{jobID: jid}
 
-				// Rate limiting check
-				if rateLimitOps > 0 {
-					currentOps := atomic.LoadInt64(&opsCompleted)
-					if currentOps > 0 && currentOps%rateLimitOps == 0 {
-						time.Sleep(1 * time.Millisecond)
-					}
-				}
+			for workerID := 0; workerID < depth; workerID++ {
+				workerWG.Add(1)
+				go func(wid int) {
+					defer workerWG.Done()
 
-				for qd := 0; qd < depth; qd++ {
-					if *timeBased {
-						if time.Now().After(deadline) {
+					buf := make([]byte, bsBytes)
+					for i := range buf {
+						buf[i] = byte(i % 256)
+					}
+					rng := NewRand(int64(jid)*1234567 + int64(wid)*7654321 + time.Now().UnixNano())
+
+					var readOps, writeOps int64
+					var readBytes, writeBytes int64
+					var readLatencies, writeLatencies []int64
+
+					for {
+						if *timeBased {
+							if time.Now().After(deadline) {
+								break
+							}
+						} else if atomic.LoadInt64(&opsCompleted) >= totalOps {
 							break
 						}
-					} else if atomic.LoadInt64(&opsCompleted) >= totalOps {
-						break
-					}
 
-					// Determine operation type for readwrite mode
-					var isRead bool
-					switch *rwMode {
-					case "read", "randread":
-						isRead = true
-					case "write", "randwrite":
-						isRead = false
-					case "readwrite":
-						isRead = (rng.Int63n(100) < int64(*rwMixRead))
-					}
-
-					// Calculate offset
-					var offset int64
-					if *rwMode == "randread" || *rwMode == "randwrite" {
-						offset = (rng.Int63n(maxPos+1) / bsBytes) * bsBytes
-					} else {
-						offset = pos
-						pos += bsBytes
-						if pos >= sizeBytes {
-							pos = 0
+						if rateLimitOps > 0 {
+							currentOps := atomic.LoadInt64(&opsCompleted)
+							if currentOps > 0 && currentOps%rateLimitOps == 0 {
+								time.Sleep(1 * time.Millisecond)
+							}
 						}
-					}
 
-					// Perform I/O
-					ioStart := time.Now()
-					var n int
-					var ioErr error
-
-					if isRead {
-						n, ioErr = file.ReadAt(buf, offset)
-						if ioErr == io.EOF {
-							ioErr = nil
+						// Determine operation type for readwrite mode
+						var isRead bool
+						switch *rwMode {
+						case "read", "randread":
+							isRead = true
+						case "write", "randwrite":
+							isRead = false
+						case "readwrite":
+							isRead = (rng.Int63n(100) < int64(*rwMixRead))
 						}
-					} else {
-						n, ioErr = file.WriteAt(buf, offset)
-						if *fsync == 1 && ioErr == nil {
-							file.Sync()
+
+						// Calculate offset
+						var offset int64
+						if *rwMode == "randread" || *rwMode == "randwrite" {
+							offset = (rng.Int63n(maxPos+1) / bsBytes) * bsBytes
+						} else {
+							idx := atomic.AddInt64(&sharedBlockIdx, 1) - 1
+							offset = (idx % numBlocks) * bsBytes
 						}
-					}
-					ioDuration := time.Since(ioStart).Nanoseconds()
 
-					atomic.AddInt64(&opsCompleted, 1)
+						// Perform I/O
+						ioStart := time.Now()
+						var n int
+						var ioErr error
 
-					if ioErr != nil {
-						if isRead && ioErr != io.EOF {
+						if isRead {
+							n, ioErr = file.ReadAt(buf, offset)
+							if ioErr == io.EOF {
+								ioErr = nil
+							}
+						} else {
+							n, ioErr = file.WriteAt(buf, offset)
+							if *fsync == 1 && ioErr == nil {
+								file.Sync()
+							}
+						}
+						ioDuration := time.Since(ioStart).Nanoseconds()
+
+						atomic.AddInt64(&opsCompleted, 1)
+
+						if ioErr != nil {
 							continue
 						}
-						continue
+
+						if isRead {
+							readOps++
+							readBytes += int64(n)
+							readLatencies = append(readLatencies, ioDuration)
+						} else {
+							writeOps++
+							writeBytes += int64(n)
+							writeLatencies = append(writeLatencies, ioDuration)
+						}
 					}
 
-					// Record stats (result is goroutine-local, no atomic needed)
-					if isRead {
-						result.readOps++
-						result.readBytes += int64(n)
-						result.readLatencies = append(result.readLatencies, ioDuration)
-					} else {
-						result.writeOps++
-						result.writeBytes += int64(n)
-						result.writeLatencies = append(result.writeLatencies, ioDuration)
-					}
-				}
+					resultMu.Lock()
+					aggResult.readOps += readOps
+					aggResult.writeOps += writeOps
+					aggResult.readBytes += readBytes
+					aggResult.writeBytes += writeBytes
+					aggResult.readLatencies = append(aggResult.readLatencies, readLatencies...)
+					aggResult.writeLatencies = append(aggResult.writeLatencies, writeLatencies...)
+					resultMu.Unlock()
+				}(workerID)
 			}
 
-			resultChan <- result
+			workerWG.Wait()
+			resultChan <- aggResult
 		}(jobID)
 	}
 

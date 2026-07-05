@@ -186,7 +186,7 @@ func duFileSize(info fs.FileInfo, apparent bool) int64 {
 	if apparent {
 		return info.Size()
 	}
-	if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Blocks > 0 {
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
 		return st.Blocks * 512
 	}
 	return info.Size()

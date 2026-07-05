@@ -19,6 +19,9 @@ func (e ExitCodeError) Error() string {
 	return fmt.Sprintf("exit code %d", int(e))
 }
 
+func (e ExitCodeError) ExitCode() int          { return int(e) }
+func (e ExitCodeError) SuppressCLIError() bool { return true }
+
 var errExitQuiet = ExitCodeError(1)
 
 type grepOptions struct {
@@ -250,7 +253,7 @@ func GrepCmd(args []string) error {
 		}
 	}
 
-	if opts.quiet && !matchedAny {
+	if !matchedAny {
 		return errExitQuiet
 	}
 	return nil

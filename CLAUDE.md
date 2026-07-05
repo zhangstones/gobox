@@ -174,6 +174,5 @@ For current command support and planned work:
 ## Git Commit Guidelines
 
 **Consolidate interim changes**: Use `git rebase -i` or `git commit --amend` to merge non-substantive, consecutive micro-commits.
-- Documentation changes (README.md, PLAN.md) should be squashed into the feature commit they belong to
-- Avoid fragmenting PRs with "docs: fix typo", "docs: update example" style commits
-- Each commit should be atomic and self-contained
+
+**Short commit messages**: Every commit message must be a single short summary line. No multi-paragraph bodies, bullet lists, or verbose explanations of what changed — keep the "why" in the PR description instead.

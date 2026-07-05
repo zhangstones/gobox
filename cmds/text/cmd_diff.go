@@ -430,18 +430,118 @@ func normalRange(start, count int) string {
 	return fmt.Sprintf("%d,%d", start, start+count-1)
 }
 
+const diffContextLines = 3
+
+type diffHunk struct {
+	ops                []diffOp
+	oldStart, oldCount int
+	newStart, newCount int
+}
+
+// buildUnifiedHunks groups changed regions into unified-diff hunks, splitting
+// non-adjacent changes into separate hunks (matching GNU diff) instead of
+// merging everything between the first and last change into a single hunk.
+func buildUnifiedHunks(ops []diffOp) []diffHunk {
+	if len(ops) == 0 {
+		return nil
+	}
+
+	oldLineNum := make([]int, len(ops))
+	newLineNum := make([]int, len(ops))
+	ol, nl := 1, 1
+	for i, op := range ops {
+		oldLineNum[i] = ol
+		newLineNum[i] = nl
+		switch op.kind {
+		case ' ':
+			ol++
+			nl++
+		case '-':
+			ol++
+		case '+':
+			nl++
+		}
+	}
+
+	var runs [][2]int
+	for i := 0; i < len(ops); {
+		if ops[i].kind == ' ' {
+			i++
+			continue
+		}
+		start := i
+		for i < len(ops) && ops[i].kind != ' ' {
+			i++
+		}
+		runs = append(runs, [2]int{start, i})
+	}
+	if len(runs) == 0 {
+		return nil
+	}
+
+	groups := [][2]int{runs[0]}
+	for _, r := range runs[1:] {
+		last := &groups[len(groups)-1]
+		if r[0]-last[1] <= 2*diffContextLines {
+			last[1] = r[1]
+		} else {
+			groups = append(groups, r)
+		}
+	}
+
+	hunks := make([]diffHunk, 0, len(groups))
+	prevEnd := 0
+	for _, g := range groups {
+		start := g[0] - diffContextLines
+		if start < prevEnd {
+			start = prevEnd
+		}
+		if start < 0 {
+			start = 0
+		}
+		end := g[1] + diffContextLines
+		if end > len(ops) {
+			end = len(ops)
+		}
+		hunkOps := ops[start:end]
+		var oldCount, newCount int
+		for _, op := range hunkOps {
+			switch op.kind {
+			case ' ':
+				oldCount++
+				newCount++
+			case '-':
+				oldCount++
+			case '+':
+				newCount++
+			}
+		}
+		hunks = append(hunks, diffHunk{
+			ops:      hunkOps,
+			oldStart: oldLineNum[start],
+			oldCount: oldCount,
+			newStart: newLineNum[start],
+			newCount: newCount,
+		})
+		prevEnd = end
+	}
+	return hunks
+}
+
 func printUnifiedDiff(oldName, newName string, ops []diffOp, oldCount, newCount int) {
 	fmt.Printf("--- %s\n", oldName)
 	fmt.Printf("+++ %s\n", newName)
-	fmt.Printf("@@ -%s +%s @@\n", unifiedRange(1, oldCount), unifiedRange(1, newCount))
-	for _, op := range ops {
-		switch op.kind {
-		case ' ':
-			fmt.Printf(" %s\n", op.old.text)
-		case '-':
-			fmt.Printf("-%s\n", op.old.text)
-		case '+':
-			fmt.Printf("+%s\n", op.new.text)
+	for _, h := range buildUnifiedHunks(ops) {
+		fmt.Printf("@@ -%s +%s @@\n", unifiedRange(h.oldStart, h.oldCount), unifiedRange(h.newStart, h.newCount))
+		for _, op := range h.ops {
+			switch op.kind {
+			case ' ':
+				fmt.Printf(" %s\n", op.old.text)
+			case '-':
+				fmt.Printf("-%s\n", op.old.text)
+			case '+':
+				fmt.Printf("+%s\n", op.new.text)
+			}
 		}
 	}
 }

@@ -62,6 +62,12 @@ type psBSDMode struct {
 	userFormat   bool
 }
 
+type psNoMatchError struct{}
+
+func (psNoMatchError) Error() string          { return "no processes matched" }
+func (psNoMatchError) ExitCode() int          { return 1 }
+func (psNoMatchError) SuppressCLIError() bool { return true }
+
 func PsCmd(args []string) error {
 	args, bsdMode := normalizePSArgs(args)
 	fsFlags := flag.NewFlagSet("ps", flag.ContinueOnError)
@@ -157,12 +163,16 @@ func PsCmd(args []string) error {
 			return psFallback(fsFlags, all, full)
 		}
 		hasSelection := hasPSSelection(*all, bsdMode, *pidFilter, *userFilter, *commandFilter)
+		var pidOrCommandNoMatch bool
 		if !hasSelection {
 			infos = applyPSDefaultSelection(infos)
 		} else {
 			infos, err = applyPSExplicitSelections(infos, *all, bsdMode, *pidFilter, *userFilter, *commandFilter)
 			if err != nil {
 				return err
+			}
+			if (*pidFilter != "" || *commandFilter != "") && len(infos) == 0 {
+				pidOrCommandNoMatch = true
 			}
 		}
 		if *hideIdle {
@@ -210,22 +220,27 @@ func PsCmd(args []string) error {
 
 		memTotal := readMemTotalBytes()
 
+		var exitErr error
+		if pidOrCommandNoMatch {
+			exitErr = psNoMatchError{}
+		}
+
 		// print
 		if len(customFields) > 0 {
 			printCustomPS(infos, customFields, *maxCmd, memTotal, ttyWidth)
-			return nil
+			return exitErr
 		}
 		if *extendedFull {
 			printCustomPS(infos, []string{"uid", "pid", "ppid", "pcpu", "pmem", "vsz", "rss", "tty", "stat", "start", "time", "args"}, *maxCmd, memTotal, ttyWidth)
-			return nil
+			return exitErr
 		}
 		if *longFormat {
 			printCustomPS(infos, []string{"pid", "ppid", "stat", "tty", "time", "args"}, *maxCmd, memTotal, ttyWidth)
-			return nil
+			return exitErr
 		}
 		if *full {
 			printPSFullFormat(infos, *maxCmd, ttyWidth)
-			return nil
+			return exitErr
 		}
 
 		rows := make([][]string, 0, len(infos))
@@ -245,7 +260,7 @@ func PsCmd(args []string) error {
 			})
 		}
 		printPSAlignedTableWithHeaders([]string{"PID", "%CPU", "RSS", "VMS", "CMD"}, rows, ttyWidth)
-		return nil
+		return exitErr
 	}
 
 	// Non-Linux fallback using go-ps (limited info)

@@ -550,7 +550,7 @@ func ncBenchmarkClient(host, port string, udp, verbose, numericOnly, forceIPv4, 
 			}
 
 			data := make([]byte, blockSize)
-			for i := 0; i < requestsPerConn; i++ {
+			for i := 0; useDuration || i < requestsPerConn; i++ {
 				// Check if we should stop (duration mode)
 				if useDuration && time.Now().After(stopTime) {
 					break
@@ -628,6 +628,17 @@ func ncBenchmarkClient(host, port string, udp, verbose, numericOnly, forceIPv4, 
 			reportNum++
 		case <-doneChan:
 			ticker.Stop()
+			// If all workers finished at (or after) the first interval boundary
+			// but before the ticker itself fired, still emit that interval's
+			// report so output is deterministic regardless of scheduling jitter.
+			tailDuration := time.Since(startTime)
+			if reportNum == 1 && tailDuration.Seconds() >= float64(reportInterval)-0.05 {
+				bytesPerSec := float64(totalBytes-oldTotalBytes) / tailDuration.Seconds()
+				intervalStr := fmt.Sprintf("[%2d] %.1f-%.1fs", reportNum, 0.0, tailDuration.Seconds())
+				transferStr := formatBytes(totalBytes)
+				bandwidthStr := formatBandwidth(bytesPerSec)
+				fmt.Printf("%s  %-12s  %-12s\n", intervalStr, transferStr, bandwidthStr)
+			}
 			finished = true
 		}
 	}
