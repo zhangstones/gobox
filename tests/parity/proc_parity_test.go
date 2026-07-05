@@ -329,22 +329,38 @@ func TestParity_TopCases(t *testing.T) {
 			}
 			basePIDs := extractLeadingInts(topProcessLines(base.Stdout))
 			resPIDs := extractLeadingInts(topProcessLines(res.Stdout))
-			nativePIDs := extractLeadingInts(topProcessLines(native.Stdout))
 			if len(basePIDs) == 0 || len(resPIDs) == 0 {
 				t.Fatalf("%s expected process rows in both baseline and variant\n--- base ---\n%s\n--- variant ---\n%s", tc.id, base.Stdout, res.Stdout)
 			}
 			switch tc.id {
 			case "TOP-003":
-				// top default sort is by %CPU; -r reverses direction.
-				// -r is now a real flag. Process count parity between gobox and
-				// native can fluctuate by 1 due to short-lived processes between
-				// concurrent invocations, so we allow a small tolerance.
-				if abs(len(resPIDs)-len(basePIDs)) > 1 {
-					t.Fatalf("TOP-003 -r should keep similar row count vs baseline: %d vs %d", len(resPIDs), len(basePIDs))
+				// top default sort is by %CPU (descending); -r must reverse
+				// that to ascending. Comparing row counts or PID sets across
+				// two separate top invocations is inherently racy on a live
+				// host (process churn between the two snapshots), so verify
+				// each invocation's own %CPU column monotonicity instead --
+				// that is a property of a single sort call and doesn't
+				// depend on the two snapshots agreeing on which processes
+				// exist (TEST-DESIGN.md §11.2: sort params must be verified
+				// by real column value, not row/PID-set comparison).
+				baseHeaderIdx := topHeaderIndex(base.Stdout)
+				resHeaderIdx := topHeaderIndex(res.Stdout)
+				baseLines := nonEmptyLines(base.Stdout)
+				resLines := nonEmptyLines(res.Stdout)
+				// gobox's top wraps the active sort column's header token in
+				// brackets (e.g. "[%CPU]"); strip that so the plain "%CPU"
+				// header lookup below matches regardless of which column is
+				// currently the active sort key.
+				unbracketHeader := func(h string) string {
+					return strings.NewReplacer("[%CPU]", "%CPU", "[%MEM]", "%MEM", "[PID]", "PID").Replace(h)
 				}
-				if abs(len(resPIDs)-len(nativePIDs)) > 2 {
-					t.Fatalf("TOP-003 -r row count diverged from native: %d vs %d", len(resPIDs), len(nativePIDs))
+				baseCPU := extractFloatColumn(t, unbracketHeader(baseLines[baseHeaderIdx]), baseLines[baseHeaderIdx+1:], "%CPU")
+				resCPU := extractFloatColumn(t, unbracketHeader(resLines[resHeaderIdx]), resLines[resHeaderIdx+1:], "%CPU")
+				if len(baseCPU) < 2 || len(resCPU) < 2 {
+					t.Skip("TOP-003: not enough distinct %CPU values in this environment to prove sort direction")
 				}
+				assertMonotonicFloat(t, baseCPU, true)
+				assertMonotonicFloat(t, resCPU, false)
 			case "TOP-004":
 				assertMonotonic(t, resPIDs, true)
 			}
@@ -505,12 +521,26 @@ func TestParity_TopCases(t *testing.T) {
 
 func TestParity_PsCases(t *testing.T) {
 	t.Run("PS-001", func(t *testing.T) {
-		markerCmd := startExactNameProcess(t, "psedefault")
+		// The core assertion for PS-001 is that the *default* CMD column
+		// (i.e. without -o overriding the column set) renders comm-style
+		// (short executable name), matching native `ps -e`'s default
+		// convention -- not the full argv/cmdline. startMarkerProcess uses
+		// `exec -a parity-ps-001 sleep 30`: this only rewrites argv[0], so
+		// /proc/<pid>/comm (and hence gobox's comm-style CMD) stays "sleep",
+		// while the full cmdline would read "parity-ps-001 30". Passing
+		// `-o pid,cmd` here would defeat the point, since the "cmd" output
+		// field always renders full cmdline (see cmds/proc renderPSField),
+		// so we must NOT pass -o for this case.
+		markerCmd := startMarkerProcess(t, "parity-ps-001")
 		defer stopCmd(markerCmd)
 		env := t.TempDir()
 		markerPID := strconv.Itoa(markerCmd.Process.Pid)
-		gobox := runGoboxCLI(t, env, "", "ps", "-e", "-o", "pid,cmd", "--sort", "-pid", "-n", "20", "-i", "1", "-ww")
-		native := runNativeCLI(t, env, "", "ps", "-e", "-o", "pid,cmd", "--sort", "-pid")
+		// -n is intentionally omitted (0 = show all): a fixed cap like -n 50
+		// would non-deterministically exclude the marker PID depending on
+		// host process count and sort order, unrelated to what -e/CMD
+		// formatting actually tests.
+		gobox := runGoboxCLI(t, env, "", "ps", "-e", "-i", "1")
+		native := runNativeCLI(t, env, "", "ps", "-e", "-o", "pid,comm")
 		if gobox.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("ps -e failed gobox=%+v native=%+v", gobox, native)
 		}
@@ -519,27 +549,31 @@ func TestParity_PsCases(t *testing.T) {
 		if len(goboxLines) < 2 || len(nativeLines) < 2 {
 			t.Fatalf("ps -e output too short\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
 		}
-		if got, want := strings.Fields(goboxLines[0]), strings.Fields(nativeLines[0]); !reflect.DeepEqual(got, want) {
-			t.Fatalf("ps -e header mismatch\ngobox=%v\nnative=%v\n--- gobox ---\n%s\n--- native ---\n%s", got, want, gobox.Stdout, native.Stdout)
-		}
-		goboxCmd, ok := extractColumnByPID(gobox.Stdout, markerPID, 1)
+		goboxCmd, ok := extractColumnByPIDHeader(gobox.Stdout, markerPID, "CMD")
 		if !ok {
 			t.Fatalf("gobox ps -e missing marker pid %s\n%s", markerPID, gobox.Stdout)
 		}
-		nativeCmd, ok := extractColumnByPID(native.Stdout, markerPID, 1)
+		nativeComm, ok := extractColumnByPIDHeader(native.Stdout, markerPID, "COMMAND")
 		if !ok {
-			t.Fatalf("native ps -e missing marker pid %s\n%s", markerPID, native.Stdout)
+			t.Fatalf("native ps -e -o pid,comm missing marker pid %s\n%s", markerPID, native.Stdout)
 		}
-		if goboxCmd != nativeCmd {
-			t.Fatalf("ps -e should match native cmd column for marker pid %s\ngobox=%q\nnative=%q", markerPID, goboxCmd, nativeCmd)
+		if goboxCmd != nativeComm {
+			t.Fatalf("ps -e default CMD column should match native comm-style rendering for marker pid %s\ngobox=%q\nnative comm=%q", markerPID, goboxCmd, nativeComm)
+		}
+		if strings.Contains(goboxCmd, "parity-ps-001") {
+			t.Fatalf("ps -e default CMD column should be comm-style (executable name), not the rewritten argv0 %q: got %q", "parity-ps-001", goboxCmd)
 		}
 	})
 
 	t.Run("PS-002", func(t *testing.T) {
 		requireNativeCommand(t, "ps")
 		env := &parityEnv{Dir: t.TempDir()}
-		base := runGoboxCLI(t, env.Dir, "", "ps", "-n", "5", "-i", "1")
-		gobox := runGoboxCLI(t, env.Dir, "", "ps", "-f", "-n", "5", "-i", "1")
+		// -n is intentionally omitted (0 = show all): a fixed cap like -n 5
+		// would non-deterministically exclude the current test process
+		// (looked up by its real PID below) depending on host process count
+		// and sort order.
+		base := runGoboxCLI(t, env.Dir, "", "ps", "-i", "1")
+		gobox := runGoboxCLI(t, env.Dir, "", "ps", "-f", "-i", "1")
 		native := runNativeCLI(t, env.Dir, "", "ps", "-f")
 		if base.ExitCode != 0 || gobox.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("ps command failed base=%+v gobox=%+v native=%+v", base, gobox, native)
@@ -568,6 +602,26 @@ func TestParity_PsCases(t *testing.T) {
 				t.Fatalf("gobox ps -f row too short: %q", line)
 			}
 		}
+		// Verify PPID actually carries a real parent PID rather than merely
+		// existing as a column name (TEST-DESIGN.md §11.3): the current test
+		// process's own PPID must match os.Getppid() in both gobox and
+		// native output.
+		pid := strconv.Itoa(os.Getpid())
+		wantPPID := strconv.Itoa(os.Getppid())
+		goboxPPID, ok := extractColumnByPIDHeader(gobox.Stdout, pid, "PPID")
+		if !ok {
+			t.Fatalf("gobox ps -f missing current process pid %s\n%s", pid, gobox.Stdout)
+		}
+		if goboxPPID != wantPPID {
+			t.Fatalf("gobox ps -f PPID column should carry the real parent pid: got %q want %q", goboxPPID, wantPPID)
+		}
+		nativePPID, ok := extractColumnByPIDHeader(native.Stdout, pid, "PPID")
+		if !ok {
+			t.Fatalf("native ps -f missing current process pid %s\n%s", pid, native.Stdout)
+		}
+		if nativePPID != wantPPID {
+			t.Fatalf("native ps -f PPID column should carry the real parent pid: got %q want %q", nativePPID, wantPPID)
+		}
 	})
 
 	t.Run("PS-003", func(t *testing.T) {
@@ -594,13 +648,32 @@ func TestParity_PsCases(t *testing.T) {
 	t.Run("PS-004", func(t *testing.T) {
 		markerCmd := startMarkerProcess(t, "parity-ps-trunc")
 		defer stopCmd(markerCmd)
-		shortRes := runGoboxCLI(t, t.TempDir(), "", "ps", "--full", "parity-ps-trunc", "-f", "-n", "1", "--maxcmd", "8", "-i", "1")
+		pid := strconv.Itoa(markerCmd.Process.Pid)
+		const maxCmd = 8
+		shortRes := runGoboxCLI(t, t.TempDir(), "", "ps", "--full", "parity-ps-trunc", "-f", "-n", "1", "--maxcmd", strconv.Itoa(maxCmd), "-i", "1")
 		wideRes := runGoboxCLI(t, t.TempDir(), "", "ps", "--full", "parity-ps-trunc", "-f", "-n", "1", "-ww", "-i", "1")
 		if shortRes.ExitCode != 0 || wideRes.ExitCode != 0 {
 			t.Fatalf("ps truncation failed short=%+v wide=%+v", shortRes, wideRes)
 		}
-		if len(lastLine(shortRes.Stdout)) >= len(lastLine(wideRes.Stdout)) {
-			t.Fatalf("expected truncated output to be shorter\nshort=%q\nwide=%q", shortRes.Stdout, wideRes.Stdout)
+		shortCmd, ok := extractColumnByPIDHeader(shortRes.Stdout, pid, "CMD")
+		if !ok {
+			t.Fatalf("ps --maxcmd missing marker pid %s\n%s", pid, shortRes.Stdout)
+		}
+		// truncateString(s, 8) yields exactly 8 runes (5 kept + "...") when
+		// the source is longer than 8, so the truncated length must exactly
+		// equal --maxcmd's value, not merely be "shorter than baseline".
+		if len(shortCmd) != maxCmd {
+			t.Fatalf("ps --maxcmd %d should truncate CMD to exactly %d characters, got %d: %q", maxCmd, maxCmd, len(shortCmd), shortCmd)
+		}
+		if !strings.HasSuffix(shortCmd, "...") {
+			t.Fatalf("ps --maxcmd %d truncated CMD should end with an ellipsis, got %q", maxCmd, shortCmd)
+		}
+		wideCmd, ok := extractColumnByPIDHeader(wideRes.Stdout, pid, "CMD")
+		if !ok {
+			t.Fatalf("ps -ww missing marker pid %s\n%s", pid, wideRes.Stdout)
+		}
+		if len(wideCmd) <= len(shortCmd) {
+			t.Fatalf("expected truncated output to be shorter\nshort=%q\nwide=%q", shortCmd, wideCmd)
 		}
 	})
 
@@ -609,8 +682,12 @@ func TestParity_PsCases(t *testing.T) {
 		if res.ExitCode != 0 {
 			t.Fatalf("ps -n failed: %+v", res)
 		}
-		if lines := nonEmptyLines(res.Stdout); len(lines) > 3 {
-			t.Fatalf("ps -n expected header + 2 rows max, got %d lines: %q", len(lines), res.Stdout)
+		// The host always has at least 2 live processes (this test binary
+		// plus at least its parent/init), so -n 2 must truncate to exactly
+		// header + 2 rows -- not 0 or 1, proving truncation actually
+		// happened rather than merely staying under an upper bound.
+		if lines := nonEmptyLines(res.Stdout); len(lines) != 3 {
+			t.Fatalf("ps -n 2 expected header + exactly 2 rows (3 lines), got %d lines: %q", len(lines), res.Stdout)
 		}
 	})
 
@@ -687,24 +764,53 @@ func TestParity_PsCases(t *testing.T) {
 	})
 
 	t.Run("PS-009", func(t *testing.T) {
+		// A bare, non-tty baseline already renders unlimited command width
+		// (see cmds/proc/cmd_ps.go's non-tty maxCmd=0 auto-relaxation), so
+		// contrasting -ww against a flagless baseline can never actually
+		// exercise -ww's truncation-disabling effect under this test
+		// harness. Force a small explicit --maxcmd on both runs so -ww's
+		// override behavior is genuinely observable.
 		markerCmd := startMarkerProcess(t, "parity-ps-wide-case")
 		defer stopCmd(markerCmd)
-		base := runGoboxCLI(t, t.TempDir(), "", "ps", "--full", "parity-ps-wide-case", "-f", "-n", "1", "-i", "1")
-		wide := runGoboxCLI(t, t.TempDir(), "", "ps", "--full", "parity-ps-wide-case", "-f", "-n", "1", "-ww", "-i", "1")
+		pid := strconv.Itoa(markerCmd.Process.Pid)
+		const maxCmd = 8
+		base := runGoboxCLI(t, t.TempDir(), "", "ps", "--full", "parity-ps-wide-case", "-f", "-n", "1", "--maxcmd", strconv.Itoa(maxCmd), "-i", "1")
+		wide := runGoboxCLI(t, t.TempDir(), "", "ps", "--full", "parity-ps-wide-case", "-f", "-n", "1", "--maxcmd", strconv.Itoa(maxCmd), "-ww", "-i", "1")
 		if base.ExitCode != 0 || wide.ExitCode != 0 {
 			t.Fatalf("ps -ww failed base=%+v wide=%+v", base, wide)
 		}
-		if len(lastLine(wide.Stdout)) < len(lastLine(base.Stdout)) {
-			t.Fatalf("ps -ww should not shorten command output\n--- base ---\n%s\n--- -ww ---\n%s", base.Stdout, wide.Stdout)
+		baseCmd, ok := extractColumnByPIDHeader(base.Stdout, pid, "CMD")
+		if !ok {
+			t.Fatalf("ps -f missing marker pid %s in --maxcmd baseline\n%s", pid, base.Stdout)
 		}
-		if !strings.Contains(wide.Stdout, "parity-ps-wide-case") {
-			t.Fatalf("ps -ww should preserve full command marker\n%s", wide.Stdout)
+		wideCmd, ok := extractColumnByPIDHeader(wide.Stdout, pid, "CMD")
+		if !ok {
+			t.Fatalf("ps -f missing marker pid %s in -ww output\n%s", pid, wide.Stdout)
+		}
+		if len(baseCmd) != maxCmd {
+			t.Fatalf("--maxcmd %d baseline should truncate to exactly %d characters, got %d: %q", maxCmd, maxCmd, len(baseCmd), baseCmd)
+		}
+		if strings.HasSuffix(wideCmd, "...") {
+			t.Fatalf("ps -ww should override --maxcmd truncation entirely (no ellipsis), got %q", wideCmd)
+		}
+		if len(wideCmd) <= len(baseCmd) {
+			t.Fatalf("ps -ww should not shorten command output relative to the truncated baseline\nbase=%q\nwide=%q", baseCmd, wideCmd)
+		}
+		if !strings.Contains(wideCmd, "parity-ps-wide-case") {
+			t.Fatalf("ps -ww should preserve full command marker, got %q", wideCmd)
 		}
 	})
 
 	t.Run("PS-010", func(t *testing.T) {
 		env := &parityEnv{Dir: t.TempDir()}
-		fields := "pid,ppid,cmd,pcpu,pmem"
+		// "cmd" is placed last in the field list (matching real ps -o
+		// convention) because it is the only variable-width field that can
+		// contain embedded spaces (the current test binary's own command
+		// line, e.g. "-test.testlogfile=..."); putting it before %CPU/%MEM
+		// would break the position-based `strings.Fields` column extraction
+		// used by extractColumnByPIDHeader below, misattributing a CMD
+		// fragment to the %CPU/%MEM columns.
+		fields := "pid,ppid,pcpu,pmem,cmd"
 		res := runGoboxCLI(t, env.Dir, "", "ps", "-o", fields, "-n", "3", "-i", "1")
 		native := runNativeCLI(t, env.Dir, "", "ps", "-o", fields)
 		if res.ExitCode != native.ExitCode {
@@ -715,7 +821,7 @@ func TestParity_PsCases(t *testing.T) {
 		if len(goboxLines) < 2 || len(nativeLines) < 2 {
 			t.Fatalf("ps -o expected header plus at least one row\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
 		}
-		wantHeader := []string{"PID", "PPID", "CMD", "%CPU", "%MEM"}
+		wantHeader := []string{"PID", "PPID", "%CPU", "%MEM", "CMD"}
 		if got := strings.Fields(goboxLines[0]); len(got) < len(wantHeader) || strings.Join(got[:len(wantHeader)], " ") != strings.Join(wantHeader, " ") {
 			t.Fatalf("gobox ps -o header mismatch: got %q want prefix %q", goboxLines[0], strings.Join(wantHeader, " "))
 		}
@@ -730,6 +836,46 @@ func TestParity_PsCases(t *testing.T) {
 		for _, line := range nativeLines[1:] {
 			if len(strings.Fields(line)) < len(wantHeader) {
 				t.Fatalf("native ps -o row does not contain all requested fields: %q", line)
+			}
+		}
+
+		// Verify column VALUES are semantically correct, not merely that
+		// the column exists and the row has enough fields (TEST-DESIGN.md
+		// §11.3): PPID must carry the real parent pid of the current test
+		// process, and %CPU/%MEM must be sane numeric percentages rather
+		// than e.g. CMD text shifted into the wrong column.
+		pid := strconv.Itoa(os.Getpid())
+		wantPPID := strconv.Itoa(os.Getppid())
+		selfRes := runGoboxCLI(t, env.Dir, "", "ps", "-o", fields, "-p", pid, "-i", "1")
+		if selfRes.ExitCode != 0 {
+			t.Fatalf("ps -o -p self failed: %+v", selfRes)
+		}
+		ppid, ok := extractColumnByPIDHeader(selfRes.Stdout, pid, "PPID")
+		if !ok {
+			t.Fatalf("ps -o missing current process pid %s\n%s", pid, selfRes.Stdout)
+		}
+		if ppid != wantPPID {
+			t.Fatalf("ps -o PPID column should carry the real parent pid: got %q want %q", ppid, wantPPID)
+		}
+		for _, headerName := range []string{"%CPU", "%MEM"} {
+			val, ok := extractColumnByPIDHeader(selfRes.Stdout, pid, headerName)
+			if !ok {
+				t.Fatalf("ps -o missing %s column for current pid %s\n%s", headerName, pid, selfRes.Stdout)
+			}
+			f, err := strconv.ParseFloat(val, 64)
+			if err != nil {
+				t.Fatalf("ps -o %s column should be numeric, got %q", headerName, val)
+			}
+			// %CPU can legitimately exceed 100 for a multi-threaded process
+			// on a multi-core host (standard ps/top semantics: 100% per
+			// core), so its sane upper bound scales with NumCPU; %MEM is a
+			// share of total system memory and cannot exceed 100.
+			upperBound := 100.0
+			if headerName == "%CPU" {
+				upperBound = 100.0 * float64(runtime.NumCPU())
+			}
+			if f < 0 || f > upperBound {
+				t.Fatalf("ps -o %s column out of sane percentage range: %v (bound %v)", headerName, f, upperBound)
 			}
 		}
 
@@ -762,13 +908,32 @@ func TestParity_PsCases(t *testing.T) {
 
 	t.Run("PS-012", func(t *testing.T) {
 		env := t.TempDir()
-		res := runGoboxCLI(t, env, "", "ps", "-A", "-o", "pid,cmd", "--sort", "-pid", "-n", "5", "-i", "1", "-ww")
-		native := runNativeCLI(t, env, "", "ps", "-A", "-o", "pid,cmd", "--sort", "-pid")
+		pid := strconv.Itoa(os.Getpid())
+		res := runGoboxCLI(t, env, "", "ps", "-A", "-o", "pid,cmd", "-ww", "-i", "1")
+		native := runNativeCLI(t, env, "", "ps", "-A", "-o", "pid,cmd")
 		if res.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("ps -A mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
 		}
 		if got, want := strings.Fields(nonEmptyLines(res.Stdout)[0]), strings.Fields(nonEmptyLines(native.Stdout)[0]); !reflect.DeepEqual(got, want) {
 			t.Fatalf("ps -A header mismatch\ngobox=%v\nnative=%v", got, want)
+		}
+		// -A must not just print a matching header: it must actually return
+		// data rows, and specifically must include the current test process
+		// among the "all processes" it claims to enumerate (TEST-DESIGN.md
+		// §10: a silently empty -A implementation must fail this test).
+		resLines := nonEmptyLines(res.Stdout)
+		if len(resLines) < 2 {
+			t.Fatalf("ps -A produced no data rows\n%s", res.Stdout)
+		}
+		if _, ok := rowFieldsByPID(res.Stdout, pid); !ok {
+			t.Fatalf("ps -A should include the current test process pid %s\n%s", pid, res.Stdout)
+		}
+		nativeLines := nonEmptyLines(native.Stdout)
+		if len(nativeLines) < 2 {
+			t.Fatalf("native ps -A produced no data rows\n%s", native.Stdout)
+		}
+		if _, ok := rowFieldsByPID(native.Stdout, pid); !ok {
+			t.Fatalf("native ps -A should include the current test process pid %s\n%s", pid, native.Stdout)
 		}
 	})
 
@@ -828,10 +993,14 @@ func TestParity_PsCases(t *testing.T) {
 	})
 
 	t.Run("PS-014", func(t *testing.T) {
+		// Deliberately do NOT also pass -p here: -p alone already narrows
+		// the result set to a single row, which would make -u's own
+		// filtering effect completely unobserved (a no-op -u implementation
+		// would still pass). Exercise -u in isolation instead.
 		uid := strconv.Itoa(os.Getuid())
 		pid := strconv.Itoa(os.Getpid())
 		env := t.TempDir()
-		res := runGoboxCLI(t, env, "", "ps", "-u", uid, "-p", pid, "-o", "pid,user", "-i", "1")
+		res := runGoboxCLI(t, env, "", "ps", "-u", uid, "-o", "pid,user", "-i", "1")
 		native := runNativeCLI(t, env, "", "ps", "-u", uid)
 		if res.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("ps -u mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
@@ -886,16 +1055,33 @@ func TestParity_PsCases(t *testing.T) {
 		}
 		comm := strings.TrimSpace(string(data))
 		env := t.TempDir()
-		res := runGoboxCLI(t, env, "", "ps", "-C", comm, "-o", "comm", "-n", "20", "-i", "1")
-		native := runNativeCLI(t, env, "", "ps", "-C", comm, "-o", "comm")
+		res := runGoboxCLI(t, env, "", "ps", "-C", comm, "-o", "pid,comm", "-n", "20", "-i", "1")
+		native := runNativeCLI(t, env, "", "ps", "-C", comm, "-o", "pid,comm")
 		if res.ExitCode != native.ExitCode {
 			t.Fatalf("ps -C mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", res, native)
 		}
-		if line := findLineWithPrefix(res.Stdout, comm); line == "" {
-			t.Fatalf("gobox ps -C missing comm row %q\n%s", comm, res.Stdout)
+		selfPID := strconv.Itoa(os.Getpid())
+		if _, ok := rowFieldsByPID(res.Stdout, selfPID); !ok {
+			t.Fatalf("gobox ps -C missing current process pid %s\n%s", selfPID, res.Stdout)
 		}
-		if line := findLineWithPrefix(native.Stdout, comm); line == "" {
-			t.Fatalf("native ps -C missing comm row %q\n%s", comm, native.Stdout)
+		if _, ok := rowFieldsByPID(native.Stdout, selfPID); !ok {
+			t.Fatalf("native ps -C missing current process pid %s\n%s", selfPID, native.Stdout)
+		}
+		// Like PS-011/PS-015, every returned row must satisfy the filter --
+		// not just the target row's presence, otherwise an unfiltered -C
+		// implementation that returns all processes would also pass because
+		// the current process's own comm happens to appear in the result.
+		for _, line := range nonEmptyLines(res.Stdout)[1:] {
+			fields := strings.Fields(line)
+			if len(fields) < 2 || fields[1] != comm {
+				t.Fatalf("gobox ps -C returned non-matching row %q (want comm=%q)", line, comm)
+			}
+		}
+		for _, line := range nonEmptyLines(native.Stdout)[1:] {
+			fields := strings.Fields(line)
+			if len(fields) < 2 || fields[1] != comm {
+				t.Fatalf("native ps -C returned non-matching row %q (want comm=%q)", line, comm)
+			}
 		}
 	})
 
@@ -913,13 +1099,23 @@ func TestParity_PsCases(t *testing.T) {
 		if invalid.ExitCode == 0 || !strings.Contains(invalid.Stderr, "unsupported sort field") {
 			t.Fatalf("ps --sort should reject unsupported fields, got %+v", invalid)
 		}
-		cpuSort := runGoboxCLI(t, env, "", "ps", "--sort", "cpu", "-n", "5", "-i", "1")
+		// --sort cpu must be verified against the real %CPU values, not by
+		// checking for the literal substring "PID" in the header
+		// (TEST-DESIGN.md §11.2 explicitly forbids this weak pattern for
+		// %CPU/%MEM columns).
+		cpuSort := runGoboxCLI(t, env, "", "ps", "--sort", "cpu", "-n", "20", "-i", "1")
 		if cpuSort.ExitCode != 0 {
 			t.Fatalf("ps --sort cpu failed: %+v", cpuSort)
 		}
-		if !strings.Contains(cpuSort.Stdout, "PID") {
-			t.Fatalf("ps --sort cpu missing PID in header: %q", cpuSort.Stdout)
+		cpuLines := nonEmptyLines(cpuSort.Stdout)
+		if len(cpuLines) < 2 {
+			t.Fatalf("ps --sort cpu produced no data rows: %q", cpuSort.Stdout)
 		}
+		cpuVals := extractFloatColumn(t, cpuLines[0], cpuLines[1:], "%CPU")
+		if len(cpuVals) < 2 {
+			t.Fatalf("ps --sort cpu expected at least two parseable %%CPU values, got %v\n%s", cpuVals, cpuSort.Stdout)
+		}
+		assertMonotonicFloat(t, cpuVals, false)
 	})
 
 	t.Run("PS-018", func(t *testing.T) {
@@ -954,6 +1150,46 @@ func TestParity_PsCases(t *testing.T) {
 		}
 	})
 
+	// PS-018 above only exercises the combined BSD tokens (aux/u/ax). Per
+	// TEST-DESIGN.md §14.4, an aggregate BSD-style token must not be treated
+	// as a single opaque switch: the individual letters 'a' and 'x' each
+	// need their own case proving an independently observable effect.
+	t.Run("PS-018-a", func(t *testing.T) {
+		env := t.TempDir()
+		// -n is intentionally omitted (0 = show all): a fixed cap like -n 50
+		// would non-deterministically exclude the current test process
+		// depending on host process count and sort order.
+		def := runGoboxCLI(t, env, "", "ps", "-o", "pid", "-i", "1")
+		withA := runGoboxCLI(t, env, "", "ps", "a", "-o", "pid", "-i", "1")
+		if def.ExitCode != 0 || withA.ExitCode != 0 {
+			t.Fatalf("bsd 'a' baseline failed default=%+v a=%+v", def, withA)
+		}
+		selfPID := strconv.Itoa(os.Getpid())
+		if _, ok := rowFieldsByPID(def.Stdout, selfPID); ok {
+			t.Skip("current test process unexpectedly has a controlling tty in this environment; cannot distinguish 'a' from default via non-tty visibility here")
+		}
+		if _, ok := rowFieldsByPID(withA.Stdout, selfPID); ok {
+			t.Fatalf("'a' alone (without 'x') must still require a controlling tty and must not surface the non-tty current process %s\n%s", selfPID, withA.Stdout)
+		}
+		if len(nonEmptyLines(withA.Stdout)) < len(nonEmptyLines(def.Stdout)) {
+			t.Fatalf("'a' should not shrink the tty-attached result set relative to default\n--- default ---\n%s\n--- a ---\n%s", def.Stdout, withA.Stdout)
+		}
+	})
+
+	t.Run("PS-018-x", func(t *testing.T) {
+		env := t.TempDir()
+		// -n is intentionally omitted (0 = show all); see PS-018-a comment.
+		def := runGoboxCLI(t, env, "", "ps", "-o", "pid", "-i", "1")
+		withX := runGoboxCLI(t, env, "", "ps", "x", "-o", "pid", "-i", "1")
+		if def.ExitCode != 0 || withX.ExitCode != 0 {
+			t.Fatalf("bsd 'x' baseline failed default=%+v x=%+v", def, withX)
+		}
+		selfPID := strconv.Itoa(os.Getpid())
+		if _, ok := rowFieldsByPID(withX.Stdout, selfPID); !ok {
+			t.Fatalf("'x' alone (without 'a') should include the current (non-tty) test process %s among same-user processes\n%s", selfPID, withX.Stdout)
+		}
+	})
+
 	t.Run("PS-021", func(t *testing.T) {
 		res := runGoboxMainCLI(t, t.TempDir(), "", "ps", "--full", ".*", "--comm", ".*", "-i", "1")
 		if res.ExitCode == 0 {
@@ -964,6 +1200,98 @@ func TestParity_PsCases(t *testing.T) {
 		}
 	})
 
+	// PS-019 and PS-020 test ps's `--long` and `--hide-idle` flags. They were
+	// previously (mis-)placed under TestParity_FreeCases, which meant
+	// `go test ./tests/parity -run TestParity_PsCases -v` silently skipped
+	// them. Relocated here to keep the CLAUDE.md-documented targeted test
+	// command traceable to actual ps coverage.
+	t.Run("PS-019", func(t *testing.T) {
+		res := runGoboxCLI(t, t.TempDir(), "", "ps", "--long", "-n", "5", "-i", "1")
+		native := runNativeCLI(t, t.TempDir(), "", "ps", "-l")
+		if res.ExitCode != 0 || native.ExitCode != 0 {
+			t.Fatalf("ps --long failed gobox=%+v native=%+v", res, native)
+		}
+		goboxLines := nonEmptyLines(res.Stdout)
+		nativeLines := nonEmptyLines(native.Stdout)
+		if len(goboxLines) < 2 || len(nativeLines) < 2 {
+			t.Fatalf("ps --long expected header plus rows\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
+		}
+		for _, want := range []string{"PID", "PPID", "TTY", "TIME", "CMD"} {
+			if !strings.Contains(goboxLines[0], want) {
+				t.Fatalf("gobox ps --long header missing %q: %q", want, goboxLines[0])
+			}
+		}
+		hasStat := false
+		for _, f := range strings.Fields(goboxLines[0]) {
+			if f == "STAT" {
+				hasStat = true
+				break
+			}
+		}
+		if !hasStat {
+			t.Fatalf("gobox ps --long header missing STAT field: %q", goboxLines[0])
+		}
+		if !strings.Contains(nativeLines[0], "PID") || !strings.Contains(nativeLines[0], "PPID") {
+			t.Fatalf("native ps -l baseline missing expected long columns: %q", nativeLines[0])
+		}
+	})
+
+	t.Run("PS-020", func(t *testing.T) {
+		idleCmd := exec.Command("sleep", "30")
+		if err := idleCmd.Start(); err != nil {
+			t.Fatalf("start idle process: %v", err)
+		}
+		defer stopCmd(idleCmd)
+
+		pid := strconv.Itoa(idleCmd.Process.Pid)
+		base := runGoboxCLI(t, t.TempDir(), "", "ps", "-p", pid, "-o", "pid,pcpu,cmd", "-i", "200", "-ww")
+		filtered := runGoboxCLI(t, t.TempDir(), "", "ps", "-p", pid, "-o", "pid,pcpu,cmd", "--hide-idle", "-i", "200", "-ww")
+		if base.ExitCode != 0 || filtered.ExitCode != 0 {
+			t.Fatalf("ps --hide-idle failed base=%+v filtered=%+v", base, filtered)
+		}
+		if _, ok := rowFieldsByPID(base.Stdout, pid); !ok {
+			t.Fatalf("ps baseline missing idle pid %s\n%s", pid, base.Stdout)
+		}
+		if _, ok := rowFieldsByPID(filtered.Stdout, pid); ok {
+			t.Fatalf("ps --hide-idle should remove idle pid %s\n--- base ---\n%s\n--- filtered ---\n%s", pid, base.Stdout, filtered.Stdout)
+		}
+	})
+
+	// PS-022/PS-023 cover the "no matching process" edge case for -p/-C,
+	// which had no coverage at all. Native `ps -p <nonexistent>` and
+	// `ps -C <nonexistent>` both print header-only output and exit 1; this
+	// mirrors that expectation for gobox. NOTE: as of this writing gobox's
+	// ps returns exit 0 with an empty result set instead of exit 1 -- see
+	// BUGS.md candidate reported alongside this test suite change. Per this
+	// project's bug-fixing protocol, the strict/correct assertion is kept
+	// here rather than weakened to match the current (arguably incorrect)
+	// gobox behavior.
+	t.Run("PS-022", func(t *testing.T) {
+		pid := findUnusedPID(t)
+		res := runGoboxCLI(t, t.TempDir(), "", "ps", "-p", strconv.Itoa(pid), "-o", "pid", "-i", "1")
+		native := runNativeCLI(t, t.TempDir(), "", "ps", "-p", strconv.Itoa(pid))
+		if lines := nonEmptyLines(res.Stdout); len(lines) != 1 {
+			t.Fatalf("ps -p <nonexistent pid %d> should print header only with no data rows, got %d lines: %q", pid, len(lines), res.Stdout)
+		}
+		if res.ExitCode != native.ExitCode {
+			t.Fatalf("ps -p <nonexistent pid %d> exit code should match native's no-match convention: gobox=%d native=%d\ngobox=%q\nnative=%q", pid, res.ExitCode, native.ExitCode, res.Stdout, native.Stdout)
+		}
+	})
+
+	t.Run("PS-023", func(t *testing.T) {
+		if runtime.GOOS != "linux" {
+			t.Skip("ps -C test reads /proc/self/comm")
+		}
+		comm := "no-such-comm-xyz-parity"
+		res := runGoboxCLI(t, t.TempDir(), "", "ps", "-C", comm, "-o", "pid", "-i", "1")
+		native := runNativeCLI(t, t.TempDir(), "", "ps", "-C", comm)
+		if lines := nonEmptyLines(res.Stdout); len(lines) != 1 {
+			t.Fatalf("ps -C <nonexistent comm> should print header only with no data rows, got %d lines: %q", len(lines), res.Stdout)
+		}
+		if res.ExitCode != native.ExitCode {
+			t.Fatalf("ps -C <nonexistent comm> exit code should match native's no-match convention: gobox=%d native=%d\ngobox=%q\nnative=%q", res.ExitCode, native.ExitCode, res.Stdout, native.Stdout)
+		}
+	})
 }
 
 func TestParity_LsofCases(t *testing.T) {
@@ -1409,57 +1737,6 @@ func TestParity_FreeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("PS-019", func(t *testing.T) {
-		res := runGoboxCLI(t, t.TempDir(), "", "ps", "--long", "-n", "5", "-i", "1")
-		native := runNativeCLI(t, t.TempDir(), "", "ps", "-l")
-		if res.ExitCode != 0 || native.ExitCode != 0 {
-			t.Fatalf("ps --long failed gobox=%+v native=%+v", res, native)
-		}
-		goboxLines := nonEmptyLines(res.Stdout)
-		nativeLines := nonEmptyLines(native.Stdout)
-		if len(goboxLines) < 2 || len(nativeLines) < 2 {
-			t.Fatalf("ps --long expected header plus rows\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
-		}
-		for _, want := range []string{"PID", "PPID", "TTY", "TIME", "CMD"} {
-			if !strings.Contains(goboxLines[0], want) {
-				t.Fatalf("gobox ps --long header missing %q: %q", want, goboxLines[0])
-			}
-		}
-		hasStat := false
-		for _, f := range strings.Fields(goboxLines[0]) {
-			if f == "STAT" {
-				hasStat = true
-				break
-			}
-		}
-		if !hasStat {
-			t.Fatalf("gobox ps --long header missing STAT field: %q", goboxLines[0])
-		}
-		if !strings.Contains(nativeLines[0], "PID") || !strings.Contains(nativeLines[0], "PPID") {
-			t.Fatalf("native ps -l baseline missing expected long columns: %q", nativeLines[0])
-		}
-	})
-
-	t.Run("PS-020", func(t *testing.T) {
-		idleCmd := exec.Command("sleep", "30")
-		if err := idleCmd.Start(); err != nil {
-			t.Fatalf("start idle process: %v", err)
-		}
-		defer stopCmd(idleCmd)
-
-		pid := strconv.Itoa(idleCmd.Process.Pid)
-		base := runGoboxCLI(t, t.TempDir(), "", "ps", "-p", pid, "-o", "pid,pcpu,cmd", "-i", "200", "-ww")
-		filtered := runGoboxCLI(t, t.TempDir(), "", "ps", "-p", pid, "-o", "pid,pcpu,cmd", "--hide-idle", "-i", "200", "-ww")
-		if base.ExitCode != 0 || filtered.ExitCode != 0 {
-			t.Fatalf("ps --hide-idle failed base=%+v filtered=%+v", base, filtered)
-		}
-		if _, ok := rowFieldsByPID(base.Stdout, pid); !ok {
-			t.Fatalf("ps baseline missing idle pid %s\n%s", pid, base.Stdout)
-		}
-		if _, ok := rowFieldsByPID(filtered.Stdout, pid); ok {
-			t.Fatalf("ps --hide-idle should remove idle pid %s\n--- base ---\n%s\n--- filtered ---\n%s", pid, base.Stdout, filtered.Stdout)
-		}
-	})
 }
 
 func TestParity_TimeoutCases(t *testing.T) {
@@ -1536,6 +1813,17 @@ func TestParity_TimeoutCases(t *testing.T) {
 	})
 }
 
+// TestParity_WatchCases deliberately does not compare against native `watch`
+// (docs/TEST-CASES.md lists it as the baseline for WATCH-001..004). native
+// `watch` clears/redraws the screen using terminal control sequences that
+// depend on being attached to a real pty; reliably capturing and comparing
+// that behavior would require a pty-backed test harness this suite doesn't
+// have. These cases instead directly invoke proc.WatchCmdWithContext and
+// assert gobox's own documented cadence/title/append contract (repeated
+// execution, refresh cadence scaling with -n, title suppression under -t,
+// no clear-screen sequences, --append scrolling) -- strong self-consistency
+// evidence per TEST-DESIGN.md §2.5's "explain, don't silently downgrade"
+// requirement, even though it isn't a native comparison.
 func TestParity_WatchCases(t *testing.T) {
 	t.Run("WATCH-001", func(t *testing.T) {
 		out := runWatchCapture(t, 120*time.Millisecond, "-n", "0.05", "-t", "echo", "ok")
@@ -1718,27 +2006,37 @@ func TestParity_KillCases(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer stopCmd(parent)
-				time.Sleep(100 * time.Millisecond)
 				ppid := parent.Process.Pid
-				// Collect child PIDs before killing
+				// Collect child PIDs before killing, retrying with backoff
+				// instead of silently treating a transient empty read as "no
+				// postcondition to check" -- that would let a no-op -P pass
+				// undetected whenever this /proc read raced ahead of the child
+				// registering.
 				childrenFile := "/proc/" + strconv.Itoa(ppid) + "/task/" + strconv.Itoa(ppid) + "/children"
-				childData, _ := os.ReadFile(childrenFile)
 				var childPIDs []int
-				for _, pidStr := range strings.Fields(string(childData)) {
-					if v, parseErr := strconv.Atoi(pidStr); parseErr == nil {
-						childPIDs = append(childPIDs, v)
+				for attempt := 0; attempt < 20 && len(childPIDs) == 0; attempt++ {
+					time.Sleep(50 * time.Millisecond)
+					childData, err := os.ReadFile(childrenFile)
+					if err != nil {
+						continue
 					}
+					for _, pidStr := range strings.Fields(string(childData)) {
+						if v, parseErr := strconv.Atoi(pidStr); parseErr == nil {
+							childPIDs = append(childPIDs, v)
+						}
+					}
+				}
+				if len(childPIDs) == 0 {
+					t.Fatalf("kill -P: could not observe any child PID under %s after retrying; cannot verify -P postcondition", childrenFile)
 				}
 				if res := runGoboxCLI(t, t.TempDir(), "", "kill", "-P", strconv.Itoa(ppid)); res.ExitCode != 0 {
 					t.Fatalf("kill -P failed: %+v", res)
 				}
-				// Verify child processes are no longer alive
-				if len(childPIDs) > 0 {
-					time.Sleep(200 * time.Millisecond)
-					for _, childPID := range childPIDs {
-						if _, statErr := os.Stat("/proc/" + strconv.Itoa(childPID)); statErr == nil {
-							t.Fatalf("kill -P: child process %d still alive after kill", childPID)
-						}
+				// Verify child processes are no longer alive.
+				time.Sleep(200 * time.Millisecond)
+				for _, childPID := range childPIDs {
+					if _, statErr := os.Stat("/proc/" + strconv.Itoa(childPID)); statErr == nil {
+						t.Fatalf("kill -P: child process %d still alive after kill", childPID)
 					}
 				}
 			case "KILL-008":
@@ -1804,4 +2102,170 @@ func findLineWithPrefix(s, prefix string) string {
 		}
 	}
 	return ""
+}
+
+// splitRowPreservingLastColumn splits a fixed-width table row into exactly
+// numCols fields, joining any overflow tokens into the final column. This is
+// required because ps/top render CMD/COMMAND as an unpadded trailing column
+// that may itself contain internal spaces (e.g. a marker process argv),
+// which would otherwise be shattered by a naive strings.Fields split.
+func splitRowPreservingLastColumn(line string, numCols int) []string {
+	fields := strings.Fields(line)
+	if numCols <= 0 || len(fields) <= numCols {
+		return fields
+	}
+	result := append([]string{}, fields[:numCols-1]...)
+	result = append(result, strings.Join(fields[numCols-1:], " "))
+	return result
+}
+
+// columnByHeaderRows extracts, for each data row, the value found at the
+// column named headerName (as located in headerLine). It returns the
+// resolved column index (-1 if headerName was not found in headerLine).
+func columnByHeaderRows(headerLine string, rows []string, headerName string) ([]string, int) {
+	headerFields := strings.Fields(headerLine)
+	numCols := len(headerFields)
+	idx := -1
+	for i, f := range headerFields {
+		if f == headerName {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return nil, -1
+	}
+	var vals []string
+	for _, line := range rows {
+		fields := splitRowPreservingLastColumn(line, numCols)
+		if len(fields) <= idx {
+			continue
+		}
+		vals = append(vals, fields[idx])
+	}
+	return vals, idx
+}
+
+// columnByPIDFromRows locates the data row whose PID column equals pid and
+// returns the value of the headerName column on that row, honoring a
+// possibly multi-word trailing column (e.g. CMD).
+func columnByPIDFromRows(headerLine string, rows []string, pid, headerName string) (string, bool) {
+	headerFields := strings.Fields(headerLine)
+	numCols := len(headerFields)
+	pidIdx := -1
+	targetIdx := -1
+	for i, f := range headerFields {
+		if f == "PID" {
+			pidIdx = i
+		}
+		if f == headerName {
+			targetIdx = i
+		}
+	}
+	if pidIdx < 0 || targetIdx < 0 {
+		return "", false
+	}
+	for _, line := range rows {
+		fields := splitRowPreservingLastColumn(line, numCols)
+		if len(fields) <= pidIdx || len(fields) <= targetIdx {
+			continue
+		}
+		if fields[pidIdx] == pid {
+			return fields[targetIdx], true
+		}
+	}
+	return "", false
+}
+
+// extractColumnByPIDHeader is a convenience wrapper over columnByPIDFromRows
+// for plain ps-style output where line 0 is the header and the remaining
+// lines are data rows.
+func extractColumnByPIDHeader(out, pid, headerName string) (string, bool) {
+	lines := nonEmptyLines(out)
+	if len(lines) == 0 {
+		return "", false
+	}
+	return columnByPIDFromRows(lines[0], lines[1:], pid, headerName)
+}
+
+// extractFloatColumn parses the named column from every data row as a
+// float64, skipping rows where the column is missing or non-numeric. Callers
+// must supply the header line and the data rows explicitly since top's
+// output has summary lines preceding the process table header.
+func extractFloatColumn(t *testing.T, headerLine string, rows []string, headerName string) []float64 {
+	t.Helper()
+	vals, idx := columnByHeaderRows(headerLine, rows, headerName)
+	if idx < 0 {
+		t.Fatalf("column %q not found in header %q", headerName, headerLine)
+	}
+	var out []float64
+	for _, v := range vals {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// assertMonotonicFloat verifies vals are sorted (ascending or descending)
+// using true numeric comparison rather than lexical/text comparison, per
+// TEST-DESIGN.md §11.2 for %CPU/%MEM-style columns. Ties are permitted.
+func assertMonotonicFloat(t *testing.T, vals []float64, descending bool) {
+	t.Helper()
+	const eps = 1e-9
+	for i := 1; i < len(vals); i++ {
+		if descending {
+			if vals[i-1] < vals[i]-eps {
+				t.Fatalf("expected descending order, got %v", vals)
+			}
+		} else if vals[i-1] > vals[i]+eps {
+			t.Fatalf("expected ascending order, got %v", vals)
+		}
+	}
+}
+
+// findUnusedPID returns a PID that is (with overwhelming probability) not
+// currently assigned to any process, for exercising "no matching process"
+// edge cases. It scans a sparse sequence of candidates and requires that
+// /proc/<candidate> not exist, per TEST-DESIGN.md §13 (rely on controlled,
+// observable state rather than guessing a single hardcoded PID).
+func findUnusedPID(t *testing.T) int {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("unused-pid probing relies on /proc")
+	}
+	for candidate := 1000003; candidate < 4000000; candidate += 104729 {
+		if _, err := os.Stat("/proc/" + strconv.Itoa(candidate)); os.IsNotExist(err) {
+			return candidate
+		}
+	}
+	t.Fatal("could not find an unused pid for negative-case testing")
+	return 0
+}
+
+// isDigitByte reports whether b is an ASCII digit.
+func isDigitByte(b byte) bool { return b >= '0' && b <= '9' }
+
+// containsPortToken reports whether line contains port as a standalone
+// numeric token (not as a substring of a larger number such as a PID or a
+// different port). This avoids false positives like port "80" matching
+// inside PID "1180".
+func containsPortToken(line, port string) bool {
+	from := 0
+	for {
+		i := strings.Index(line[from:], port)
+		if i < 0 {
+			return false
+		}
+		pos := from + i
+		beforeOK := pos == 0 || !isDigitByte(line[pos-1])
+		end := pos + len(port)
+		afterOK := end >= len(line) || !isDigitByte(line[end])
+		if beforeOK && afterOK {
+			return true
+		}
+		from = pos + 1
+	}
 }

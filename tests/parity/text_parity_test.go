@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,6 +51,14 @@ func TestParity_HeadCases(t *testing.T) {
 			NativeCommand: "head",
 			NativeArgs:    []string{"-n", "2"},
 			Stdin:         "line1\nline2\nline3\n",
+		},
+		{
+			ID:            "HEAD-001b",
+			Name:          "head -n empty file",
+			GoboxArgs:     []string{"head", "-n", "2", "empty.txt"},
+			NativeCommand: "head",
+			NativeArgs:    []string{"-n", "2", "empty.txt"},
+			Setup:         func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "empty.txt"), "") },
 		},
 	})
 
@@ -156,6 +168,37 @@ func TestParity_DiffCases(t *testing.T) {
 				writeFile(t, filepath.Join(env.Dir, "b"), "same")
 			},
 		},
+		{
+			ID:            "DIFF-002b",
+			Name:          "diff --unified (long form)",
+			GoboxArgs:     []string{"diff", "--unified", "a.txt", "b.txt"},
+			NativeCommand: "diff",
+			NativeArgs:    []string{"--unified", "a.txt", "b.txt"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "a.txt"), "one\ntwo\n")
+				writeFile(t, filepath.Join(env.Dir, "b.txt"), "one\nTWO\n")
+			},
+			Normalize: normalizeUnifiedDiffHeaders,
+		},
+		{
+			ID:            "DIFF-003b",
+			Name:          "diff --brief (long form)",
+			GoboxArgs:     []string{"diff", "--brief", "a.txt", "b.txt"},
+			NativeCommand: "diff",
+			NativeArgs:    []string{"--brief", "a.txt", "b.txt"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "a.txt"), "left\n")
+				writeFile(t, filepath.Join(env.Dir, "b.txt"), "right\n")
+			},
+		},
+		{
+			ID:            "DIFF-005b",
+			Name:          "diff --new-file (long form)",
+			GoboxArgs:     []string{"diff", "--new-file", "missing.txt", "b.txt"},
+			NativeCommand: "diff",
+			NativeArgs:    []string{"--new-file", "missing.txt", "b.txt"},
+			Setup:         func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "b.txt"), "created\n") },
+		},
 	})
 
 	t.Run("DIFF-010", func(t *testing.T) {
@@ -201,11 +244,10 @@ func TestParity_DiffCases(t *testing.T) {
 			}
 		}
 		if goboxHunks != nativeHunks {
-			bug := fmt.Sprintf("DIFF: gobox diff -u merges non-adjacent hunks into one.\n"+
-				"Native produces %d @@-hunk(s), gobox produces %d for a 25-line file with changes at lines 1 and 20.\n",
-				nativeHunks, goboxHunks)
-			_ = os.WriteFile("/tmp/bugs_text.md", []byte(bug), 0o644)
-			t.Logf("DIFF-010: hunk count differs (gobox=%d, native=%d) — documented in /tmp/bugs_text.md", goboxHunks, nativeHunks)
+			t.Fatalf("DIFF-010: gobox diff -u produced %d @@-hunk(s) but native produced %d for a "+
+				"25-line file with non-adjacent changes at lines 1 and 20; gobox must split hunks the "+
+				"same way native does instead of merging separate change regions into one hunk\ngobox:\n%s\nnative:\n%s",
+				goboxHunks, nativeHunks, gobox.Stdout, native.Stdout)
 		}
 	})
 
@@ -254,6 +296,7 @@ func TestParity_TailCases(t *testing.T) {
 			writeFile(t, filepath.Join(env.Dir, "a.txt"), "a1\na2\n")
 			writeFile(t, filepath.Join(env.Dir, "b.txt"), "b1\nb2\n")
 		}},
+		{ID: "TAIL-001b", Name: "tail -n empty file", GoboxArgs: []string{"tail", "-n", "2", "empty.txt"}, NativeCommand: "tail", NativeArgs: []string{"-n", "2", "empty.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "empty.txt"), "") }},
 	})
 
 	t.Run("TAIL-002", func(t *testing.T) {
@@ -340,6 +383,32 @@ func TestParity_TailCases(t *testing.T) {
 		if strings.Contains(gobox.Stdout, "base") || strings.Contains(native.Stdout, "base") {
 			t.Fatalf("tail -n 0 -f -s should not replay baseline content\ngobox=%+v\nnative=%+v", gobox, native)
 		}
+
+		// Prove that -s actually controls the polling cadence rather than being a
+		// no-op: with a fast interval, gobox should observe most of a burst of
+		// incremental appends within a bounded window; with a slow interval whose
+		// period exceeds that window, it should observe far fewer (ideally none),
+		// since the next poll tick will not have fired yet.
+		countUpdates := func(sleepArg string, overallTimeout time.Duration) int {
+			cEnv := t.TempDir()
+			cFile := filepath.Join(cEnv, "cadence.log")
+			writeFile(t, cFile, "base\n")
+			res := runTailGoboxFollow(t, cEnv, []string{"-n", "0", "-f", "-s", sleepArg, "cadence.log"}, func() {
+				for i := 0; i < 5; i++ {
+					appendFile(t, cFile, fmt.Sprintf("m%d\n", i))
+					time.Sleep(120 * time.Millisecond)
+				}
+			}, overallTimeout)
+			return len(nonEmptyLines(res.Stdout))
+		}
+		fastCount := countUpdates("0.05", 1200*time.Millisecond)
+		slowCount := countUpdates("2", 1200*time.Millisecond)
+		if fastCount == 0 {
+			t.Fatalf("TAIL-006: fast -s interval (0.05s) observed no appended lines within the window; cannot prove cadence changed")
+		}
+		if slowCount >= fastCount {
+			t.Fatalf("TAIL-006: -s does not appear to change polling cadence: slow interval (2s) observed %d line(s), fast interval (0.05s) observed %d line(s); expected slow < fast", slowCount, fastCount)
+		}
 	})
 
 	t.Run("TAIL-007", func(t *testing.T) {
@@ -370,6 +439,76 @@ func TestParity_TailCases(t *testing.T) {
 			t.Fatalf("tail --pid with -n 0 should not replay baseline content: %+v", gobox)
 		}
 	})
+}
+
+// startGoboxStreamCmd starts gobox as a real subprocess (reusing the
+// TestParityHelperProcess harness) with piped stdin/stdout left open, so
+// streaming/incremental behavior can be observed while the process is still
+// running rather than only after it exits.
+func startGoboxStreamCmd(t *testing.T, dir string, args []string) (*exec.Cmd, io.WriteCloser, *bufio.Reader) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], append([]string{"-test.run=TestParityHelperProcess", "--"}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOBOX_PARITY_HELPER=1")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("gobox stdin pipe: %v", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("gobox stdout pipe: %v", err)
+	}
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start gobox stream subprocess: %v", err)
+	}
+	return cmd, stdin, bufio.NewReader(stdout)
+}
+
+// startNativeStreamCmd starts a native command with piped stdin/stdout left
+// open, mirroring startGoboxStreamCmd so the two can be compared.
+func startNativeStreamCmd(t *testing.T, dir, command string, args []string) (*exec.Cmd, io.WriteCloser, *bufio.Reader) {
+	t.Helper()
+	path := requireNativeCommand(t, command)
+	cmd := exec.Command(path, args...)
+	cmd.Dir = dir
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("native stdin pipe: %v", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("native stdout pipe: %v", err)
+	}
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start native stream subprocess: %v", err)
+	}
+	return cmd, stdin, bufio.NewReader(stdout)
+}
+
+// readLineWithTimeout attempts to read a single line within timeout. It
+// returns ("", false) if no line arrives in time, which is the expected
+// outcome for a fully-buffered process that hasn't hit EOF yet.
+func readLineWithTimeout(r *bufio.Reader, timeout time.Duration) (string, bool) {
+	type result struct {
+		line string
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		line, err := r.ReadString('\n')
+		ch <- result{line, err}
+	}()
+	select {
+	case res := <-ch:
+		if res.line == "" && res.err != nil {
+			return "", false
+		}
+		return res.line, true
+	case <-time.After(timeout):
+		return "", false
+	}
 }
 
 func TestParity_GrepCases(t *testing.T) {
@@ -437,18 +576,76 @@ func TestParity_GrepCases(t *testing.T) {
 			writeFile(t, filepath.Join(env.Dir, "b.txt"), "bar\n")
 		}},
 		{ID: "GREP-019", Name: "grep stdin", GoboxArgs: []string{"grep", "hello"}, NativeCommand: "grep", NativeArgs: []string{"hello"}, Stdin: "hello world\ngoodbye\n"},
+		{ID: "GREP-003b", Name: "grep -c empty file", GoboxArgs: []string{"grep", "-c", "foo", "empty.txt"}, NativeCommand: "grep", NativeArgs: []string{"-c", "foo", "empty.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "empty.txt"), "") }},
+		{ID: "GREP-019b", Name: "grep empty stdin", GoboxArgs: []string{"grep", "hello"}, NativeCommand: "grep", NativeArgs: []string{"hello"}, Stdin: ""},
 	})
 
 	t.Run("GREP-005", func(t *testing.T) {
 		env := t.TempDir()
-		writeFile(t, filepath.Join(env, "input.txt"), "foo\nbar\n")
-		gobox := runGoboxCLI(t, env, "", "grep", "--line-buffered", "foo", "input.txt")
-		native := runNativeCLI(t, env, "", "grep", "--line-buffered", "foo", "input.txt")
-		if gobox.ExitCode != native.ExitCode {
-			t.Fatalf("grep --line-buffered exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+
+		// runStream starts either gobox or native `grep <flags...> foo` reading
+		// from a live stdin pipe (not pre-fed), writes one matching line, and
+		// checks whether it arrives on stdout before stdin is closed/EOF. This
+		// distinguishes true line-by-line streaming from "buffer everything
+		// until EOF" behavior, which a final-string comparison cannot detect.
+		runStream := func(useNative bool, lineBuffered bool) (earlyLineSeen bool, finalStdout string) {
+			args := []string{"foo"}
+			if lineBuffered {
+				args = []string{"--line-buffered", "foo"}
+			}
+			var cmd *exec.Cmd
+			var stdin io.WriteCloser
+			var reader *bufio.Reader
+			if useNative {
+				cmd, stdin, reader = startNativeStreamCmd(t, env, "grep", args)
+			} else {
+				cmd, stdin, reader = startGoboxStreamCmd(t, env, append([]string{"grep"}, args...))
+			}
+			defer func() {
+				if cmd.Process != nil {
+					_ = cmd.Process.Kill()
+					_, _ = cmd.Process.Wait()
+				}
+			}()
+
+			if _, err := io.WriteString(stdin, "foo line one\n"); err != nil {
+				t.Fatalf("write stdin: %v", err)
+			}
+			line, ok := readLineWithTimeout(reader, 1*time.Second)
+			earlyLineSeen = ok && strings.Contains(line, "foo")
+
+			// Feed a bit more, then close stdin so the process can exit and we
+			// can collect the final buffered output for a stability check.
+			_, _ = io.WriteString(stdin, "bar\nfoo line two\n")
+			_ = stdin.Close()
+
+			var buf bytes.Buffer
+			if ok {
+				buf.WriteString(line)
+			}
+			_, _ = io.Copy(&buf, reader)
+			_ = cmd.Wait()
+			return earlyLineSeen, buf.String()
 		}
-		if normalizeText(gobox.Stdout) != normalizeText(native.Stdout) {
-			t.Fatalf("grep --line-buffered stdout mismatch\ngobox: %q\nnative: %q", gobox.Stdout, native.Stdout)
+
+		// Baseline: native grep without --line-buffered, writing to a pipe
+		// (not a tty), fully buffers and should NOT surface a match before
+		// stdin is closed. This confirms the test methodology can actually
+		// detect the difference --line-buffered is supposed to make.
+		if baselineEarly, _ := runStream(true, false); baselineEarly {
+			t.Skip("native grep without --line-buffered streamed immediately on this system; environment does not exercise buffered-vs-line-buffered behavior")
+		}
+
+		nativeEarly, nativeFull := runStream(true, true)
+		if !nativeEarly {
+			t.Fatalf("GREP-005: native grep --line-buffered did not surface a match before stdin closed")
+		}
+		goboxEarly, goboxFull := runStream(false, true)
+		if !goboxEarly {
+			t.Fatalf("GREP-005: gobox grep --line-buffered did not surface a match before stdin closed; streaming behavior not proven")
+		}
+		if normalizeText(goboxFull) != normalizeText(nativeFull) {
+			t.Fatalf("grep --line-buffered final stdout mismatch\ngobox: %q\nnative: %q", goboxFull, nativeFull)
 		}
 	})
 
@@ -492,6 +689,8 @@ func TestParity_SedCases(t *testing.T) {
 		{ID: "SED-014", Name: "sed s///i", GoboxArgs: []string{"sed", "s/foo/bar/i", "input.txt"}, NativeCommand: "sed", NativeArgs: []string{"s/foo/bar/i", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "Foo\n") }},
 		{ID: "SED-015", Name: "sed s///p", GoboxArgs: []string{"sed", "-n", "s/foo/bar/p", "input.txt"}, NativeCommand: "sed", NativeArgs: []string{"-n", "s/foo/bar/p", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "foo\n") }},
 		{ID: "SED-016", Name: "sed s///N", GoboxArgs: []string{"sed", "s/foo/bar/2", "input.txt"}, NativeCommand: "sed", NativeArgs: []string{"s/foo/bar/2", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "foo foo foo\n") }},
+		{ID: "SED-006b", Name: "sed s/// empty file", GoboxArgs: []string{"sed", "s/foo/bar/", "empty.txt"}, NativeCommand: "sed", NativeArgs: []string{"s/foo/bar/", "empty.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "empty.txt"), "") }},
+		{ID: "SED-020b", Name: "sed s/// empty stdin", GoboxArgs: []string{"sed", "s/hello/world/"}, NativeCommand: "sed", NativeArgs: []string{"s/hello/world/"}, Stdin: ""},
 	})
 
 	t.Run("SED-005", func(t *testing.T) {
@@ -541,13 +740,19 @@ func TestParity_SedCases(t *testing.T) {
 		if normalizeText(string(g)) != normalizeText(string(n)) {
 			t.Fatalf("sed -i modified file content mismatch\ngobox: %q\nnative: %q", string(g), string(n))
 		}
-		// Compare backup files if both created them.
+		// Both gobox and native must produce the .bak backup file; a missing
+		// backup on either side is a regression and must fail loudly rather
+		// than being silently skipped.
 		gBak, gErr := os.ReadFile(filepath.Join(gDir, "input.txt.bak"))
+		if gErr != nil {
+			t.Fatalf("sed -i.bak: gobox backup file missing: %v", gErr)
+		}
 		nBak, nErr := os.ReadFile(filepath.Join(nDir, "input.txt.bak"))
-		if gErr == nil && nErr == nil {
-			if normalizeText(string(gBak)) != normalizeText(string(nBak)) {
-				t.Fatalf("sed -i .bak content mismatch\ngobox: %q\nnative: %q", string(gBak), string(nBak))
-			}
+		if nErr != nil {
+			t.Fatalf("sed -i.bak: native backup file missing: %v", nErr)
+		}
+		if normalizeText(string(gBak)) != normalizeText(string(nBak)) {
+			t.Fatalf("sed -i .bak content mismatch\ngobox: %q\nnative: %q", string(gBak), string(nBak))
 		}
 	})
 }
@@ -575,6 +780,7 @@ func TestParity_SortCases(t *testing.T) {
 				}
 			}
 		}},
+		{ID: "SORT-001b", Name: "sort -n empty file", GoboxArgs: []string{"sort", "-n", "empty.txt"}, NativeCommand: "sort", NativeArgs: []string{"-n", "empty.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "empty.txt"), "") }},
 	})
 
 	t.Run("SORT-008", func(t *testing.T) {
@@ -606,9 +812,13 @@ func TestParity_SortCases(t *testing.T) {
 	t.Run("SORT-011", func(t *testing.T) {
 		env := t.TempDir()
 		writeFile(t, filepath.Join(env, "input.txt"), "b\x00a\x00")
-		res := runGoboxCLI(t, env, "", "sort", "-z", "input.txt")
-		if res.ExitCode != 0 || res.Stdout != "a\x00b\x00" {
-			t.Fatalf("sort -z failed: %+v", res)
+		gobox := runGoboxCLI(t, env, "", "sort", "-z", "input.txt")
+		native := runNativeCLI(t, env, "", "sort", "-z", "input.txt")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("sort -z exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		if gobox.Stdout != native.Stdout {
+			t.Fatalf("sort -z stdout mismatch (NUL-separated)\ngobox:  %q\nnative: %q", gobox.Stdout, native.Stdout)
 		}
 	})
 
@@ -654,6 +864,7 @@ func TestParity_UniqCases(t *testing.T) {
 		{ID: "UNIQ-008", Name: "uniq -c -d combined", GoboxArgs: []string{"uniq", "-c", "-d", "input.txt"}, NativeCommand: "uniq", NativeArgs: []string{"-c", "-d", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) {
 			writeFile(t, filepath.Join(env.Dir, "input.txt"), "a\na\nb\n")
 		}, Normalize: collapseSpaces},
+		{ID: "UNIQ-001b", Name: "uniq -c empty file", GoboxArgs: []string{"uniq", "-c", "empty.txt"}, NativeCommand: "uniq", NativeArgs: []string{"-c", "empty.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "empty.txt"), "") }, Normalize: collapseSpaces},
 	})
 }
 
@@ -670,6 +881,7 @@ func TestParity_WcCases(t *testing.T) {
 		}, Normalize: collapseSpaces},
 		{ID: "WC-007", Name: "wc default (lines+words+bytes)", GoboxArgs: []string{"wc", "input.txt"}, NativeCommand: "wc", NativeArgs: []string{"input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "hello world\nfoo\n") }, Normalize: collapseSpaces},
 		{ID: "WC-008", Name: "wc -lw combined", GoboxArgs: []string{"wc", "-lw", "input.txt"}, NativeCommand: "wc", NativeArgs: []string{"-lw", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "hello world\nfoo\n") }, Normalize: collapseSpaces},
+		{ID: "WC-001b", Name: "wc -l empty file", GoboxArgs: []string{"wc", "-l", "empty.txt"}, NativeCommand: "wc", NativeArgs: []string{"-l", "empty.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "empty.txt"), "") }, Normalize: collapseSpaces},
 	})
 }
 
@@ -825,6 +1037,36 @@ func TestParity_Base64Cases(t *testing.T) {
 				writeFile(t, filepath.Join(env.Dir, "dirty.b64"), "aG!!Vs\nbG8=")
 			},
 		},
+		{
+			ID:            "BASE64-002b",
+			Name:          "base64 --decode (long form)",
+			GoboxArgs:     []string{"base64", "--decode", "data.b64"},
+			NativeCommand: "base64",
+			NativeArgs:    []string{"--decode", "data.b64"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "data.b64"), "aGVsbG8=")
+			},
+		},
+		{
+			ID:            "BASE64-003b",
+			Name:          "base64 --wrap (long form)",
+			GoboxArgs:     []string{"base64", "--wrap", "4", "data.bin"},
+			NativeCommand: "base64",
+			NativeArgs:    []string{"--wrap", "4", "data.bin"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "data.bin"), "hello world")
+			},
+		},
+		{
+			ID:            "BASE64-004b",
+			Name:          "base64 --decode --ignore-garbage (long form)",
+			GoboxArgs:     []string{"base64", "--decode", "--ignore-garbage", "dirty.b64"},
+			NativeCommand: "base64",
+			NativeArgs:    []string{"--decode", "--ignore-garbage", "dirty.b64"},
+			Setup: func(t *testing.T, env *parityEnv) {
+				writeFile(t, filepath.Join(env.Dir, "dirty.b64"), "aG!!Vs\nbG8=")
+			},
+		},
 	})
 
 	t.Run("BASE64-005", func(t *testing.T) {
@@ -853,7 +1095,66 @@ func TestParity_SeqCases(t *testing.T) {
 		{ID: "SEQ-001", Name: "seq 5", GoboxArgs: []string{"seq", "5"}, NativeCommand: "seq", NativeArgs: []string{"5"}},
 		{ID: "SEQ-002", Name: "seq 2 5", GoboxArgs: []string{"seq", "2", "5"}, NativeCommand: "seq", NativeArgs: []string{"2", "5"}},
 		{ID: "SEQ-003", Name: "seq 1 2 9 (step)", GoboxArgs: []string{"seq", "1", "2", "9"}, NativeCommand: "seq", NativeArgs: []string{"1", "2", "9"}},
-		{ID: "SEQ-004", Name: "seq -s , 5 (custom separator)", GoboxArgs: []string{"seq", "-s", ",", "5"}, NativeCommand: "seq", NativeArgs: []string{"-s", ",", "5"}},
+		{ID: "SEQ-005", Name: "seq -s , 5 (custom separator)", GoboxArgs: []string{"seq", "-s", ",", "5"}, NativeCommand: "seq", NativeArgs: []string{"-s", ",", "5"}},
+	})
+
+	t.Run("SEQ-004", func(t *testing.T) {
+		// -f FORMAT is a behavior case: the documented assertion (docs/TEST-CASES.md)
+		// is that the format changes each item's text representation relative to
+		// the default output while the underlying numeric sequence stays the same.
+		env := t.TempDir()
+		defaultOut := runGoboxCLI(t, env, "", "seq", "3")
+		if defaultOut.ExitCode != 0 {
+			t.Fatalf("seq 3 failed: %+v", defaultOut)
+		}
+		formatted := runGoboxCLI(t, env, "", "seq", "-f", "[%g]", "3")
+		if formatted.ExitCode != 0 {
+			t.Fatalf("seq -f failed: %+v", formatted)
+		}
+		if normalizeText(formatted.Stdout) == normalizeText(defaultOut.Stdout) {
+			t.Fatalf("seq -f FORMAT must change the per-item text representation relative to the default output, got identical output %q", formatted.Stdout)
+		}
+		want := []string{"[1]", "[2]", "[3]"}
+		got := nonEmptyLines(formatted.Stdout)
+		if len(got) != len(want) {
+			t.Fatalf("seq -f: expected %d lines %v, got %d: %v", len(want), want, len(got), got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("seq -f: line %d = %q, want %q (full output %q); numeric sequence must remain 1,2,3", i, got[i], want[i], formatted.Stdout)
+			}
+		}
+	})
+
+	t.Run("SEQ-006", func(t *testing.T) {
+		env := t.TempDir()
+		gobox := runGoboxCLI(t, env, "", "seq", "-w", "8", "12")
+		native := runNativeCLI(t, env, "", "seq", "-w", "8", "12")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("seq -w exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		if normalizeText(gobox.Stdout) != normalizeText(native.Stdout) {
+			t.Fatalf("seq -w stdout mismatch\ngobox: %q\nnative: %q", gobox.Stdout, native.Stdout)
+		}
+		defaultOut := runGoboxCLI(t, env, "", "seq", "8", "12")
+		if normalizeText(defaultOut.Stdout) == normalizeText(gobox.Stdout) {
+			t.Fatalf("seq -w must change text width (zero-padding) relative to default output, got identical %q", gobox.Stdout)
+		}
+	})
+
+	t.Run("SEQ-007", func(t *testing.T) {
+		res := runGoboxCLI(t, t.TempDir(), "", "seq", "-h")
+		if res.ExitCode != 0 {
+			t.Fatalf("seq -h failed: %+v", res)
+		}
+		if strings.TrimSpace(res.Stderr) != "" {
+			t.Fatalf("seq -h should not write stderr, got %q", res.Stderr)
+		}
+		for _, want := range []string{"Usage: gobox seq", "Options:", "-f, --format", "Examples:"} {
+			if !strings.Contains(res.Stdout, want) {
+				t.Fatalf("seq -h missing %q in %q", want, res.Stdout)
+			}
+		}
 	})
 }
 
@@ -882,7 +1183,25 @@ func TestParity_RandCases(t *testing.T) {
 	})
 
 	t.Run("RAND-002", func(t *testing.T) {
-		// rand -n 5: produces 5 bytes as hex (10 hex chars).
+		// Bare positional NUM operand (no -n flag): `rand 5` must generate 5
+		// bytes, i.e. 10 hex chars in the default hex encoding.
+		res := runGoboxCLI(t, t.TempDir(), "", "rand", "5")
+		if res.ExitCode != 0 {
+			t.Fatalf("rand 5 failed: %+v", res)
+		}
+		line := strings.TrimSpace(res.Stdout)
+		if len(line) != 10 {
+			t.Fatalf("rand 5 (positional NUM): expected 10 hex chars (5 bytes), got %d chars: %q", len(line), line)
+		}
+		for _, c := range line {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+				t.Fatalf("rand 5 output %q contains non-hex character %q", line, string(c))
+			}
+		}
+	})
+
+	t.Run("RAND-003", func(t *testing.T) {
+		// rand -n 5: explicit byte-count flag produces 5 bytes as hex (10 hex chars).
 		res := runGoboxCLI(t, t.TempDir(), "", "rand", "-n", "5")
 		if res.ExitCode != 0 {
 			t.Fatalf("rand -n 5 failed: %+v", res)
@@ -896,14 +1215,102 @@ func TestParity_RandCases(t *testing.T) {
 		}
 	})
 
-	t.Run("RAND-003", func(t *testing.T) {
-		// rand -b 32: base64 mode with 32 bytes; output must be non-empty.
-		res := runGoboxCLI(t, t.TempDir(), "", "rand", "-b", "32")
+	t.Run("RAND-004", func(t *testing.T) {
+		// -hex explicit mode: output must be exactly lowercase hex characters,
+		// with the correct length for the default 32-byte payload, and a
+		// single trailing newline (the documented newline contract).
+		res := runGoboxCLI(t, t.TempDir(), "", "rand", "-hex")
 		if res.ExitCode != 0 {
-			t.Fatalf("rand -b 32 failed: %+v", res)
+			t.Fatalf("rand -hex failed: %+v", res)
 		}
-		if strings.TrimSpace(res.Stdout) == "" {
-			t.Fatalf("rand -b 32 produced no output")
+		if !strings.HasSuffix(res.Stdout, "\n") {
+			t.Fatalf("rand -hex output must end with a newline, got %q", res.Stdout)
+		}
+		if strings.Count(res.Stdout, "\n") != 1 {
+			t.Fatalf("rand -hex output must contain exactly one newline, got %q", res.Stdout)
+		}
+		line := strings.TrimSpace(res.Stdout)
+		if len(line) != 64 {
+			t.Fatalf("rand -hex: expected 64 hex chars (32 bytes), got %d chars: %q", len(line), line)
+		}
+		for _, c := range line {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+				t.Fatalf("rand -hex output %q contains non-hex character %q", line, string(c))
+			}
+		}
+	})
+
+	t.Run("RAND-005", func(t *testing.T) {
+		// -base64: must change the encoding alphabet and length semantics
+		// relative to the default hex output. For 32 random bytes, base64
+		// standard encoding is 44 characters (including one '=' padding
+		// char), versus 64 hex characters. Decoding must round-trip to
+		// exactly 32 bytes.
+		hexRes := runGoboxCLI(t, t.TempDir(), "", "rand", "-hex")
+		if hexRes.ExitCode != 0 {
+			t.Fatalf("rand -hex failed: %+v", hexRes)
+		}
+		b64Res := runGoboxCLI(t, t.TempDir(), "", "rand", "-base64")
+		if b64Res.ExitCode != 0 {
+			t.Fatalf("rand -base64 failed: %+v", b64Res)
+		}
+		line := strings.TrimSpace(b64Res.Stdout)
+		if line == "" {
+			t.Fatalf("rand -base64 produced no output")
+		}
+		if len(line) == len(strings.TrimSpace(hexRes.Stdout)) {
+			t.Fatalf("rand -base64 output length (%d) must differ from -hex output length for the same byte count", len(line))
+		}
+		for _, c := range line {
+			isAlpha := (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+			isDigit := c >= '0' && c <= '9'
+			if !isAlpha && !isDigit && c != '+' && c != '/' && c != '=' {
+				t.Fatalf("rand -base64 output %q contains a character outside the base64 alphabet: %q", line, string(c))
+			}
+		}
+		decoded, err := base64.StdEncoding.DecodeString(line)
+		if err != nil {
+			t.Fatalf("rand -base64 output is not valid base64: %v (output %q)", err, line)
+		}
+		if len(decoded) != 32 {
+			t.Fatalf("rand -base64: decoded payload should be 32 bytes, got %d", len(decoded))
+		}
+	})
+
+	t.Run("RAND-006", func(t *testing.T) {
+		// -out FILE: the random payload must be written to the file, and
+		// stdout must not be polluted with the random body.
+		env := t.TempDir()
+		outPath := filepath.Join(env, "rand.out")
+		res := runGoboxCLI(t, env, "", "rand", "-n", "8", "-out", outPath)
+		if res.ExitCode != 0 {
+			t.Fatalf("rand -out failed: %+v", res)
+		}
+		if res.Stdout != "" {
+			t.Fatalf("rand -out should not write the random payload to stdout, got %q", res.Stdout)
+		}
+		data, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("rand -out: output file missing: %v", err)
+		}
+		line := strings.TrimSpace(string(data))
+		if len(line) != 16 {
+			t.Fatalf("rand -n 8 -out: expected 16 hex chars (8 bytes) in output file, got %d: %q", len(line), line)
+		}
+	})
+
+	t.Run("RAND-007", func(t *testing.T) {
+		res := runGoboxCLI(t, t.TempDir(), "", "rand", "-h")
+		if res.ExitCode != 0 {
+			t.Fatalf("rand -h failed: %+v", res)
+		}
+		if strings.TrimSpace(res.Stderr) != "" {
+			t.Fatalf("rand -h should not write stderr, got %q", res.Stderr)
+		}
+		for _, want := range []string{"Usage: gobox rand", "Options:", "-base64", "Examples:"} {
+			if !strings.Contains(res.Stdout, want) {
+				t.Fatalf("rand -h missing %q in %q", want, res.Stdout)
+			}
 		}
 	})
 }

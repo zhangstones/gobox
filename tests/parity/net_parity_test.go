@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -185,6 +187,92 @@ func ipBlocks(out string) map[string][]string {
 	return blocks
 }
 
+// startSlowTCPEchoServer behaves like startTCPEchoServer but sleeps for delay
+// before echoing back each chunk read from the connection. This lets nc bench
+// concurrency tests (NC-010) prove that -c genuinely overlaps connections in
+// time, rather than only reporting the configured -c value back in its
+// summary line.
+func startSlowTCPEchoServer(t *testing.T, addr string, delay time.Duration) (string, string, func()) {
+	t.Helper()
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("listen tcp %s: %v", addr, err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 64*1024)
+				for {
+					n, rerr := c.Read(buf)
+					if n > 0 {
+						time.Sleep(delay)
+						if _, werr := c.Write(buf[:n]); werr != nil {
+							return
+						}
+					}
+					if rerr != nil {
+						return
+					}
+				}
+			}(conn)
+		}
+	}()
+	host, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("split listener addr: %v", err)
+	}
+	return host, port, func() {
+		_ = ln.Close()
+		<-done
+	}
+}
+
+// newRequestCountingServer returns an httptest.Server plus a pointer to an
+// atomic counter that is incremented once per real HTTP request it receives.
+// This lets bench-mode tests prove the actual number of requests the server
+// observed, rather than trusting the summary line curl prints back.
+func newRequestCountingServer() (*httptest.Server, *int64) {
+	var received int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&received, 1)
+		fmt.Fprint(w, "ok")
+	}))
+	return srv, &received
+}
+
+// newConcurrencyTrackingServer returns an httptest.Server plus pointers to
+// atomic counters for the total number of requests received and the maximum
+// number of requests genuinely in flight at the same time (each held open for
+// delay). This lets bench -c tests prove real overlapping execution instead
+// of only checking that the printed summary echoes back the configured
+// concurrency value.
+func newConcurrencyTrackingServer(delay time.Duration) (srv *httptest.Server, received *int64, maxConcurrent *int64) {
+	received = new(int64)
+	maxConcurrent = new(int64)
+	var current int64
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(received, 1)
+		n := atomic.AddInt64(&current, 1)
+		for {
+			old := atomic.LoadInt64(maxConcurrent)
+			if n <= old || atomic.CompareAndSwapInt64(maxConcurrent, old, n) {
+				break
+			}
+		}
+		time.Sleep(delay)
+		atomic.AddInt64(&current, -1)
+		fmt.Fprint(w, "ok")
+	}))
+	return srv, received, maxConcurrent
+}
+
 func findNetLineWithPrefix(out, prefix string) string {
 	for _, line := range nonEmptyLines(out) {
 		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
@@ -208,9 +296,46 @@ func netstatHeaderFields(out string) []string {
 	return strings.Fields(header)
 }
 
+// parseHelpSections walks help text line by line, tracking which of the given
+// section headings (exact-match lines after trimming) is currently active, and
+// returns a map from "flag substring found on a line" to the section heading
+// that line was nested under. This lets tests assert that a flag is documented
+// under the *correct* group, not merely that the flag text appears somewhere.
+func parseHelpSections(out string, headings []string) map[string]string {
+	result := make(map[string]string)
+	current := ""
+	for _, line := range strings.Split(out, "\n") {
+		trimmed := strings.TrimSpace(line)
+		matchedHeading := false
+		for _, h := range headings {
+			if trimmed == h {
+				current = h
+				matchedHeading = true
+				break
+			}
+		}
+		if matchedHeading || trimmed == "" || current == "" {
+			continue
+		}
+		// Record every "-x, --long" / "--long ARG" token found on this line
+		// against the currently active section.
+		for _, want := range []string{
+			"-t, --tcp", "-u, --udp", "-x, --unix", "-l, --listening",
+			"-p, --programs", "-e, --extend", "-o, --timers", "-n, --numeric", "-W, --wide",
+			"-r, --route", "-i, --interfaces", "-s, --statistics", "-c, --continuous", "-a, --all",
+			"--sort FIELD", "--state STATES", "--port PORT",
+		} {
+			if strings.Contains(trimmed, want) {
+				result[want] = current
+			}
+		}
+	}
+	return result
+}
+
 func TestParity_TwCases(t *testing.T) {
 	t.Run("TW-001", func(t *testing.T) {
-		// Help text: exit 0 and key usage tokens present.
+		// Help text still exits 0 and mentions the flag.
 		res := runGoboxCLI(t, t.TempDir(), "", "tw", "-h")
 		if res.ExitCode != 0 {
 			t.Fatalf("tw -h should succeed: %+v", res)
@@ -221,6 +346,41 @@ func TestParity_TwCases(t *testing.T) {
 				t.Fatalf("tw -h missing %q in help text:\n%s", want, out)
 			}
 		}
+
+		// Real contract: `tw -p PORT` must actually bind and listen on PORT.
+		// tw blocks forever (http.Server.ListenAndServe), so launch it as a
+		// subprocess with a bounded timeout and dial the port while it runs.
+		probe, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("reserve ephemeral port: %v", err)
+		}
+		port := probe.Addr().(*net.TCPAddr).Port
+		if err := probe.Close(); err != nil {
+			t.Fatalf("release ephemeral port: %v", err)
+		}
+
+		env := t.TempDir()
+		resCh := make(chan parityResult, 1)
+		go func() {
+			resCh <- runGoboxSubprocess(t, env, []string{"tw", "-p", strconv.Itoa(port)}, 1500*time.Millisecond)
+		}()
+
+		var dialErr error
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			conn, derr := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
+			if derr == nil {
+				_ = conn.Close()
+				dialErr = nil
+				break
+			}
+			dialErr = derr
+			time.Sleep(50 * time.Millisecond)
+		}
+		if dialErr != nil {
+			t.Fatalf("tw -p %d should bind a listening TCP socket on the requested port, dial failed: %v", port, dialErr)
+		}
+		<-resCh
 	})
 
 	t.Run("TW-002", func(t *testing.T) {
@@ -242,8 +402,85 @@ func TestParity_TwCases(t *testing.T) {
 	})
 
 	t.Run("TW-003", func(t *testing.T) {
-		// SO_REUSEADDR is a gobox-only feature with no native tw equivalent.
-		t.Skip("gobox-only; not parity-testable: SO_REUSEADDR contract requires a real TCP listener lifecycle")
+		// SO_REUSEADDR is a gobox-only feature with no native tw equivalent, but the
+		// contract is still directly testable: a TCP local port that has a lingering
+		// TIME_WAIT socket (created by the server actively closing a connection)
+		// cannot be re-bound by a plain listener, but CAN be re-bound immediately by
+		// a listener using SO_REUSEADDR. tw -r must exhibit the latter behavior.
+		if runtime.GOOS != "linux" {
+			t.Skip("linux only: TIME_WAIT/SO_REUSEADDR semantics assumed here are Linux-specific")
+		}
+
+		probe, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("reserve ephemeral port: %v", err)
+		}
+		port := probe.Addr().(*net.TCPAddr).Port
+		if err := probe.Close(); err != nil {
+			t.Fatalf("release ephemeral port: %v", err)
+		}
+		addr := fmt.Sprintf("127.0.0.1:%d", port)
+
+		waitDialable := func(timeout time.Duration) bool {
+			deadline := time.Now().Add(timeout)
+			for time.Now().Before(deadline) {
+				conn, derr := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+				if derr == nil {
+					_ = conn.Close()
+					return true
+				}
+				time.Sleep(30 * time.Millisecond)
+			}
+			return false
+		}
+
+		// Step 1: start a plain (non-reuse) tw server and force it to actively
+		// close a connection, which leaves a TIME_WAIT socket bound to `port`.
+		env := t.TempDir()
+		plainDone := make(chan parityResult, 1)
+		go func() {
+			plainDone <- runGoboxSubprocess(t, env, []string{"tw", "-p", strconv.Itoa(port)}, 1200*time.Millisecond)
+		}()
+		if !waitDialable(time.Second) {
+			t.Fatalf("baseline tw -p %d never became dialable", port)
+		}
+		// Request with "Connection: close" so the server (tw) actively closes,
+		// leaving its side of the socket in TIME_WAIT bound to `port`.
+		req, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/", nil)
+		req.Close = true
+		resp, reqErr := http.DefaultClient.Do(req)
+		if reqErr == nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+		<-plainDone // subprocess is killed by its own timeout
+
+		// Step 2: immediately try to bind a plain listener (no SO_REUSEADDR) on the
+		// same port; if TIME_WAIT sockets are lingering, this should fail quickly.
+		blockedByTimeWait := false
+		if ln, lerr := net.Listen("tcp", addr); lerr != nil {
+			blockedByTimeWait = true
+		} else {
+			_ = ln.Close()
+		}
+		if !blockedByTimeWait {
+			t.Skip("environment did not produce a lingering TIME_WAIT socket on the probe port; SO_REUSEADDR contract not observable here")
+		}
+
+		// Step 3: `tw -r -p PORT` must be able to bind despite the TIME_WAIT socket.
+		reuseDone := make(chan parityResult, 1)
+		go func() {
+			reuseDone <- runGoboxSubprocess(t, env, []string{"tw", "-r", "-p", strconv.Itoa(port)}, 1200*time.Millisecond)
+		}()
+		reuseOK := waitDialable(time.Second)
+		<-reuseDone
+		if !reuseOK {
+			t.Fatalf("tw -r -p %d should bind despite a lingering TIME_WAIT socket (SO_REUSEADDR contract), but it never became dialable", port)
+		}
+
+		// Step 4 (contrast): immediately after, without -r, on the same still-recent
+		// TIME_WAIT state should still be avoidable to prove the two behave
+		// differently is best-effort; the primary proof above (reuseOK) is sufficient.
 	})
 
 	t.Run("TW-004", func(t *testing.T) {
@@ -621,6 +858,22 @@ func TestParity_NetstatCases(t *testing.T) {
 		if len(baseRows) == 0 || len(rows) != len(baseRows) {
 			t.Fatalf("netstat -p should preserve the filtered row set\n--- base ---\n%s\n--- with -p ---\n%s", base.Stdout, withProg.Stdout)
 		}
+		// Value correctness: the annotated PID must equal the real PID of the
+		// process holding the listener. runGoboxCLI executes in-process, so the
+		// listening socket created above belongs to os.Getpid().
+		fields := strings.Fields(row)
+		pidProgram := fields[len(fields)-1]
+		pidStr, _, ok := strings.Cut(pidProgram, "/")
+		if !ok {
+			t.Fatalf("netstat -p PID/Program column malformed, want PID/PROGRAM, got %q", pidProgram)
+		}
+		gotPID, err := strconv.Atoi(pidStr)
+		if err != nil {
+			t.Fatalf("netstat -p PID column %q is not numeric: %v", pidStr, err)
+		}
+		if gotPID != os.Getpid() {
+			t.Fatalf("netstat -p PID column should equal the real PID (%d) of the process holding the listener, got %d\nrow=%q", os.Getpid(), gotPID, row)
+		}
 	})
 
 	t.Run("NETSTAT-011", func(t *testing.T) {
@@ -698,8 +951,31 @@ func TestParity_NetstatCases(t *testing.T) {
 		if len(rows) == 0 || len(strings.Fields(rows[0])) <= len(strings.Fields(baseRows[0])) {
 			t.Fatalf("netstat -e should extend the filtered row with extra columns\n%s", extended.Stdout)
 		}
-		if netstatFindRow(rows, port) == "" {
+		targetRow := netstatFindRow(rows, port)
+		if targetRow == "" {
 			t.Fatalf("netstat -e missing filtered listener row\n%s", extended.Stdout)
+		}
+		// Value correctness: User/Inode are appended as the last two columns
+		// (base has 6 columns: Recv-Q Send-Q Proto LocalAddress RemoteAddress
+		// State). The listener was created by this test process, so User must
+		// equal the real UID of the current process, and Inode must be a
+		// genuine positive socket inode number.
+		rowFields := strings.Fields(targetRow)
+		if len(rowFields) < 8 {
+			t.Fatalf("netstat -e row too short to contain User/Inode columns: %q", targetRow)
+		}
+		userField := rowFields[6]
+		inodeField := rowFields[7]
+		gotUID, err := strconv.Atoi(userField)
+		if err != nil {
+			t.Fatalf("netstat -e User column %q is not numeric: %v", userField, err)
+		}
+		if gotUID != os.Getuid() {
+			t.Fatalf("netstat -e User column should equal the real UID (%d) of the process holding the listener, got %d\nrow=%q", os.Getuid(), gotUID, targetRow)
+		}
+		inodeVal, err := strconv.ParseUint(inodeField, 10, 64)
+		if err != nil || inodeVal == 0 {
+			t.Fatalf("netstat -e Inode column should be a positive socket inode number, got %q (err=%v)", inodeField, err)
 		}
 	})
 
@@ -728,8 +1004,22 @@ func TestParity_NetstatCases(t *testing.T) {
 		if len(rows) != len(baseRows) || len(fields) <= len(strings.Fields(baseHeader)) {
 			t.Fatalf("netstat -o should preserve row set and add timer column\n--- base ---\n%s\n--- with timers ---\n%s", base.Stdout, withTimers.Stdout)
 		}
-		if len(rows) == 0 || netstatFindRow(rows, port) == "" {
+		targetRow := netstatFindRow(rows, port)
+		if len(rows) == 0 || targetRow == "" {
 			t.Fatalf("netstat -o should keep the filtered listener row\n%s", withTimers.Stdout)
+		}
+		// Value correctness: the Timer column for an idle LISTEN socket is
+		// rendered straight from /proc/net/tcp's tm_when field, which is the
+		// literal string "00:00000000" when no timer is armed. Verify the
+		// actual annotated value, not just that some non-empty column exists.
+		timerRe := regexp.MustCompile(`^[0-9A-Fa-f]{2}:[0-9A-Fa-f]{8}$`)
+		rowFields := strings.Fields(targetRow)
+		timerVal := rowFields[len(rowFields)-1]
+		if !timerRe.MatchString(timerVal) {
+			t.Fatalf("netstat -o Timer column should match the raw /proc/net/tcp timer format XX:XXXXXXXX for an idle LISTEN socket, got %q\nrow=%q", timerVal, targetRow)
+		}
+		if timerVal != "00:00000000" {
+			t.Fatalf("netstat -o Timer column for an idle LISTEN socket should be off (00:00000000), got %q", timerVal)
 		}
 	})
 
@@ -780,6 +1070,15 @@ func TestParity_NetstatCases(t *testing.T) {
 		row := netstatFindRow(rows, strconv.Itoa(port))
 		if row == "" || netstatProto(row) != "TCP" || !strings.Contains(row, "/") {
 			t.Fatalf("netstat -tnlp should keep the filtered listener row and annotate it with pid/program\n%s", res.Stdout)
+		}
+		// TEST-DESIGN.md §14.2: -tnlp must be byte-for-byte equivalent to passing
+		// -t -n -l -p as four separate arguments (the literal combination proof).
+		split := runGoboxCLI(t, t.TempDir(), "", "netstat", "-t", "-n", "-l", "-p", "--port", strconv.Itoa(port))
+		if split.ExitCode != 0 {
+			t.Fatalf("netstat -t -n -l -p (split form) failed: %+v", split)
+		}
+		if split.Stdout != res.Stdout {
+			t.Fatalf("netstat -t -n -l -p (split) should be byte-for-byte identical to -tnlp (combined)\n--- split ---\n%s\n--- combined ---\n%s", split.Stdout, res.Stdout)
 		}
 	})
 
@@ -979,6 +1278,34 @@ func TestParity_NetstatCases(t *testing.T) {
 				t.Fatalf("netstat --help missing %q\nstdout=%q\nstderr=%q", want, res.Stdout, res.Stderr)
 			}
 		}
+		// Verify flags are actually nested under the correct group heading, not
+		// merely present somewhere in the help text.
+		sections := parseHelpSections(out, []string{"Filters:", "Output:", "Views:", "Sorting:"})
+		wantGroup := map[string]string{
+			"-t, --tcp":        "Filters:",
+			"-u, --udp":        "Filters:",
+			"-x, --unix":       "Filters:",
+			"-l, --listening":  "Filters:",
+			"-p, --programs":   "Output:",
+			"-e, --extend":     "Output:",
+			"-o, --timers":     "Output:",
+			"-n, --numeric":    "Output:",
+			"-W, --wide":       "Output:",
+			"-r, --route":      "Views:",
+			"-i, --interfaces": "Views:",
+			"-s, --statistics": "Views:",
+			"-c, --continuous": "Views:",
+			"--sort FIELD":     "Sorting:",
+		}
+		for flag, wantSection := range wantGroup {
+			gotSection, ok := sections[flag]
+			if !ok {
+				t.Fatalf("netstat --help: flag %q not found under any recognized section heading\n%s", flag, out)
+			}
+			if gotSection != wantSection {
+				t.Fatalf("netstat --help: flag %q should be grouped under %q, but was found under %q\n%s", flag, wantSection, gotSection, out)
+			}
+		}
 	})
 
 	t.Run("NETSTAT-024", func(t *testing.T) {
@@ -1010,10 +1337,11 @@ func TestParity_NetstatCases(t *testing.T) {
 		if runtime.GOOS != "linux" {
 			t.Skip("linux only")
 		}
-		// BUG: gobox netstat silently ignores invalid sort keys and returns exit 0.
-		// The correct behavior is a non-zero exit with an error message.
-		// See /tmp/bugs_net.md: NETSTAT-SORT-INVALID.
-		t.Skip("BUG: gobox netstat --sort invalidkey returns exit 0 instead of non-zero; see /tmp/bugs_net.md")
+		// Confirmed implementation bug (see BUGS.md): gobox netstat silently
+		// ignores invalid sort keys and returns exit 0 instead of a non-zero
+		// exit with an error message. Per project convention this strict
+		// assertion is kept in place (not weakened/skipped) so the test
+		// fails until the underlying bug is fixed.
 		res := runGoboxCLI(t, t.TempDir(), "", "netstat", "--sort", "invalidkey")
 		if res.ExitCode == 0 {
 			t.Fatalf("netstat --sort invalidkey should return non-zero exit, got exit 0: %+v", res)
@@ -1042,6 +1370,13 @@ func TestParity_IpCases(t *testing.T) {
 		if !strings.Contains(strings.Join(golo, "\n"), "127.0.0.1/8") || !strings.Contains(strings.Join(nlo, "\n"), "127.0.0.1/8") {
 			t.Fatalf("ip addr loopback block missing inet row\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
+		// IPv6 loopback (::1/128) must also be reported, not just IPv4.
+		if !strings.Contains(strings.Join(golo, "\n"), "::1/128") {
+			t.Fatalf("ip addr loopback block missing IPv6 ::1/128 row\ngobox=%s", gobox.Stdout)
+		}
+		if !strings.Contains(strings.Join(nlo, "\n"), "::1/128") {
+			t.Fatalf("native ip addr loopback block missing IPv6 ::1/128 row\nnative=%s", native.Stdout)
+		}
 	})
 
 	t.Run("IP-002", func(t *testing.T) {
@@ -1058,12 +1393,29 @@ func TestParity_IpCases(t *testing.T) {
 		if !strings.Contains(gobox.Stdout, " lo ") || !strings.Contains(native.Stdout, " lo ") {
 			t.Fatalf("ip -o addr missing loopback line\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
-		// BUG: gobox ip -o addr always emits "scope global" even for loopback (should be "scope host").
-		// See /tmp/bugs_net.md: IP-SCOPE-LOOPBACK.
-		// For now, skip the host/global scope check and only verify scope is present.
 		for _, line := range nonEmptyLines(gobox.Stdout) {
 			if strings.HasPrefix(line, "    ") || !strings.Contains(line, "scope ") {
 				t.Fatalf("ip -o addr should emit one-line scoped records, got %q", line)
+			}
+		}
+		// Strict correctness: the loopback interface's addresses must show
+		// "scope host" (real `ip addr` semantics), not "scope global". This was
+		// previously weakened to only check for the presence of any "scope "
+		// token, papering over a scope-computation bug; verify the real value.
+		for _, line := range nonEmptyLines(gobox.Stdout) {
+			if !strings.Contains(line, " lo ") {
+				continue
+			}
+			if !strings.Contains(line, "scope host") {
+				t.Fatalf("ip -o addr loopback record should report \"scope host\", got: %q", line)
+			}
+		}
+		for _, line := range nonEmptyLines(native.Stdout) {
+			if !strings.Contains(line, " lo ") {
+				continue
+			}
+			if !strings.Contains(line, "scope host") {
+				t.Fatalf("native ip -o addr loopback record should report \"scope host\", got: %q", line)
 			}
 		}
 	})
@@ -1087,10 +1439,12 @@ func TestParity_IpCases(t *testing.T) {
 		if !strings.Contains(nlo[1], "link/loopback") {
 			t.Fatalf("native ip link loopback should show link/loopback: %q", nlo[1])
 		}
-		// BUG: gobox always emits "link/ether" even for loopback (should be "link/loopback").
-		// We still verify the link/ prefix is present; see /tmp/bugs_net.md: IP-LINK-LOOPBACK.
-		if !strings.Contains(golo[1], "link/") {
-			t.Fatalf("ip link loopback block missing link-layer detail\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+		// Strict correctness: gobox must also show "link/loopback" for the
+		// loopback interface, not "link/ether". This was previously weakened to
+		// only check for any "link/" prefix, papering over a link-type bug;
+		// verify the real value.
+		if !strings.Contains(golo[1], "link/loopback") {
+			t.Fatalf("ip link loopback block should show link/loopback, got %q\ngobox=%s\nnative=%s", golo[1], gobox.Stdout, native.Stdout)
 		}
 	})
 
@@ -1227,6 +1581,53 @@ func TestParity_CurlCases(t *testing.T) {
 	})
 
 	t.Run("CURL-002", func(t *testing.T) {
+		// Real failing-request fixture: a genuine HTTP 500 with -f (fail on
+		// error status). This lets us build the documented -s-only vs -s -S
+		// baseline/variant comparison that proves -S actually restores the
+		// error text that -s alone suppresses.
+		failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "boom", http.StatusInternalServerError)
+		}))
+		defer failServer.Close()
+		env := t.TempDir()
+
+		silentOnly := runGoboxCLI(t, env, "", "curl", "-f", "-s", failServer.URL)
+		silentShowError := runGoboxCLI(t, env, "", "curl", "-f", "-s", "-S", failServer.URL)
+		nativeSilentOnly := runNativeCLI(t, env, "", "curl", "-f", "-s", failServer.URL)
+		nativeSilentShowError := runNativeCLI(t, env, "", "curl", "-f", "-s", "-S", failServer.URL)
+
+		if silentOnly.ExitCode == 0 || silentShowError.ExitCode == 0 {
+			t.Fatalf("curl -f on a 500 status should fail: silentOnly=%+v silentShowError=%+v", silentOnly, silentShowError)
+		}
+		if nativeSilentOnly.ExitCode == 0 || nativeSilentShowError.ExitCode == 0 {
+			t.Fatalf("native curl -f on a 500 status should fail: silentOnly=%+v silentShowError=%+v", nativeSilentOnly, nativeSilentShowError)
+		}
+		// Baseline: -s alone must suppress the error message.
+		if strings.TrimSpace(silentOnly.Stderr) != "" {
+			t.Fatalf("curl -f -s (without -S) should suppress stderr on failure, got: %q", silentOnly.Stderr)
+		}
+		if strings.TrimSpace(nativeSilentOnly.Stderr) != "" {
+			t.Fatalf("native curl -f -s (without -S) should suppress stderr on failure, got: %q", nativeSilentOnly.Stderr)
+		}
+		// Variant: -s -S must restore the error message relative to the -s-only baseline.
+		if strings.TrimSpace(silentShowError.Stderr) == "" {
+			t.Fatalf("curl -f -s -S should restore the error message suppressed by -s, got empty stderr")
+		}
+		if strings.TrimSpace(nativeSilentShowError.Stderr) == "" {
+			t.Fatalf("native curl -f -s -S should restore the error message suppressed by -s, got empty stderr")
+		}
+		if silentOnly.Stderr == silentShowError.Stderr {
+			t.Fatalf("-S should change stderr relative to the -s-only baseline\n--- -s only ---\n%q\n--- -s -S ---\n%q", silentOnly.Stderr, silentShowError.Stderr)
+		}
+		if !strings.Contains(silentShowError.Stderr, "500") {
+			t.Fatalf("curl -f -s -S stderr should mention the HTTP status code: %q", silentShowError.Stderr)
+		}
+		if strings.TrimSpace(silentOnly.Stdout) != "" || strings.TrimSpace(silentShowError.Stdout) != "" {
+			t.Fatalf("curl -f on a failing request should not print a body to stdout: silentOnly=%q silentShowError=%q", silentOnly.Stdout, silentShowError.Stdout)
+		}
+
+		// Secondary case: a parse-time failure (malformed URL) must also fail
+		// and must not leak stdout.
 		res := runGoboxMainCLI(t, t.TempDir(), "", "curl", "-s", "-S", "://bad-url")
 		native := runNativeCLI(t, t.TempDir(), "", "curl", "-s", "-S", "://bad-url")
 		if res.ExitCode == 0 || native.ExitCode == 0 {
@@ -1235,7 +1636,6 @@ func TestParity_CurlCases(t *testing.T) {
 		if !strings.Contains(strings.ToLower(res.Stderr), "curl:") {
 			t.Fatalf("curl -s -S missing gobox error prefix: %+v", res)
 		}
-		// Stderr must contain a specific error indicator; stdout must be empty.
 		stderrLower := strings.ToLower(res.Stderr)
 		if !strings.Contains(stderrLower, "failed") && !strings.Contains(stderrLower, "scheme") &&
 			!strings.Contains(stderrLower, "protocol") && !strings.Contains(stderrLower, "url") &&
@@ -1328,6 +1728,17 @@ func TestParity_CurlCases(t *testing.T) {
 			if gobox.ExitCode != native.ExitCode {
 				t.Fatalf("curl -f exit mismatch %d != %d", gobox.ExitCode, native.ExitCode)
 			}
+			if gobox.ExitCode == 0 {
+				t.Fatalf("curl -f against a failing status should return non-zero exit: %+v", gobox)
+			}
+			// Real curl -f behavior: on failure, stdout must be empty (the body is
+			// suppressed), not just the exit code compared.
+			if strings.TrimSpace(gobox.Stdout) != "" {
+				t.Fatalf("curl -f should suppress stdout on failure, got: %q", gobox.Stdout)
+			}
+			if strings.TrimSpace(native.Stdout) != "" {
+				t.Fatalf("native curl -f should suppress stdout on failure, got: %q", native.Stdout)
+			}
 		}},
 	} {
 		t.Run(tc.ID, func(t *testing.T) {
@@ -1379,16 +1790,35 @@ func TestParity_CurlCases(t *testing.T) {
 	})
 
 	t.Run("CURL-013", func(t *testing.T) {
-		gobox := runGoboxCLI(t, t.TempDir(), "", "curl", "--connect-timeout", "0.05", "http://10.255.255.1:81")
-		native := runNativeCLI(t, t.TempDir(), "", "curl", "--noproxy", "*", "-s", "--connect-timeout", "0.05", "http://10.255.255.1:81")
+		// NOTE: TEST-DESIGN.md §6.2 prefers a fully-controlled local target, but a
+		// deterministic "TCP connect() that hangs" without external routing
+		// requires either firewall DROP rules or kernel/network-stack control
+		// that isn't reliably available in sandboxed CI (no privileged iptables,
+		// no guaranteed unresponsive-but-routable local address). We keep the
+		// well-known unroutable RFC1918 probe address (never traverses the real
+		// internet; it simply has no responder on this private network) but
+		// harden the test against environments where it resolves immediately
+		// (e.g. ENETUNREACH from a restrictive sandbox network namespace)
+		// instead of timing out, which is an environment difference, not a
+		// gobox bug: skip rather than falsely failing in that case.
+		target := "http://10.255.255.1:81"
+		start := time.Now()
+		gobox := runGoboxCLI(t, t.TempDir(), "", "curl", "--connect-timeout", "0.05", target)
+		elapsed := time.Since(start)
+		native := runNativeCLI(t, t.TempDir(), "", "curl", "--noproxy", "*", "-s", "--connect-timeout", "0.05", target)
 		if gobox.ExitCode == 0 || native.ExitCode == 0 {
 			t.Fatalf("curl --connect-timeout expected failure gobox=%+v native=%+v", gobox, native)
+		}
+		stderrLower := strings.ToLower(gobox.Stderr)
+		immediateUnreachable := strings.Contains(stderrLower, "network is unreachable") ||
+			strings.Contains(stderrLower, "no route to host")
+		if immediateUnreachable && elapsed < 20*time.Millisecond {
+			t.Skipf("environment returned an immediate network-unreachable error for the unroutable probe address instead of a connect timeout (elapsed=%s); connect-timeout semantics not observable here: %q", elapsed, gobox.Stderr)
 		}
 		if strings.TrimSpace(gobox.Stdout) != "" {
 			t.Fatalf("curl --connect-timeout should not produce a successful response body: %+v", gobox)
 		}
 		// Stderr must contain a timeout-related message.
-		stderrLower := strings.ToLower(gobox.Stderr)
 		if !strings.Contains(stderrLower, "timeout") && !strings.Contains(stderrLower, "timed out") &&
 			!strings.Contains(stderrLower, "i/o timeout") {
 			t.Fatalf("curl --connect-timeout stderr should mention timeout, got: %q", gobox.Stderr)
@@ -1484,34 +1914,66 @@ func TestParity_CurlCases(t *testing.T) {
 
 	t.Run("CURL-019", func(t *testing.T) {
 		env := t.TempDir()
-		base := runGoboxCLI(t, env, "", "curl", "--bench", "-n", "4", server.URL)
-		res := runGoboxCLI(t, env, "", "curl", "--bench", "-c", "2", "-n", "4", server.URL)
-		if base.ExitCode != 0 || res.ExitCode != 0 {
-			t.Fatalf("curl bench concurrent failed base=%+v concurrent=%+v", base, res)
+		// Real server-side proof: track both the total request count and the
+		// maximum number of requests genuinely in flight at once, instead of
+		// only checking that the printed summary echoes back -c/-n.
+		reqDelay := 60 * time.Millisecond
+		trackSrv, received, maxConcurrent := newConcurrencyTrackingServer(reqDelay)
+		defer trackSrv.Close()
+		res := runGoboxCLI(t, env, "", "curl", "--bench", "-c", "2", "-n", "4", trackSrv.URL)
+		if res.ExitCode != 0 {
+			t.Fatalf("curl bench concurrent failed: %+v", res)
 		}
 		req, conc, failed := curlBenchRequestsLine(t, res.Stdout)
-		baseReq, baseConc, _ := curlBenchRequestsLine(t, base.Stdout)
 		if req != 4 || conc != 2 || failed != 0 {
 			t.Fatalf("curl bench -c should report configured requests/concurrency, got requests=%d concurrency=%d failed=%d\n%s", req, conc, failed, res.Stdout)
 		}
-		if baseReq != 4 || baseConc != 1 {
-			t.Fatalf("curl bench baseline unexpected requests/concurrency=%d/%d\n%s", baseReq, baseConc, base.Stdout)
+		if got := atomic.LoadInt64(received); got != 4 {
+			t.Fatalf("curl bench -c 2 -n 4 should make exactly 4 real server requests, server observed %d", got)
+		}
+		if got := atomic.LoadInt64(maxConcurrent); got < 2 {
+			t.Fatalf("curl bench -c 2 should genuinely overlap requests (max observed in-flight >= 2), server observed max in-flight=%d; a sequential loop that merely echoes -c would fail this", got)
 		}
 		if findNetLineWithPrefix(res.Stdout, "Latency:") == "" || findNetLineWithPrefix(res.Stdout, "Throughput:") == "" {
 			t.Fatalf("curl bench -c missing latency/throughput summary\n%s", res.Stdout)
+		}
+
+		// Baseline comparison: default concurrency (1) against the same
+		// tracking server must never overlap requests.
+		trackSrv2, received2, maxConcurrent2 := newConcurrencyTrackingServer(reqDelay)
+		defer trackSrv2.Close()
+		base := runGoboxCLI(t, env, "", "curl", "--bench", "-n", "4", trackSrv2.URL)
+		if base.ExitCode != 0 {
+			t.Fatalf("curl bench baseline failed: %+v", base)
+		}
+		baseReq, baseConc, _ := curlBenchRequestsLine(t, base.Stdout)
+		if baseReq != 4 || baseConc != 1 {
+			t.Fatalf("curl bench baseline unexpected requests/concurrency=%d/%d\n%s", baseReq, baseConc, base.Stdout)
+		}
+		if got := atomic.LoadInt64(received2); got != 4 {
+			t.Fatalf("curl bench baseline should make exactly 4 real server requests, server observed %d", got)
+		}
+		if got := atomic.LoadInt64(maxConcurrent2); got != 1 {
+			t.Fatalf("curl bench baseline (concurrency=1) should never overlap requests, server observed max in-flight=%d", got)
 		}
 	})
 
 	t.Run("CURL-020", func(t *testing.T) {
 		env := t.TempDir()
-		base := runGoboxCLI(t, env, "", "curl", "--bench", "-n", "2", server.URL)
-		res := runGoboxCLI(t, env, "", "curl", "--bench", "-n", "3", server.URL)
-		if base.ExitCode != 0 || res.ExitCode != 0 {
-			t.Fatalf("curl bench requests failed base=%+v requests=%+v", base, res)
+		countSrv, received := newRequestCountingServer()
+		defer countSrv.Close()
+		res := runGoboxCLI(t, env, "", "curl", "--bench", "-n", "3", countSrv.URL)
+		if res.ExitCode != 0 {
+			t.Fatalf("curl bench requests failed: %+v", res)
 		}
 		req, conc, failed := curlBenchRequestsLine(t, res.Stdout)
 		if req != 3 || conc != 1 || failed != 0 {
 			t.Fatalf("curl bench -n should report configured request count, got requests=%d concurrency=%d failed=%d\n%s", req, conc, failed, res.Stdout)
+		}
+		// Real proof: the server must have actually received exactly 3
+		// requests, not merely have its count echoed back from the input flag.
+		if got := atomic.LoadInt64(received); got != 3 {
+			t.Fatalf("curl bench -n 3 should make exactly 3 real server requests, server observed %d", got)
 		}
 		if findNetLineWithPrefix(res.Stdout, "Latency:") == "" || findNetLineWithPrefix(res.Stdout, "Throughput:") == "" {
 			t.Fatalf("curl bench -n missing latency/throughput summary\n%s", res.Stdout)
@@ -1520,14 +1982,21 @@ func TestParity_CurlCases(t *testing.T) {
 
 	t.Run("CURL-021", func(t *testing.T) {
 		env := t.TempDir()
-		base := runGoboxCLI(t, env, "", "curl", "--bench", "-n", "2", server.URL)
-		res := runGoboxCLI(t, env, "", "curl", "--bench", "--warmup", "2", "-n", "2", server.URL)
-		if base.ExitCode != 0 || res.ExitCode != 0 {
-			t.Fatalf("curl bench warmup failed base=%+v warmup=%+v", base, res)
+		countSrv, received := newRequestCountingServer()
+		defer countSrv.Close()
+		res := runGoboxCLI(t, env, "", "curl", "--bench", "--warmup", "2", "-n", "2", countSrv.URL)
+		if res.ExitCode != 0 {
+			t.Fatalf("curl bench warmup failed: %+v", res)
 		}
 		req, conc, failed := curlBenchRequestsLine(t, res.Stdout)
 		if req != 2 || conc != 1 || failed != 0 {
 			t.Fatalf("curl bench --warmup should preserve configured request count, got requests=%d concurrency=%d failed=%d\n%s", req, conc, failed, res.Stdout)
+		}
+		// Real proof: warmup requests are genuinely issued against the server in
+		// addition to the counted bench requests: total server hits must equal
+		// warmupRequests(2) + totalRequests(2) = 4, not just totalRequests(2).
+		if got := atomic.LoadInt64(received); got != 4 {
+			t.Fatalf("curl bench --warmup 2 -n 2 should make 2 warmup + 2 bench = 4 real server requests, server observed %d", got)
 		}
 		if findNetLineWithPrefix(res.Stdout, "Latency:") == "" || findNetLineWithPrefix(res.Stdout, "Throughput:") == "" {
 			t.Fatalf("curl bench --warmup missing latency/throughput summary\n%s", res.Stdout)
@@ -1582,6 +2051,93 @@ func TestParity_CurlCases(t *testing.T) {
 			!strings.Contains(strings.ToLower(out), "required") {
 			t.Fatalf("curl with no URL should emit error message, got: %+v", res)
 		}
+	})
+
+	t.Run("CURL-025", func(t *testing.T) {
+		// Connection refused (RST from a closed local port) is a distinct
+		// failure mode from a connect timeout (CURL-013) or a parse-time
+		// failure (CURL-002): it fails fast and should be reported as a
+		// connection error, not a timeout.
+		port := closedTCPPort(t)
+		target := fmt.Sprintf("http://127.0.0.1:%s", port)
+		gobox := runGoboxCLI(t, t.TempDir(), "", "curl", target)
+		native := runNativeCLI(t, t.TempDir(), "", "curl", "-s", target)
+		if gobox.ExitCode == 0 || native.ExitCode == 0 {
+			t.Fatalf("curl against a closed local port should fail: gobox=%+v native=%+v", gobox, native)
+		}
+		if strings.TrimSpace(gobox.Stdout) != "" {
+			t.Fatalf("curl connection-refused should not produce a successful body: %+v", gobox)
+		}
+		stderrLower := strings.ToLower(gobox.Stderr)
+		if !strings.Contains(stderrLower, "refused") && !strings.Contains(stderrLower, "connect") {
+			t.Fatalf("curl connection-refused stderr should mention connection failure, got: %q", gobox.Stderr)
+		}
+		if strings.Contains(stderrLower, "timeout") || strings.Contains(stderrLower, "timed out") {
+			t.Fatalf("curl connection-refused should not be reported as a timeout: %q", gobox.Stderr)
+		}
+	})
+
+	t.Run("CURL-026", func(t *testing.T) {
+		// Long/short flag equivalence (TEST-DESIGN.md §14.1): every long-form
+		// alias must behave identically to its short form.
+		tlsServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "tls-ok") }))
+		defer tlsServer.Close()
+
+		type equivCase struct {
+			name  string
+			short []string
+			long  []string
+		}
+		cases := []equivCase{
+			{"header", []string{"-H", "X-Test: 1", headerServer.URL}, []string{"--header", "X-Test: 1", headerServer.URL}},
+			{"request", []string{"-X", "POST", methodServer.URL}, []string{"--request", "POST", methodServer.URL}},
+			{"data", []string{"-d", "name=test", server.URL + "/echo"}, []string{"--data", "name=test", server.URL + "/echo"}},
+			{"silent", []string{"-s", server.URL}, []string{"--silent", server.URL}},
+			{"location", []string{"-L", server.URL + "/redirect"}, []string{"--location", server.URL + "/redirect"}},
+			{"head", []string{"-I", server.URL}, []string{"--head", server.URL}},
+			{"insecure", []string{"-k", tlsServer.URL}, []string{"--insecure", tlsServer.URL}},
+			{"fail", []string{"-f", server.URL + "/fail"}, []string{"--fail", server.URL + "/fail"}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				env := t.TempDir()
+				shortRes := runGoboxCLI(t, env, "", append([]string{"curl"}, tc.short...)...)
+				longRes := runGoboxCLI(t, env, "", append([]string{"curl"}, tc.long...)...)
+				if shortRes.ExitCode != longRes.ExitCode {
+					t.Fatalf("curl %s short/long exit mismatch short=%d long=%d", tc.name, shortRes.ExitCode, longRes.ExitCode)
+				}
+				if tc.name == "head" {
+					// HTTP header order is not part of the -I/--head contract
+					// (Go's http.Header is a map, so gobox's own two
+					// invocations can legitimately emit the same header set
+					// in different orders); compare the sorted line set
+					// instead of raw text order.
+					if sortedLines(shortRes.Stdout) != sortedLines(longRes.Stdout) {
+						t.Fatalf("curl %s short/long header set mismatch\n--- short ---\n%s\n--- long ---\n%s", tc.name, shortRes.Stdout, longRes.Stdout)
+					}
+					return
+				}
+				if normalizeText(shortRes.Stdout) != normalizeText(longRes.Stdout) {
+					t.Fatalf("curl %s short/long stdout mismatch\n--- short ---\n%s\n--- long ---\n%s", tc.name, shortRes.Stdout, longRes.Stdout)
+				}
+			})
+		}
+
+		// --output has a distinct short/long file-target contract; compare
+		// written file contents rather than stdout.
+		t.Run("output", func(t *testing.T) {
+			env := t.TempDir()
+			shortRes := runGoboxCLI(t, env, "", "curl", "-o", "short.txt", server.URL)
+			longRes := runGoboxCLI(t, env, "", "curl", "--output", "long.txt", server.URL)
+			if shortRes.ExitCode != longRes.ExitCode {
+				t.Fatalf("curl -o/--output exit mismatch short=%d long=%d", shortRes.ExitCode, longRes.ExitCode)
+			}
+			shortBody, shortErr := os.ReadFile(filepath.Join(env, "short.txt"))
+			longBody, longErr := os.ReadFile(filepath.Join(env, "long.txt"))
+			if shortErr != nil || longErr != nil || string(shortBody) != string(longBody) {
+				t.Fatalf("curl -o/--output file mismatch short=%q(err=%v) long=%q(err=%v)", string(shortBody), shortErr, string(longBody), longErr)
+			}
+		})
 	})
 }
 
@@ -1799,6 +2355,167 @@ func TestParity_NcCases(t *testing.T) {
 				shortHelp.Stdout+shortHelp.Stderr, longHelp.Stdout+longHelp.Stderr)
 		}
 	})
+
+	t.Run("NC-010-concurrency-timing", func(t *testing.T) {
+		// NC-010 (-c concurrency) only checked the printed byte totals, which
+		// cannot distinguish "2 concurrent connections" from "2 sequential
+		// connections". Prove real concurrency with a server that sleeps per
+		// request/echo round trip: with 8 total requests split across 2
+		// connections, concurrency=2 should take roughly half the wall time of
+		// concurrency=1 (matching the minElapsed pattern used by NC-013/014).
+		//
+		// Wall-clock timing comparisons are inherently susceptible to host
+		// scheduling noise (this suite runs on a 2-core sandbox alongside
+		// other load), so this measures multiple independent attempts and
+		// only fails if none of them show the expected speedup -- a
+		// sequential implementation that merely echoes -c would fail every
+		// attempt, while a genuinely concurrent one only needs one clean
+		// sample to prove the effect exists.
+		const reqDelay = 120 * time.Millisecond
+		const totalRequests = 8
+		const attempts = 3
+
+		runOnce := func() (seqElapsed, concElapsed time.Duration, ok bool) {
+			host1, port1, close1 := startSlowTCPEchoServer(t, "127.0.0.1:0", reqDelay)
+			defer close1()
+			env := t.TempDir()
+			seqStart := time.Now()
+			seq := runGoboxCLI(t, env, "", "nc", "--bench", "-c", "1", "-n", strconv.Itoa(totalRequests), "-s", "16B", host1, port1)
+			seqElapsed = time.Since(seqStart)
+			if seq.ExitCode != 0 {
+				t.Fatalf("nc bench sequential baseline failed: %+v", seq)
+			}
+
+			host2, port2, close2 := startSlowTCPEchoServer(t, "127.0.0.1:0", reqDelay)
+			defer close2()
+			concStart := time.Now()
+			conc := runGoboxCLI(t, env, "", "nc", "--bench", "-c", "2", "-n", strconv.Itoa(totalRequests), "-s", "16B", host2, port2)
+			concElapsed = time.Since(concStart)
+			if conc.ExitCode != 0 {
+				t.Fatalf("nc bench concurrent run failed: %+v", conc)
+			}
+
+			// Sequential: ~8 * 120ms = 960ms. Concurrent (2 conns): ~4 * 120ms = 480ms.
+			threshold := time.Duration(float64(seqElapsed) * 0.75)
+			ok = concElapsed < seqElapsed && concElapsed < threshold
+			return
+		}
+
+		var last struct {
+			seq, conc time.Duration
+		}
+		for i := 0; i < attempts; i++ {
+			seqElapsed, concElapsed, ok := runOnce()
+			last.seq, last.conc = seqElapsed, concElapsed
+			if ok {
+				return
+			}
+		}
+		t.Fatalf("nc bench -c 2 elapsed (%s) should be well under the sequential baseline (%s) in at least one of %d attempts; a sequential implementation that merely echoes -c would fail this", last.conc, last.seq, attempts)
+	})
+
+	t.Run("NC-018-long-short-equivalence", func(t *testing.T) {
+		_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")
+		defer closeFn()
+
+		type equivCase struct {
+			name  string
+			short []string
+			long  []string
+		}
+		cases := []equivCase{
+			{"zero", []string{"nc", "-z", "127.0.0.1", port}, []string{"nc", "--zero", "127.0.0.1", port}},
+			{"verbose", []string{"nc", "-z", "-v", "127.0.0.1", port}, []string{"nc", "-z", "--verbose", "127.0.0.1", port}},
+			{"wait", []string{"nc", "-w", "1", "-z", "127.0.0.1", port}, []string{"nc", "--wait=1", "-z", "127.0.0.1", port}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				env := t.TempDir()
+				shortRes := runGoboxCLI(t, env, "", tc.short...)
+				longRes := runGoboxCLI(t, env, "", tc.long...)
+				if shortRes.ExitCode != longRes.ExitCode {
+					t.Fatalf("nc %s short/long exit mismatch short=%d long=%d\nshort=%+v\nlong=%+v", tc.name, shortRes.ExitCode, longRes.ExitCode, shortRes, longRes)
+				}
+				normShort := normalizeText(shortRes.Stdout)
+				normLong := normalizeText(longRes.Stdout)
+				if tc.name == "verbose" {
+					// -v/--verbose add timing/local-port diagnostics that are not
+					// byte-identical across runs; verify both add output relative
+					// to the plain -z baseline instead of a strict equality.
+					if normShort == "" || normLong == "" {
+						t.Fatalf("nc -v/--verbose should both produce diagnostic output: short=%q long=%q", normShort, normLong)
+					}
+					return
+				}
+				if normShort != normLong {
+					t.Fatalf("nc %s short/long stdout mismatch\n--- short ---\n%s\n--- long ---\n%s", tc.name, shortRes.Stdout, longRes.Stdout)
+				}
+			})
+		}
+
+		// Bench-mode long forms (--concurrent=/--requests=/--size=) print a
+		// wall-clock "Total:" duration that is inherently timing-dependent
+		// across two separate process runs, so a strict full-stdout comparison
+		// would be flaky (see NC-013/014 for the same reasoning). Instead
+		// compare the deterministic total-bytes-transferred field, which
+		// directly reflects whether the long flag was parsed identically to
+		// its short form.
+		type benchEquivCase struct {
+			name  string
+			short []string
+			long  []string
+		}
+		benchCases := []benchEquivCase{
+			{"concurrent", []string{"nc", "--bench", "-c", "2", "-n", "2", "-s", "16B", "127.0.0.1", port}, []string{"nc", "--bench", "--concurrent=2", "-n", "2", "-s", "16B", "127.0.0.1", port}},
+			{"requests", []string{"nc", "--bench", "-n", "2", "-s", "16B", "127.0.0.1", port}, []string{"nc", "--bench", "--requests=2", "-s", "16B", "127.0.0.1", port}},
+			{"size", []string{"nc", "--bench", "-n", "1", "-s", "16B", "127.0.0.1", port}, []string{"nc", "--bench", "-n", "1", "--size=16B", "127.0.0.1", port}},
+		}
+		for _, tc := range benchCases {
+			t.Run(tc.name, func(t *testing.T) {
+				env := t.TempDir()
+				shortRes := runGoboxCLI(t, env, "", tc.short...)
+				longRes := runGoboxCLI(t, env, "", tc.long...)
+				if shortRes.ExitCode != 0 || longRes.ExitCode != 0 {
+					t.Fatalf("nc %s short/long failed short=%+v long=%+v", tc.name, shortRes, longRes)
+				}
+				_, shortBytes := ncBenchTotalFields(t, shortRes.Stdout)
+				_, longBytes := ncBenchTotalFields(t, longRes.Stdout)
+				if shortBytes != longBytes {
+					t.Fatalf("nc %s short/long total-bytes mismatch short=%q long=%q\nshort=%s\nlong=%s", tc.name, shortBytes, longBytes, shortRes.Stdout, longRes.Stdout)
+				}
+			})
+		}
+
+		// -t/--time and -i/--interval engage duration-based bench mode, whose
+		// exact byte/request counts are inherently timing-dependent (see
+		// NC-013/014), so a strict byte-for-byte comparison would be flaky.
+		// Instead verify both forms engage the same duration-based code path
+		// for a comparable wall-clock duration.
+		t.Run("time", func(t *testing.T) {
+			env := t.TempDir()
+			shortRes := runGoboxCLI(t, env, "", "nc", "--bench", "-t", "1", "-s", "16B", "127.0.0.1", port)
+			longRes := runGoboxCLI(t, env, "", "nc", "--bench", "--time=1", "-s", "16B", "127.0.0.1", port)
+			if shortRes.ExitCode != 0 || longRes.ExitCode != 0 {
+				t.Fatalf("nc -t/--time= failed short=%+v long=%+v", shortRes, longRes)
+			}
+			shortDur, _ := ncBenchTotalFields(t, shortRes.Stdout)
+			longDur, _ := ncBenchTotalFields(t, longRes.Stdout)
+			if shortDur < 0.5 || shortDur > 3 || longDur < 0.5 || longDur > 3 {
+				t.Fatalf("nc -t 1 / --time=1 should both run for approximately 1s, got short=%.2fs long=%.2fs", shortDur, longDur)
+			}
+		})
+		t.Run("interval", func(t *testing.T) {
+			env := t.TempDir()
+			shortRes := runGoboxCLI(t, env, "", "nc", "--bench", "-t", "1", "-i", "1", "-s", "16B", "127.0.0.1", port)
+			longRes := runGoboxCLI(t, env, "", "nc", "--bench", "-t", "1", "--interval=1", "-s", "16B", "127.0.0.1", port)
+			if shortRes.ExitCode != 0 || longRes.ExitCode != 0 {
+				t.Fatalf("nc -i/--interval= failed short=%+v long=%+v", shortRes, longRes)
+			}
+			if !strings.Contains(shortRes.Stdout, "[ 1]") || !strings.Contains(longRes.Stdout, "[ 1]") {
+				t.Fatalf("nc -i 1 / --interval=1 should both emit interval report [ 1]\nshort=%q\nlong=%q", shortRes.Stdout, longRes.Stdout)
+			}
+		})
+	})
 }
 
 func TestParity_DnsCases(t *testing.T) {
@@ -1878,15 +2595,13 @@ func TestParity_DnsCases(t *testing.T) {
 	})
 
 	t.Run("DNS-007", func(t *testing.T) {
-		// BUG: gobox dig does not return non-zero or print NXDOMAIN for RCODE=3 responses.
-		// Go's net.Resolver.LookupHost() silently returns empty result on RCODE=3.
-		// See /tmp/bugs_net.md: DIG-NXDOMAIN.
-		t.Skip("BUG: gobox dig does not detect NXDOMAIN from RCODE=3 responses; see /tmp/bugs_net.md")
 		host, port, closeFn := startLocalNXDOMAINServer(t)
 		defer closeFn()
-		_ = host
-		_ = port
-		_ = closeFn
+		res := runGoboxMainCLI(t, t.TempDir(), "", "dig", "@"+net.JoinHostPort(host, port), "no-such-host.test")
+		combined := res.Stdout + res.Stderr
+		if res.ExitCode == 0 && !strings.Contains(combined, "NXDOMAIN") {
+			t.Fatalf("dig against an NXDOMAIN-returning server should either exit non-zero or report NXDOMAIN, got exit=%d stdout=%q stderr=%q", res.ExitCode, res.Stdout, res.Stderr)
+		}
 	})
 }
 
@@ -1929,26 +2644,43 @@ func TestParity_NpCases(t *testing.T) {
 	})
 
 	t.Run("NP-003", func(t *testing.T) {
-		// Asymmetric comparison: gobox np --arp vs native arping have different output formats.
-		// There is no native "np" to compare against for a symmetric parity test.
-		// We verify gobox and arping agree on exit code and handle permission errors symmetrically,
-		// but do not compare output text since the formats differ fundamentally.
-		t.Skip("asymmetric comparison not fixable without native np: gobox np --arp and arping have incompatible output formats")
+		// cmds/net/cmd_np.go npARP() delegates directly to the native `arping`
+		// binary when it is on PATH (exec.LookPath("arping"); see cmd_np.go
+		// around npARP), so gobox and native arping output are byte-identical
+		// in that case -- this is directly testable, not merely "asymmetric".
+		// Only skip when arping genuinely isn't usable in this environment
+		// (missing binary or lacking the raw-socket privilege it requires),
+		// rather than unconditionally.
+		arpingPath, lookErr := exec.LookPath("arping")
+		if lookErr != nil {
+			t.Skip("arping not found in PATH: np --arp cannot be exercised in this environment")
+		}
 		gateway := defaultIPv4Gateway(t)
+
+		probe := exec.Command(arpingPath, "-c", "1", "-w", "1", gateway)
+		probeOut, probeErr := probe.CombinedOutput()
+		if probeErr != nil {
+			lower := strings.ToLower(string(probeOut))
+			if strings.Contains(lower, "operation not permitted") || strings.Contains(lower, "permission denied") {
+				t.Skipf("arping lacks required raw-socket privilege in this environment: %s", string(probeOut))
+			}
+		}
+
 		gobox := runGoboxCLI(t, t.TempDir(), "", "np", "--arp", "-c", "1", "-W", "1", gateway)
 		native := runNativeCLI(t, t.TempDir(), "", "arping", "-c", "1", "-w", "1", gateway)
 		if gobox.ExitCode != native.ExitCode {
 			t.Fatalf("np --arp exit mismatch gobox=%+v native=%+v", gobox, native)
 		}
 		if gobox.ExitCode != 0 {
-			if !strings.Contains(strings.ToLower(gobox.Stderr), "operation not permitted") || !strings.Contains(strings.ToLower(native.Stderr), "operation not permitted") {
-				t.Fatalf("np --arp permission failure mismatch gobox=%+v native=%+v", gobox, native)
-			}
-			return
+			t.Fatalf("np --arp (delegating to arping) failed unexpectedly: gobox=%+v native=%+v", gobox, native)
 		}
-		// Symmetric check: both should mention the gateway IP.
+		// Since gobox delegates directly to the arping binary, output should be
+		// identical (both mention the gateway IP and report sent/received counts).
 		if !strings.Contains(gobox.Stdout, gateway) || !strings.Contains(native.Stdout, gateway) {
-			t.Fatalf("np --arp output mismatch gobox=%+v native=%+v", gobox, native)
+			t.Fatalf("np --arp output should mention the gateway IP gobox=%+v native=%+v", gobox, native)
+		}
+		if !strings.Contains(gobox.Stdout, "Sent") || !strings.Contains(gobox.Stdout, "Received") {
+			t.Fatalf("np --arp output should include arping's sent/received summary: %+v", gobox)
 		}
 	})
 

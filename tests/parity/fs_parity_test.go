@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gobox/cmds/base"
 )
 
 func dfHeaderAndRows(out string) ([]string, [][]string) {
@@ -122,6 +125,157 @@ func detectLocalFSDevice(t *testing.T) string {
 		}
 	}
 	return ""
+}
+
+// mountTmpfsAt attempts to mount a tmpfs filesystem at dir, constructing a
+// genuine cross-filesystem boundary for -x/-l parity fixtures. This requires
+// CAP_SYS_ADMIN (root). If the mount cannot be established (e.g. running
+// unprivileged in a sandboxed CI runner), it returns false so the caller can
+// skip with a precise reason instead of silently degrading to a same-fs
+// fixture that could never prove the parameter's effect.
+func mountTmpfsAt(t *testing.T, dir string) bool {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	if _, err := exec.LookPath("mount"); err != nil {
+		return false
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	if err := exec.Command("mount", "-t", "tmpfs", "-o", "size=4m", "tmpfs", dir).Run(); err != nil {
+		return false
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("umount", dir).Run()
+	})
+	return true
+}
+
+// remoteDfTypes mirrors the set gobox's df -l treats as non-local
+// (cmds/fs/cmd_df.go isLocalDfType).
+var remoteDfTypes = map[string]bool{
+	"nfs": true, "nfs4": true, "cifs": true, "smbfs": true,
+	"sshfs": true, "fuse.sshfs": true, "9p": true, "afs": true,
+	"ceph": true, "glusterfs": true,
+}
+
+// findRemoteMount scans /proc/self/mountinfo for a mount whose filesystem
+// type is one of the "remote" types df -l is supposed to exclude. Returns
+// ("", "") if no such mount is present in this environment (which is the
+// common case in a sandboxed container with no NFS/CIFS/9p mounts).
+func findRemoteMount(t *testing.T) (fsType, target string) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		return "", ""
+	}
+	data, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return "", ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		sep := -1
+		for i, f := range fields {
+			if f == "-" {
+				sep = i
+				break
+			}
+		}
+		if sep < 0 || sep+2 >= len(fields) || len(fields) < 5 {
+			continue
+		}
+		typ := fields[sep+1]
+		if remoteDfTypes[typ] {
+			return typ, fields[4]
+		}
+	}
+	return "", ""
+}
+
+// duSizeEntry is a parsed "<size><unit> <path>" du output row. unit is 0 for
+// plain byte/block counts (non-human mode) or the first letter of a
+// human-readable suffix (K/M/G/T), independent of whether the full suffix is
+// spelled "K" (native GNU du) or "KB" (gobox) -- that cosmetic difference is
+// not the thing under test here.
+type duSizeEntry struct {
+	value float64
+	unit  byte
+}
+
+// duPathSizeEntries maps each reported path to its parsed size, for
+// per-entry numeric comparison between gobox and native du output.
+func duPathSizeEntries(out string) map[string]duSizeEntry {
+	entries := make(map[string]duSizeEntry)
+	for _, line := range nonEmptyLines(out) {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		sizeField := fields[0]
+		path := fields[len(fields)-1]
+		i := len(sizeField)
+		for i > 0 && (sizeField[i-1] < '0' || sizeField[i-1] > '9') && sizeField[i-1] != '.' {
+			i--
+		}
+		numPart := sizeField[:i]
+		unitPart := sizeField[i:]
+		v, err := strconv.ParseFloat(numPart, 64)
+		if err != nil {
+			continue
+		}
+		var unit byte
+		if len(unitPart) > 0 {
+			unit = unitPart[0]
+		}
+		entries[path] = duSizeEntry{value: v, unit: unit}
+	}
+	return entries
+}
+
+// assertDuSizesMatch verifies that every path common to both gobox and
+// native du output reports a numerically equivalent size, not merely the
+// same path set. Raw block-count sizes are allowed a tight tolerance to
+// absorb filesystem block-size rounding; human-readable sizes (already
+// rounded to one decimal by both implementations) must match exactly once
+// the cosmetic "K" vs "KB" unit-suffix difference is normalized away.
+func assertDuSizesMatch(t *testing.T, label, goboxOut, nativeOut string) {
+	t.Helper()
+	gEntries := duPathSizeEntries(goboxOut)
+	nEntries := duPathSizeEntries(nativeOut)
+	if len(gEntries) == 0 || len(nEntries) == 0 {
+		t.Fatalf("%s: no parsable per-entry sizes\n--- gobox ---\n%s\n--- native ---\n%s", label, goboxOut, nativeOut)
+	}
+	matched := 0
+	for path, g := range gEntries {
+		n, ok := nEntries[path]
+		if !ok {
+			continue
+		}
+		matched++
+		if g.unit != n.unit {
+			t.Fatalf("%s: size unit mismatch for %q: gobox=%q native=%q", label, path, string(g.unit), string(n.unit))
+		}
+		if g.unit == 0 {
+			diff := g.value - n.value
+			if diff < 0 {
+				diff = -diff
+			}
+			max := g.value
+			if n.value > max {
+				max = n.value
+			}
+			if max > 0 && diff/max > 0.10 {
+				t.Fatalf("%s: size mismatch for %q: gobox=%v native=%v (>10%% apart)", label, path, g.value, n.value)
+			}
+		} else if g.value != n.value {
+			t.Fatalf("%s: human-readable size mismatch for %q: gobox=%v%c native=%v%c", label, path, g.value, g.unit, n.value, n.unit)
+		}
+	}
+	if matched == 0 {
+		t.Fatalf("%s: gobox and native reported no common paths to compare sizes for\n--- gobox ---\n%s\n--- native ---\n%s", label, goboxOut, nativeOut)
+	}
 }
 
 func TestParity_FindCases(t *testing.T) {
@@ -366,6 +520,68 @@ func TestParity_FindCases(t *testing.T) {
 			t.Fatalf("FIND-error: native find should exit non-zero for missing path, got 0")
 		}
 	})
+
+	// FIND-symlink-broken: a dangling symlink should be listed (not
+	// followed/errored) by default find semantics.
+	t.Run("FIND-symlink-broken", func(t *testing.T) {
+		env := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(env, "tree"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("does-not-exist", filepath.Join(env, "tree", "dangling")); err != nil {
+			t.Fatal(err)
+		}
+		gobox := runGoboxCLI(t, env, "", "find", "tree")
+		native := runNativeCLI(t, env, "", "find", "tree")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("FIND-symlink-broken exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		norm := normalizeFindOutput(env)
+		if norm(gobox.Stdout) != norm(native.Stdout) {
+			t.Fatalf("FIND-symlink-broken mismatch\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
+		}
+		if !strings.Contains(gobox.Stdout, "dangling") {
+			t.Fatalf("FIND-symlink-broken: dangling symlink should still be listed\n%s", gobox.Stdout)
+		}
+	})
+
+	// FIND-permission-denied: an unreadable subdirectory should be reported
+	// (skipped with a diagnostic), not crash the traversal.
+	//
+	// This can only be exercised meaningfully as a non-root user: root
+	// bypasses Unix DAC permission checks, so chmod 000 has no effect on
+	// what root itself can traverse. When the test process runs as root
+	// (the default in this sandboxed environment) we skip with that
+	// specific reason rather than asserting a false negative.
+	t.Run("FIND-permission-denied", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("FIND-permission-denied: unix permission bits not applicable on windows")
+		}
+		if os.Geteuid() == 0 {
+			t.Skip("FIND-permission-denied: running as root, which bypasses Unix permission checks; cannot construct a real permission-denied directory in this environment")
+		}
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "tree", "visible.txt"), "x")
+		writeFile(t, filepath.Join(env, "tree", "locked", "hidden.txt"), "x")
+		if err := os.Chmod(filepath.Join(env, "tree", "locked"), 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(filepath.Join(env, "tree", "locked"), 0o755) })
+		gobox := runGoboxCLI(t, env, "", "find", "tree")
+		native := runNativeCLI(t, env, "", "find", "tree")
+		if gobox.ExitCode == 0 {
+			t.Fatalf("FIND-permission-denied: gobox should report a non-zero exit when a subdirectory is unreadable")
+		}
+		if native.ExitCode == 0 {
+			t.Fatalf("FIND-permission-denied: native find should also report a non-zero exit for the unreadable directory")
+		}
+		if !strings.Contains(gobox.Stdout, "visible.txt") {
+			t.Fatalf("FIND-permission-denied: gobox should still list readable siblings\n%s", gobox.Stdout)
+		}
+		if gobox.Stderr == "" {
+			t.Fatalf("FIND-permission-denied: gobox should emit a diagnostic for the unreadable directory")
+		}
+	})
 }
 
 func TestParity_DuCases(t *testing.T) {
@@ -393,6 +609,7 @@ func TestParity_DuCases(t *testing.T) {
 		if !duHasHumanReadableSizeCol(native.Stdout) {
 			t.Fatalf("du -h: native size column missing human-readable suffix\n%s", native.Stdout)
 		}
+		assertDuSizesMatch(t, "DU-001", gobox.Stdout, native.Stdout)
 	})
 
 	t.Run("DU-002", func(t *testing.T) {
@@ -413,6 +630,7 @@ func TestParity_DuCases(t *testing.T) {
 		if !duSizeNumeric(native.Stdout) {
 			t.Fatalf("du -s native size column should be numeric\n%s", native.Stdout)
 		}
+		assertDuSizesMatch(t, "DU-002", gobox.Stdout, native.Stdout)
 	})
 
 	t.Run("DU-003", func(t *testing.T) {
@@ -426,6 +644,7 @@ func TestParity_DuCases(t *testing.T) {
 		if !duSizeNumeric(gobox.Stdout) || !duSizeNumeric(native.Stdout) {
 			t.Fatalf("du -a size column should be numeric\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
+		assertDuSizesMatch(t, "DU-003", gobox.Stdout, native.Stdout)
 	})
 
 	t.Run("DU-004", func(t *testing.T) {
@@ -447,7 +666,12 @@ func TestParity_DuCases(t *testing.T) {
 		if duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
 			t.Fatalf("du -c path set mismatch\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
 		}
-		// Compare numeric totals; allow up to 20% delta for filesystem block-size differences.
+		// Compare numeric totals. gobox and native both derive du sizes from
+		// st.Blocks*512 on the same filesystem (cmds/fs/cmd_du.go duFileSize),
+		// so for this ~128/256-byte two-file fixture the totals should be
+		// identical modulo directory-entry block rounding; 10% is already a
+		// generous margin (previously 20%, which would let a 15%-wrong
+		// calculation through undetected).
 		gTotal, gOK := duTotalNumeric(gobox.Stdout)
 		nTotal, nOK := duTotalNumeric(native.Stdout)
 		if gOK && nOK && gTotal > 0 && nTotal > 0 {
@@ -459,23 +683,122 @@ func TestParity_DuCases(t *testing.T) {
 			if nTotal > max {
 				max = nTotal
 			}
-			if diff*100/max > 20 {
-				t.Fatalf("du -c totals diverge by >20%%: gobox=%d native=%d", gTotal, nTotal)
+			if diff*100/max > 10 {
+				t.Fatalf("du -c totals diverge by >10%%: gobox=%d native=%d", gTotal, nTotal)
 			}
 		}
+		assertDuSizesMatch(t, "DU-004", gobox.Stdout, native.Stdout)
 	})
 
-	t.Run("DU-005", func(t *testing.T) {
+	t.Run("DU-c-s", func(t *testing.T) {
 		env := t.TempDir()
 		setupTree(env)
-		gobox := runGoboxCLI(t, env, "", "du", "-d", "0", "tree")
-		native := runNativeCLI(t, env, "", "du", "-d", "0", "tree")
-		if gobox.ExitCode != native.ExitCode || duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
-			t.Fatalf("du -d 0 mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", gobox, native)
+		gobox := runGoboxCLI(t, env, "", "du", "-c", "-s", "tree")
+		native := runNativeCLI(t, env, "", "du", "-c", "-s", "tree")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("du -c -s exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 		}
-		longOpt := runGoboxCLI(t, env, "", "du", "--max-depth", "0", "tree")
-		if duPathSet(gobox.Stdout) != duPathSet(longOpt.Stdout) {
-			t.Fatalf("du -d and --max-depth differ\n-d=%q\n--max-depth=%q", gobox.Stdout, longOpt.Stdout)
+		goboxLines := nonEmptyLines(gobox.Stdout)
+		nativeLines := nonEmptyLines(native.Stdout)
+		// -s collapses to a single summary row per argument, so -c -s should
+		// produce exactly two lines: the tree summary and the total (which,
+		// for a single argument, duplicates the summary value).
+		if len(goboxLines) != 2 || len(nativeLines) != 2 {
+			t.Fatalf("du -c -s should combine to summary+total (2 lines)\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
+		}
+		if duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
+			t.Fatalf("du -c -s path set mismatch\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
+		}
+		assertDuSizesMatch(t, "DU-c-s", gobox.Stdout, native.Stdout)
+	})
+
+	t.Run("DU-c-a", func(t *testing.T) {
+		env := t.TempDir()
+		setupTree(env)
+		gobox := runGoboxCLI(t, env, "", "du", "-c", "-a", "tree")
+		native := runNativeCLI(t, env, "", "du", "-c", "-a", "tree")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("du -c -a exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		goboxLines := nonEmptyLines(gobox.Stdout)
+		nativeLines := nonEmptyLines(native.Stdout)
+		if !strings.HasSuffix(goboxLines[len(goboxLines)-1], "\ttotal") || !strings.HasSuffix(nativeLines[len(nativeLines)-1], "\ttotal") {
+			t.Fatalf("du -c -a should end with a total line\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
+		}
+		// -a combined with -c must still list every file (not just directories).
+		if !strings.Contains(gobox.Stdout, "a.txt") || !strings.Contains(gobox.Stdout, "b.txt") {
+			t.Fatalf("du -c -a should list per-file entries\n%s", gobox.Stdout)
+		}
+		if duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
+			t.Fatalf("du -c -a path set mismatch\n--- gobox ---\n%s\n--- native ---\n%s", gobox.Stdout, native.Stdout)
+		}
+		assertDuSizesMatch(t, "DU-c-a", gobox.Stdout, native.Stdout)
+	})
+
+	// DU-005: exercise depth 0, 1 and 2 against a three-level tree/sub/subsub
+	// fixture (a dedicated local fixture, not the shared two-level setupTree,
+	// since depth 2 needs a third level to differ meaningfully from depth 1),
+	// so a truncation bug at depth >=1 (e.g. an off-by-one that always
+	// behaves like depth 0, or one that never truncates at all) would be
+	// caught. Note: default `du` (without -a) only ever lists directories,
+	// never plain files, so assertions below check for directory rows
+	// (matched as exact trailing path components, not substrings, since
+	// "sub" is itself a substring of "subsub").
+	t.Run("DU-005", func(t *testing.T) {
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "tree", "a.txt"), strings.Repeat("a", 128))
+		writeFile(t, filepath.Join(env, "tree", "sub", "b.txt"), strings.Repeat("b", 256))
+		writeFile(t, filepath.Join(env, "tree", "sub", "subsub", "c.txt"), strings.Repeat("c", 256))
+
+		hasDirRow := func(stdout, suffix string) bool {
+			for _, line := range nonEmptyLines(stdout) {
+				fields := strings.Fields(line)
+				if len(fields) < 2 {
+					continue
+				}
+				path := filepath.ToSlash(fields[len(fields)-1])
+				if path == suffix || strings.HasSuffix(path, "/"+suffix) {
+					return true
+				}
+			}
+			return false
+		}
+
+		var rowCounts []int
+		for _, depth := range []string{"0", "1", "2"} {
+			gobox := runGoboxCLI(t, env, "", "du", "-d", depth, "tree")
+			native := runNativeCLI(t, env, "", "du", "-d", depth, "tree")
+			if gobox.ExitCode != native.ExitCode || duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
+				t.Fatalf("du -d %s mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", depth, gobox, native)
+			}
+			longOpt := runGoboxCLI(t, env, "", "du", "--max-depth", depth, "tree")
+			if duPathSet(gobox.Stdout) != duPathSet(longOpt.Stdout) {
+				t.Fatalf("du -d and --max-depth differ at depth %s\n-d=%q\n--max-depth=%q", depth, gobox.Stdout, longOpt.Stdout)
+			}
+			rowCounts = append(rowCounts, len(nonEmptyLines(gobox.Stdout)))
+			switch depth {
+			case "0":
+				if hasDirRow(gobox.Stdout, "sub") || hasDirRow(gobox.Stdout, "subsub") {
+					t.Fatalf("du -d 0 should only report the root entry, got\n%s", gobox.Stdout)
+				}
+			case "1":
+				if hasDirRow(gobox.Stdout, "subsub") {
+					t.Fatalf("du -d 1 should not descend into tree/sub/subsub, got\n%s", gobox.Stdout)
+				}
+				if !hasDirRow(gobox.Stdout, "sub") {
+					t.Fatalf("du -d 1 should include tree/sub, got\n%s", gobox.Stdout)
+				}
+			case "2":
+				if !hasDirRow(gobox.Stdout, "subsub") {
+					t.Fatalf("du -d 2 should include tree/sub/subsub, got\n%s", gobox.Stdout)
+				}
+			}
+		}
+		// The row count must strictly grow as depth increases from 0 to 2 for
+		// this fixture -- proves -d actually changes the truncation depth
+		// rather than being a no-op that happens to pass the path-set check.
+		if !(rowCounts[0] < rowCounts[1] && rowCounts[1] < rowCounts[2]) {
+			t.Fatalf("du -d row counts should strictly increase with depth, got %v", rowCounts)
 		}
 	})
 
@@ -488,15 +811,43 @@ func TestParity_DuCases(t *testing.T) {
 		if gobox.ExitCode != native.ExitCode || strings.Contains(gobox.Stdout, "skip.tmp") || strings.Contains(native.Stdout, "skip.tmp") || duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
 			t.Fatalf("du --exclude mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", gobox, native)
 		}
+		assertDuSizesMatch(t, "DU-006", gobox.Stdout, native.Stdout)
 	})
 
+	// DU-007: -x must skip a subtree that lives on a different filesystem.
+	// A same-filesystem fixture can never prove this (an implementation that
+	// completely ignores -x would still pass), so this mounts a real tmpfs
+	// at tree/mnt to construct a genuine cross-filesystem boundary.
 	t.Run("DU-007", func(t *testing.T) {
 		env := t.TempDir()
 		setupTree(env)
-		gobox := runGoboxCLI(t, env, "", "du", "-x", "tree")
-		native := runNativeCLI(t, env, "", "du", "-x", "tree")
-		if gobox.ExitCode != native.ExitCode || duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
+		mountDir := filepath.Join(env, "tree", "mnt")
+		if !mountTmpfsAt(t, mountDir) {
+			t.Skip("DU-007: cannot mount tmpfs to construct a genuine cross-filesystem fixture (requires CAP_SYS_ADMIN); without crossing a real mount boundary, -x cannot be proven to have any effect")
+		}
+		writeFile(t, filepath.Join(mountDir, "crossfs.txt"), strings.Repeat("z", 4096))
+
+		// Sanity-check the fixture: without -x, the cross-fs file must be
+		// visible, otherwise the mount didn't actually take effect.
+		baseline := runGoboxCLI(t, env, "", "du", "-a", "tree")
+		if !strings.Contains(baseline.Stdout, "crossfs.txt") {
+			t.Fatalf("DU-007 fixture invalid: baseline du -a should include the cross-fs file\n%s", baseline.Stdout)
+		}
+
+		gobox := runGoboxCLI(t, env, "", "du", "-x", "-a", "tree")
+		native := runNativeCLI(t, env, "", "du", "-x", "-a", "tree")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("du -x exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		if duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
 			t.Fatalf("du -x mismatch\n--- gobox ---\n%+v\n--- native ---\n%+v", gobox, native)
+		}
+		// The whole point of -x: the mounted subtree must now be excluded.
+		if strings.Contains(gobox.Stdout, "crossfs.txt") {
+			t.Fatalf("du -x should exclude the mounted subtree, but gobox still reports it\n%s", gobox.Stdout)
+		}
+		if strings.Contains(native.Stdout, "crossfs.txt") {
+			t.Fatalf("du -x fixture invariant broken: native itself included the cross-fs file\n%s", native.Stdout)
 		}
 	})
 
@@ -511,6 +862,7 @@ func TestParity_DuCases(t *testing.T) {
 		if !duSizeNumeric(gobox.Stdout) || !duSizeNumeric(native.Stdout) {
 			t.Fatalf("du --apparent-size size column should be numeric\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
+		assertDuSizesMatch(t, "DU-008", gobox.Stdout, native.Stdout)
 	})
 
 	// DU-sh: du -s -h combination (note: gobox does not support combined -sh shorthand).
@@ -532,6 +884,7 @@ func TestParity_DuCases(t *testing.T) {
 		if duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
 			t.Fatalf("du -s -h path set mismatch\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
+		assertDuSizesMatch(t, "DU-sh", gobox.Stdout, native.Stdout)
 	})
 
 	// DU-multi-exclude: two --exclude patterns.
@@ -554,6 +907,7 @@ func TestParity_DuCases(t *testing.T) {
 		if duPathSet(gobox.Stdout) != duPathSet(native.Stdout) {
 			t.Fatalf("du multi-exclude path set mismatch\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
+		assertDuSizesMatch(t, "DU-multi-exclude", gobox.Stdout, native.Stdout)
 	})
 
 	// DU-error: non-existent path should exit non-zero.
@@ -571,12 +925,46 @@ func TestParity_DuCases(t *testing.T) {
 			t.Fatalf("DU-error: gobox du should emit stderr on error, got empty")
 		}
 	})
+
+	// DU-permission-denied: an unreadable subdirectory should be reported,
+	// not silently skipped. As with FIND-permission-denied, this can only be
+	// exercised meaningfully as a non-root user (root bypasses DAC checks),
+	// so it is skipped with that specific reason when running as root.
+	t.Run("DU-permission-denied", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("DU-permission-denied: unix permission bits not applicable on windows")
+		}
+		if os.Geteuid() == 0 {
+			t.Skip("DU-permission-denied: running as root, which bypasses Unix permission checks; cannot construct a real permission-denied directory in this environment")
+		}
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "tree", "visible.txt"), "x")
+		writeFile(t, filepath.Join(env, "tree", "locked", "hidden.txt"), "x")
+		if err := os.Chmod(filepath.Join(env, "tree", "locked"), 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(filepath.Join(env, "tree", "locked"), 0o755) })
+		gobox := runGoboxCLI(t, env, "", "du", "-a", "tree")
+		native := runNativeCLI(t, env, "", "du", "-a", "tree")
+		if gobox.ExitCode == 0 {
+			t.Fatalf("DU-permission-denied: gobox should report a non-zero exit when a subdirectory is unreadable")
+		}
+		if native.ExitCode == 0 {
+			t.Fatalf("DU-permission-denied: native du should also report a non-zero exit for the unreadable directory")
+		}
+		if !strings.Contains(gobox.Stdout, "visible.txt") {
+			t.Fatalf("DU-permission-denied: gobox should still report readable siblings\n%s", gobox.Stdout)
+		}
+		if gobox.Stderr == "" {
+			t.Fatalf("DU-permission-denied: gobox should emit a diagnostic for the unreadable directory")
+		}
+	})
 }
 
 func TestParity_DfCases(t *testing.T) {
 	t.Run("DF-001", func(t *testing.T) {
 		if runtime.GOOS != "linux" {
-			t.Skip("df cases require linux mountinfo")
+			t.Skip("DF-001: default df row identification requires linux /proc/self/mountinfo")
 		}
 		env := t.TempDir()
 		res := runGoboxCLI(t, env, "", "df", ".")
@@ -610,7 +998,7 @@ func TestParity_DfCases(t *testing.T) {
 
 	t.Run("DF-002", func(t *testing.T) {
 		if runtime.GOOS != "linux" {
-			t.Skip("df cases require linux mountinfo")
+			t.Skip("DF-002: -h human-readable size formatting comparison requires linux /proc/self/mountinfo")
 		}
 		env := t.TempDir()
 		res := runGoboxCLI(t, env, "", "df", "-h", ".")
@@ -648,7 +1036,7 @@ func TestParity_DfCases(t *testing.T) {
 
 	t.Run("DF-003", func(t *testing.T) {
 		if runtime.GOOS != "linux" {
-			t.Skip("df cases require linux mountinfo")
+			t.Skip("DF-003: -T filesystem-type column comparison requires linux /proc/self/mountinfo")
 		}
 		env := t.TempDir()
 		res := runGoboxCLI(t, env, "", "df", "-T", ".")
@@ -672,11 +1060,18 @@ func TestParity_DfCases(t *testing.T) {
 				t.Fatalf("DF-003 %s missing fs type row: %q", out.name, lines[1])
 			}
 		}
+		// Cross-compare: gobox's reported filesystem type must match native's
+		// for the same mount, not merely be present.
+		gType := strings.Fields(nonEmptyLines(res.Stdout)[1])[1]
+		nType := strings.Fields(nonEmptyLines(native.Stdout)[1])[1]
+		if gType != nType {
+			t.Fatalf("DF-003 filesystem type mismatch: gobox=%q native=%q", gType, nType)
+		}
 	})
 
 	t.Run("DF-004", func(t *testing.T) {
 		if runtime.GOOS != "linux" {
-			t.Skip("df cases require linux mountinfo")
+			t.Skip("DF-004: -i inode column comparison requires linux /proc/self/mountinfo")
 		}
 		env := t.TempDir()
 		res := runGoboxCLI(t, env, "", "df", "-i", ".")
@@ -705,11 +1100,38 @@ func TestParity_DfCases(t *testing.T) {
 				t.Fatalf("DF-004 %s inode total count should be non-zero numeric, got %q", out.name, fields[1])
 			}
 		}
+		// Cross-compare: the total inode count for the same filesystem
+		// should be nearly identical between gobox and native, not merely
+		// independently non-zero in each. Exact equality is too strict: the
+		// two invocations query live filesystem state sequentially (not
+		// atomically together), and concurrent activity on the host (e.g.
+		// other tests creating/removing files on the same filesystem) can
+		// shift the free-inode count by a handful between the two calls.
+		// Allow a small relative tolerance rather than requiring the two
+		// live syscalls to observe an identical instant.
+		gInodesStr := strings.Fields(nonEmptyLines(res.Stdout)[1])[1]
+		nInodesStr := strings.Fields(nonEmptyLines(native.Stdout)[1])[1]
+		gInodes, gErr := strconv.ParseInt(gInodesStr, 10, 64)
+		nInodes, nErr := strconv.ParseInt(nInodesStr, 10, 64)
+		if gErr != nil || nErr != nil {
+			t.Fatalf("DF-004 inode totals not numeric: gobox=%q native=%q", gInodesStr, nInodesStr)
+		}
+		diff := gInodes - nInodes
+		if diff < 0 {
+			diff = -diff
+		}
+		max := gInodes
+		if nInodes > max {
+			max = nInodes
+		}
+		if max == 0 || float64(diff)/float64(max) > 0.01 {
+			t.Fatalf("DF-004 inode total mismatch beyond tolerance: gobox=%d native=%d", gInodes, nInodes)
+		}
 	})
 
 	t.Run("DF-005", func(t *testing.T) {
 		if runtime.GOOS != "linux" {
-			t.Skip("df cases require linux mountinfo")
+			t.Skip("DF-005: single-path df row rendering requires linux /proc/self/mountinfo")
 		}
 		env := t.TempDir()
 		gobox := runGoboxCLI(t, env, "", "df", ".")
@@ -740,30 +1162,34 @@ func TestParity_DfCases(t *testing.T) {
 	})
 
 	for _, tc := range []struct {
-		id       string
-		args     []string
-		contains []string
+		id   string
+		args []string
 	}{
-		{"DF-006", []string{"df", "-H", "."}, []string{"Filesystem", "Size"}},
-		{"DF-007", []string{"df", "-a"}, []string{"Filesystem"}},
-		{"DF-008", []string{"df", "-l"}, []string{"Filesystem"}},
-		{"DF-009", []string{"df", "-t", "tmpfs"}, []string{"Filesystem"}},
-		{"DF-010", []string{"df", "-x", "tmpfs"}, []string{"Filesystem"}},
-		{"DF-011", []string{"df", "--total"}, []string{"total"}},
-		{"DF-012", []string{"df", "-P", "."}, []string{"Filesystem", "1024-blocks"}},
+		{"DF-006", []string{"df", "-H", "."}},
+		{"DF-007", []string{"df", "-a"}},
+		{"DF-008", []string{"df", "-l"}},
+		{"DF-009", []string{"df", "-t", "tmpfs"}},
+		{"DF-010", []string{"df", "-x", "tmpfs"}},
+		{"DF-011", []string{"df", "--total"}},
+		{"DF-012", []string{"df", "-P", "."}},
 	} {
 		t.Run(tc.id, func(t *testing.T) {
 			if runtime.GOOS != "linux" {
-				t.Skip("df cases require linux mountinfo")
+				t.Skip(fmt.Sprintf("%s: df flag comparison requires linux /proc/self/mountinfo", tc.id))
 			}
-			res := runGoboxCLI(t, t.TempDir(), "", tc.args...)
-			native := runNativeCLI(t, t.TempDir(), "", tc.args[0], tc.args[1:]...)
+			// Share a single fixture directory between gobox and native so
+			// path-sensitive cases (df -H ., df -P .) observe the same
+			// filesystem, instead of two unrelated t.TempDir() calls that
+			// only happen to agree because they're both on the same host.
+			env := t.TempDir()
+			res := runGoboxCLI(t, env, "", tc.args...)
+			native := runNativeCLI(t, env, "", tc.args[0], tc.args[1:]...)
 			if res.ExitCode != native.ExitCode {
 				t.Fatalf("%s exit mismatch gobox=%d native=%d\n--- gobox ---\n%s\n--- native ---\n%s", tc.id, res.ExitCode, native.ExitCode, res.Stdout, native.Stdout)
 			}
 			switch tc.id {
 			case "DF-006":
-				base := runGoboxCLI(t, t.TempDir(), "", "df", ".")
+				base := runGoboxCLI(t, env, "", "df", ".")
 				if base.ExitCode != 0 {
 					t.Fatalf("DF-006 baseline failed: %+v", base)
 				}
@@ -779,7 +1205,7 @@ func TestParity_DfCases(t *testing.T) {
 					t.Fatalf("DF-006 should switch size column to SI-style units: base=%q human=%q", baseRows[0][1], rows[0][1])
 				}
 			case "DF-007":
-				base := runGoboxCLI(t, t.TempDir(), "", "df")
+				base := runGoboxCLI(t, env, "", "df")
 				if base.ExitCode != 0 {
 					t.Fatalf("DF-007 baseline failed: %+v", base)
 				}
@@ -849,6 +1275,54 @@ func TestParity_DfCases(t *testing.T) {
 				if commonCount == 0 {
 					t.Fatalf("DF-008 gobox and native share no common local filesystem mounts\ngobox=%s\nnative=%s", res.Stdout, native.Stdout)
 				}
+
+				// The checks above only prove ambient host mounts happen to
+				// be local; they never exercise a genuinely different
+				// filesystem, so an implementation that completely ignores
+				// -l would still pass. Construct a controlled fixture that
+				// is verifiably its own filesystem (a tmpfs mount) and prove
+				// -l keeps it.
+				//
+				// Exercising the exclusion side properly would require a
+				// real "remote" filesystem (nfs/cifs/9p/...). Standing up a
+				// loopback NFS/CIFS server from within this test is blocked
+				// by the harness's network/service sandboxing policy (it
+				// classifies starting rpcbind/rpc.nfsd/rpc.mountd and
+				// exporting a share as exposing a local service), so per
+				// TEST-DESIGN.md §13/§11 rule 6 we document that limitation
+				// here and fall back to an opportunistic check against any
+				// ambient remote mount instead of failing outright.
+				mountDir := filepath.Join(t.TempDir(), "df008mnt")
+				if !mountTmpfsAt(t, mountDir) {
+					t.Skip("DF-008: cannot mount tmpfs to construct a controlled local-filesystem fixture (requires CAP_SYS_ADMIN)")
+				}
+				resLocal := runGoboxCLI(t, mountDir, "", "df", "-l", ".")
+				nativeLocal := runNativeCLI(t, mountDir, "", "df", "-l", ".")
+				if resLocal.ExitCode != nativeLocal.ExitCode {
+					t.Fatalf("DF-008 -l exit mismatch on controlled tmpfs fixture gobox=%d native=%d", resLocal.ExitCode, nativeLocal.ExitCode)
+				}
+				if len(nonEmptyLines(resLocal.Stdout)) < 2 {
+					t.Fatalf("DF-008: -l should still list the controlled local tmpfs fixture mount\n%s", resLocal.Stdout)
+				}
+				if len(nonEmptyLines(nativeLocal.Stdout)) < 2 {
+					t.Fatalf("DF-008: native -l should still list the controlled local tmpfs fixture mount\n%s", nativeLocal.Stdout)
+				}
+
+				remoteType, remoteTarget := findRemoteMount(t)
+				if remoteType == "" {
+					t.Skip("DF-008: no remote-type filesystem (nfs/cifs/9p/sshfs/...) mounted in this environment; cannot verify -l's exclusion side beyond the controlled local fixture proven above")
+				}
+				for _, out := range []struct {
+					name string
+					text string
+				}{
+					{"gobox", res.Stdout},
+					{"native", native.Stdout},
+				} {
+					if strings.Contains(out.text, remoteTarget) {
+						t.Fatalf("DF-008 %s -l should exclude remote mount %q (%s)\n%s", out.name, remoteTarget, remoteType, out.text)
+					}
+				}
 			case "DF-009":
 				for _, line := range nonEmptyLines(res.Stdout)[1:] {
 					fields := strings.Fields(line)
@@ -890,6 +1364,28 @@ func TestParity_DfCases(t *testing.T) {
 				if len(total) != expectedDFRowWidth(header) {
 					t.Fatalf("DF-011 total row width mismatch header=%v total=%v\n%s", header, total, res.Stdout)
 				}
+				// Verify the total row's numeric columns are actually the
+				// sum of the per-filesystem rows above it, not just
+				// correctly shaped. Columns 1/2/3 are the blocks/used/
+				// available columns for the default (non -i, non -T) header.
+				dataRows := rows[:len(rows)-1]
+				for _, col := range []int{1, 2, 3} {
+					var sum int64
+					for _, row := range dataRows {
+						v, err := strconv.ParseInt(row[col], 10, 64)
+						if err != nil {
+							t.Fatalf("DF-011 non-numeric column %d in row %v", col, row)
+						}
+						sum += v
+					}
+					got, err := strconv.ParseInt(total[col], 10, 64)
+					if err != nil {
+						t.Fatalf("DF-011 non-numeric total column %d: %v", col, total)
+					}
+					if got != sum {
+						t.Fatalf("DF-011 total column %d (%s) is not the sum of per-filesystem rows: total=%d sum-of-rows=%d\n%s", col, header[col], got, sum, res.Stdout)
+					}
+				}
 			case "DF-012":
 				header, rows := dfHeaderAndRows(res.Stdout)
 				if len(rows) == 0 {
@@ -904,18 +1400,13 @@ func TestParity_DfCases(t *testing.T) {
 					}
 				}
 			}
-			for _, want := range tc.contains {
-				if !strings.Contains(res.Stdout, want) || !strings.Contains(native.Stdout, want) {
-					t.Fatalf("%s missing %q\n--- gobox ---\n%s\n--- native ---\n%s", tc.id, want, res.Stdout, native.Stdout)
-				}
-			}
 		})
 	}
 
 	// DF-hT: combined -h and -T flags.
 	t.Run("DF-hT", func(t *testing.T) {
 		if runtime.GOOS != "linux" {
-			t.Skip("df cases require linux mountinfo")
+			t.Skip("DF-hT: combined -h -T rendering comparison requires linux /proc/self/mountinfo")
 		}
 		env := t.TempDir()
 		res := runGoboxCLI(t, env, "", "df", "-h", "-T", ".")
@@ -958,7 +1449,7 @@ func TestParity_DfCases(t *testing.T) {
 	// DF-error: non-existent path should exit non-zero.
 	t.Run("DF-error", func(t *testing.T) {
 		if runtime.GOOS != "linux" {
-			t.Skip("df cases require linux mountinfo")
+			t.Skip("DF-error: missing-path exit-code comparison requires linux /proc/self/mountinfo")
 		}
 		env := t.TempDir()
 		gobox := runGoboxMainCLI(t, env, "", "df", "/nonexistent_gobox_df_path")
@@ -1320,6 +1811,17 @@ func TestParity_StatCases(t *testing.T) {
 				if gFields[1] != nFields[1] {
 					t.Fatalf("stat -t file size mismatch gobox=%q native=%q", gFields[1], nFields[1])
 				}
+				// gobox's terse mode is a documented subset of native's
+				// (CMD-SPECS.md marks stat -t "⚠️ 部分一致": "简洁单行格式",
+				// not full field parity), so field *counts* are not expected
+				// to match native's much larger terse schema. What must
+				// hold is gobox's own terse contract: exactly 4 space-
+				// separated fields (name, size, octal perm, RFC3339
+				// timestamp) -- verifying this catches a regression that
+				// drops or duplicates a field while keeping name/size intact.
+				if len(gFields) != 4 {
+					t.Fatalf("stat -t gobox terse output should have exactly 4 fields (name size mode time), got %d: %q", len(gFields), gobox.Stdout)
+				}
 			},
 		},
 		{
@@ -1334,6 +1836,95 @@ func TestParity_StatCases(t *testing.T) {
 				writeFile(t, filepath.Join(env.Dir, "b"), "world")
 			},
 		},
+	})
+
+	// STAT-long-flags: --dereference/--file-system/--format/--terse must
+	// produce output identical to their short-flag equivalents (-L/-f/-c/-t).
+	t.Run("STAT-long-flags", func(t *testing.T) {
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "target"), "hello")
+		if err := os.Symlink("target", filepath.Join(env, "link")); err != nil {
+			t.Fatal(err)
+		}
+
+		short := runGoboxCLI(t, env, "", "stat", "-L", "link")
+		long := runGoboxCLI(t, env, "", "stat", "--dereference", "link")
+		if short.ExitCode != long.ExitCode || short.Stdout != long.Stdout {
+			t.Fatalf("stat -L vs --dereference mismatch\n-L=%+v\n--dereference=%+v", short, long)
+		}
+
+		short = runGoboxCLI(t, env, "", "stat", "-f", ".")
+		long = runGoboxCLI(t, env, "", "stat", "--file-system", ".")
+		if short.ExitCode != long.ExitCode || short.Stdout != long.Stdout {
+			t.Fatalf("stat -f vs --file-system mismatch\n-f=%+v\n--file-system=%+v", short, long)
+		}
+
+		short = runGoboxCLI(t, env, "", "stat", "-c", "%n:%s", "target")
+		long = runGoboxCLI(t, env, "", "stat", "--format", "%n:%s", "target")
+		if short.ExitCode != long.ExitCode || short.Stdout != long.Stdout {
+			t.Fatalf("stat -c vs --format mismatch\n-c=%+v\n--format=%+v", short, long)
+		}
+
+		short = runGoboxCLI(t, env, "", "stat", "-t", "target")
+		long = runGoboxCLI(t, env, "", "stat", "--terse", "target")
+		if short.ExitCode != long.ExitCode || short.Stdout != long.Stdout {
+			t.Fatalf("stat -t vs --terse mismatch\n-t=%+v\n--terse=%+v", short, long)
+		}
+	})
+
+	// STAT-symlink-broken: statting a dangling symlink without -L should
+	// succeed and report the link itself (native parity); with -L it must
+	// fail because the target doesn't exist.
+	t.Run("STAT-symlink-broken", func(t *testing.T) {
+		env := t.TempDir()
+		if err := os.Symlink("does-not-exist", filepath.Join(env, "dangling")); err != nil {
+			t.Fatal(err)
+		}
+		gobox := runGoboxCLI(t, env, "", "stat", "dangling")
+		native := runNativeCLI(t, env, "", "stat", "dangling")
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("STAT-symlink-broken (no -L) exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		if gobox.ExitCode != 0 {
+			t.Fatalf("STAT-symlink-broken (no -L) should succeed on the symlink itself, gobox=%+v", gobox)
+		}
+		goboxL := runGoboxCLI(t, env, "", "stat", "-L", "dangling")
+		nativeL := runNativeCLI(t, env, "", "stat", "-L", "dangling")
+		if (goboxL.ExitCode == 0) != (nativeL.ExitCode == 0) {
+			t.Fatalf("STAT-symlink-broken -L exit-zero mismatch gobox=%d native=%d", goboxL.ExitCode, nativeL.ExitCode)
+		}
+		if goboxL.ExitCode == 0 {
+			t.Fatalf("STAT-symlink-broken -L should fail to follow a dangling symlink, got exit 0: %+v", goboxL)
+		}
+	})
+
+	// STAT-permission-denied: statting a path through an unreadable parent
+	// directory should fail. As with FIND/DU, this can only be exercised
+	// meaningfully as a non-root user.
+	t.Run("STAT-permission-denied", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("STAT-permission-denied: unix permission bits not applicable on windows")
+		}
+		if os.Geteuid() == 0 {
+			t.Skip("STAT-permission-denied: running as root, which bypasses Unix permission checks; cannot construct a real permission-denied directory in this environment")
+		}
+		env := t.TempDir()
+		writeFile(t, filepath.Join(env, "locked", "hidden.txt"), "x")
+		if err := os.Chmod(filepath.Join(env, "locked"), 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(filepath.Join(env, "locked"), 0o755) })
+		gobox := runGoboxCLI(t, env, "", "stat", "locked/hidden.txt")
+		native := runNativeCLI(t, env, "", "stat", "locked/hidden.txt")
+		if gobox.ExitCode == 0 {
+			t.Fatalf("STAT-permission-denied: gobox should fail to stat a path behind an unreadable directory")
+		}
+		if native.ExitCode == 0 {
+			t.Fatalf("STAT-permission-denied: native stat should also fail")
+		}
+		if gobox.Stderr == "" {
+			t.Fatalf("STAT-permission-denied: gobox should emit an error message on stderr")
+		}
 	})
 
 	// STAT-error: missing path should exit non-zero.
@@ -1540,6 +2131,26 @@ func TestParity_TruncateCases(t *testing.T) {
 			}
 		}
 	})
+
+	// TRUNCATE-no-create-long: --no-create must behave identically to -c.
+	t.Run("TRUNCATE-no-create-long", func(t *testing.T) {
+		env := t.TempDir()
+		short := runGoboxCLI(t, env, "", "truncate", "-c", "-s", "2", "missing-short")
+		long := runGoboxCLI(t, env, "", "truncate", "--no-create", "-s", "2", "missing-long")
+		if short.ExitCode != long.ExitCode {
+			t.Fatalf("truncate -c vs --no-create exit mismatch -c=%d --no-create=%d", short.ExitCode, long.ExitCode)
+		}
+		if short.Stdout != long.Stdout || short.Stderr != long.Stderr {
+			t.Fatalf("truncate -c vs --no-create output mismatch\n-c: stdout=%q stderr=%q\n--no-create: stdout=%q stderr=%q",
+				short.Stdout, short.Stderr, long.Stdout, long.Stderr)
+		}
+		if _, err := os.Stat(filepath.Join(env, "missing-short")); !os.IsNotExist(err) {
+			t.Fatalf("truncate -c unexpectedly created missing-short")
+		}
+		if _, err := os.Stat(filepath.Join(env, "missing-long")); !os.IsNotExist(err) {
+			t.Fatalf("truncate --no-create unexpectedly created missing-long")
+		}
+	})
 }
 
 func duPathSet(out string) string {
@@ -1641,6 +2252,84 @@ func statFieldValue(lineOrOut, label string) string {
 		return ""
 	}
 	return strings.Trim(fields[0], "\"")
+}
+
+// TestParity_AliasCases covers the gobox-only `alias` command (ALIAS-001/
+// 002/003 in docs/TEST-CASES.md). `alias` is a 🆕 gobox扩展 with no native
+// baseline, so these are contract tests: they verify gobox's own documented
+// script-generation behavior (docs/TEST-CASES.md "alias" table), driven off
+// the live command registry (cmds/base.Commands()) rather than a hardcoded
+// command list, so the case stays correct as commands are added/removed.
+func TestParity_AliasCases(t *testing.T) {
+	// ALIAS-001: default script exports gobox_alias_type=bash, aliases every
+	// registered subcommand except "alias" itself (no recursive alias).
+	t.Run("ALIAS-001", func(t *testing.T) {
+		env := t.TempDir()
+		res := runGoboxCLI(t, env, "", "alias")
+		if res.ExitCode != 0 {
+			t.Fatalf("alias exit %d: %+v", res.ExitCode, res)
+		}
+		if !strings.Contains(res.Stdout, "gobox_alias_type=bash") {
+			t.Fatalf("alias script missing gobox_alias_type=bash\n%s", res.Stdout)
+		}
+		if strings.Contains(res.Stdout, "alias alias=") {
+			t.Fatalf("alias script must not create a recursive alias for 'alias' itself\n%s", res.Stdout)
+		}
+		cmds := base.Commands()
+		if len(cmds) == 0 {
+			t.Fatal("base.Commands() returned no registered commands; cannot verify alias coverage")
+		}
+		for _, cmd := range cmds {
+			if cmd.Name() == "alias" {
+				continue
+			}
+			want := fmt.Sprintf("alias %s='gobox %s'", cmd.Name(), cmd.Name())
+			if !strings.Contains(res.Stdout, want) {
+				t.Fatalf("alias script missing alias line for registered command %q (want %q)\n%s", cmd.Name(), want, res.Stdout)
+			}
+		}
+	})
+
+	// ALIAS-002: -u prints the mirrored unalias script for the same command
+	// set, and cleans up gobox_alias_type at the end.
+	t.Run("ALIAS-002", func(t *testing.T) {
+		env := t.TempDir()
+		res := runGoboxCLI(t, env, "", "alias", "-u")
+		if res.ExitCode != 0 {
+			t.Fatalf("alias -u exit %d: %+v", res.ExitCode, res)
+		}
+		if !strings.Contains(res.Stdout, "unset gobox_alias_type") {
+			t.Fatalf("alias -u script should unset gobox_alias_type\n%s", res.Stdout)
+		}
+		for _, cmd := range base.Commands() {
+			if cmd.Name() == "alias" {
+				if strings.Contains(res.Stdout, "unalias alias ") {
+					t.Fatalf("alias -u script must not unalias 'alias' itself\n%s", res.Stdout)
+				}
+				continue
+			}
+			want := fmt.Sprintf("unalias %s 2>/dev/null || true", cmd.Name())
+			if !strings.Contains(res.Stdout, want) {
+				t.Fatalf("alias -u script missing unalias line for registered command %q (want %q)\n%s", cmd.Name(), want, res.Stdout)
+			}
+		}
+	})
+
+	// ALIAS-003: -h prints usage/help text including the documented
+	// `gobox alias [-u]` usage line.
+	t.Run("ALIAS-003", func(t *testing.T) {
+		env := t.TempDir()
+		res := runGoboxCLI(t, env, "", "alias", "-h")
+		if res.ExitCode != 0 {
+			t.Fatalf("alias -h exit %d: %+v", res.ExitCode, res)
+		}
+		if !strings.Contains(res.Stdout, "gobox alias [-u]") {
+			t.Fatalf("alias -h help text missing usage line 'gobox alias [-u]'\n%s", res.Stdout)
+		}
+		if !strings.Contains(strings.ToLower(res.Stdout), "alias") {
+			t.Fatalf("alias -h help text should describe the command's purpose\n%s", res.Stdout)
+		}
+	})
 }
 
 // statModeFromAccess extracts the four-digit octal mode from a native stat

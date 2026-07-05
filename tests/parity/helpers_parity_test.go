@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"gobox/cmds/base"
 	"gobox/cmds/disk"
 	"gobox/cmds/fs"
 	netcmd "gobox/cmds/net"
@@ -99,6 +100,11 @@ func runGoboxCLI(t *testing.T, dir string, stdin string, args ...string) parityR
 		}
 		os.Stdout = wOut
 		os.Stderr = wErr
+		defer func() {
+			os.Stdout = oldStdout
+			os.Stderr = oldStderr
+			os.Stdin = oldStdin
+		}()
 
 		// Drain pipes concurrently to prevent deadlock when output exceeds the
 		// pipe buffer (64 KB on Linux).
@@ -113,9 +119,6 @@ func runGoboxCLI(t *testing.T, dir string, stdin string, args ...string) parityR
 		}
 		_ = wOut.Close()
 		_ = wErr.Close()
-		os.Stdout = oldStdout
-		os.Stderr = oldStderr
-		os.Stdin = oldStdin
 
 		wg.Wait()
 		_ = rOut.Close()
@@ -158,6 +161,18 @@ func runGoboxMainCLI(t *testing.T, dir string, stdin string, args ...string) par
 		}
 		os.Stdout = wOut
 		os.Stderr = wErr
+		defer func() {
+			os.Stdout = oldStdout
+			os.Stderr = oldStderr
+			os.Stdin = oldStdin
+		}()
+
+		// Drain pipes concurrently to prevent deadlock when output exceeds the
+		// pipe buffer (64 KB on Linux), matching runGoboxCLI's protection.
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _, _ = io.Copy(&stdoutBuf, rOut) }()
+		go func() { defer wg.Done(); _, _ = io.Copy(&stderrBuf, rErr) }()
 
 		err = invokeGobox(args)
 		if err != nil {
@@ -182,12 +197,8 @@ func runGoboxMainCLI(t *testing.T, dir string, stdin string, args ...string) par
 		}
 		_ = wOut.Close()
 		_ = wErr.Close()
-		os.Stdout = oldStdout
-		os.Stderr = oldStderr
-		os.Stdin = oldStdin
 
-		_, _ = io.Copy(&stdoutBuf, rOut)
-		_, _ = io.Copy(&stderrBuf, rErr)
+		wg.Wait()
 		_ = rOut.Close()
 		_ = rErr.Close()
 	})
@@ -320,6 +331,12 @@ func invokeGobox(args []string) error {
 		return netcmd.NpCmd(argv)
 	case "seq":
 		return textcmd.SeqCmd(argv)
+	case "alias":
+		aliasCmd, ok := base.Lookup("alias")
+		if !ok {
+			return fmt.Errorf("alias command not registered")
+		}
+		return aliasCmd.Run(argv, os.Stdout)
 	default:
 		return fmt.Errorf("unknown command %s", cmd)
 	}
@@ -391,7 +408,7 @@ func requireNativeCommand(t *testing.T, command string) string {
 	t.Helper()
 	path, err := exec.LookPath(command)
 	if err != nil {
-		t.Fatalf("parity environment invalid: native command %s not found", command)
+		t.Skipf("native command %s not found in PATH, skipping native parity comparison", command)
 	}
 	return path
 }
@@ -419,14 +436,15 @@ func runExactParityCases(t *testing.T, cases []parityCase) {
 				tc.Assert(t, gobox, native)
 				return
 			}
+			cmdline := fmt.Sprintf("[%s/%s] gobox args=%v native=%s %v", tc.ID, tc.Name, tc.GoboxArgs, tc.NativeCommand, tc.NativeArgs)
 			if gobox.ExitCode != native.ExitCode {
-				t.Fatalf("%s exit code mismatch: gobox=%d native=%d", tc.Name, gobox.ExitCode, native.ExitCode)
+				t.Fatalf("%s exit code mismatch: gobox=%d native=%d", cmdline, gobox.ExitCode, native.ExitCode)
 			}
 			if gobox.Stdout != native.Stdout {
-				t.Fatalf("%s stdout mismatch\n--- gobox ---\n%s\n--- native ---\n%s", tc.Name, gobox.Stdout, native.Stdout)
+				t.Fatalf("%s stdout mismatch\n--- gobox ---\n%s\n--- native ---\n%s", cmdline, gobox.Stdout, native.Stdout)
 			}
 			if gobox.Stderr != native.Stderr {
-				t.Fatalf("%s stderr mismatch\n--- gobox ---\n%s\n--- native ---\n%s", tc.Name, gobox.Stderr, native.Stderr)
+				t.Fatalf("%s stderr mismatch\n--- gobox ---\n%s\n--- native ---\n%s", cmdline, gobox.Stderr, native.Stderr)
 			}
 		})
 	}
@@ -441,10 +459,16 @@ func normalizeText(s string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
+// collapseSpaces collapses runs of horizontal whitespace within each line to a
+// single space (to normalize column-width noise) while preserving line
+// boundaries, so it cannot mask a regression that merges or splits lines.
 func collapseSpaces(s string) string {
 	s = normalizeText(s)
-	fields := strings.Fields(s)
-	return strings.Join(fields, " ")
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = strings.Join(strings.Fields(line), " ")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func normalizeFindOutput(base string) func(string) string {
@@ -638,6 +662,10 @@ func runTailGoboxFollow(t *testing.T, dir string, args []string, action func(), 
 	}
 	os.Stdout = wOut
 	os.Stderr = wErr
+	defer func() {
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -653,8 +681,6 @@ func runTailGoboxFollow(t *testing.T, dir string, args []string, action func(), 
 
 	_ = wOut.Close()
 	_ = wErr.Close()
-	os.Stdout = oldStdout
-	os.Stderr = oldStderr
 	_, _ = io.Copy(&stdoutBuf, rOut)
 	_, _ = io.Copy(&stderrBuf, rErr)
 	_ = rOut.Close()
@@ -699,6 +725,11 @@ func runGoboxNCListen(t *testing.T, port, serverStdin, clientInput string, timeo
 	os.Stdout = wOut
 	os.Stderr = wErr
 	os.Stdin = rIn
+	defer func() {
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+		os.Stdin = oldStdin
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -713,9 +744,6 @@ func runGoboxNCListen(t *testing.T, port, serverStdin, clientInput string, timeo
 	_ = rIn.Close()
 	_ = wOut.Close()
 	_ = wErr.Close()
-	os.Stdout = oldStdout
-	os.Stderr = oldStderr
-	os.Stdin = oldStdin
 	_, _ = io.Copy(&stdoutBuf, rOut)
 	_, _ = io.Copy(&stderrBuf, rErr)
 	_ = rOut.Close()
