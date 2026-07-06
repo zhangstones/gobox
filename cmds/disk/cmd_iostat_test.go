@@ -126,6 +126,61 @@ func TestIostatCmdUsesCgroupWhenRequested(t *testing.T) {
 	}
 }
 
+// Bug regression test: --cgroup previously always read the root cgroup's
+// io.stat, which aggregates the whole system and looks identical to plain
+// /proc/diskstats output. It should instead resolve the current process's
+// own cgroup (via /proc/self/cgroup) and read that cgroup's io.stat when
+// available, rather than silently falling back to system-wide data.
+func TestIostatCmdUsesOwnCgroupIoStatWhenAvailable(t *testing.T) {
+	oldReadFile := readFileIostat
+	oldStat := statIostat
+	oldUptime := uptimeIostat
+	t.Cleanup(func() {
+		readFileIostat = oldReadFile
+		statIostat = oldStat
+		uptimeIostat = oldUptime
+	})
+
+	ownPath := "/sys/fs/cgroup/user.slice/session-1.scope/io.stat"
+	readFileIostat = func(path string) ([]byte, error) {
+		switch path {
+		case "/proc/self/cgroup":
+			return []byte("0::/user.slice/session-1.scope\n"), nil
+		case ownPath:
+			return []byte("sda rbytes=1024 wbytes=2048 rios=4 wios=8\n"), nil
+		case "/sys/fs/cgroup/io.stat":
+			// Root-cgroup (system-wide) data intentionally differs so the
+			// test fails if the fallback path is used instead of the fix.
+			return []byte("sda rbytes=999999999 wbytes=999999999 rios=99999 wios=99999\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	statIostat = func(path string) (os.FileInfo, error) {
+		if path == ownPath {
+			return fakeFileInfo{name: "io.stat"}, nil
+		}
+		return nil, os.ErrNotExist
+	}
+	uptimeIostat = func() (float64, error) { return 2, nil }
+
+	var out bytes.Buffer
+	if err := iostatCmd([]string{"--cgroup", "-i", "1", "-n", "1"}, &out); err != nil {
+		t.Fatalf("iostatCmd failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "sda") {
+		t.Fatalf("missing cgroup device row: %q", output)
+	}
+	// rios=4/wios=8 over uptime=2s -> 2.00/s read, 4.00/s write.
+	if !strings.Contains(output, "2.00/s") || !strings.Contains(output, "4.00/s") {
+		t.Fatalf("expected rates derived from own-cgroup io.stat, got %q", output)
+	}
+	if strings.Contains(output, "99999") {
+		t.Fatalf("expected own-cgroup data, but root cgroup (system-wide) data leaked in: %q", output)
+	}
+}
+
 func TestIostatCmdZeroFilterHidesInactiveRows(t *testing.T) {
 	oldReadFile := readFileIostat
 	oldUptime := uptimeIostat

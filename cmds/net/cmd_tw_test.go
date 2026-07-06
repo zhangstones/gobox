@@ -493,6 +493,44 @@ func TestTwStaticServingIndexHtml(t *testing.T) {
 	}
 }
 
+// TestTwStaticServingExplicitIndexHtmlNotRedirected is a regression test
+// for a bug where requesting a file by its explicit name "/index.html"
+// returned a 301 redirect to "./" (Go's http.ServeFile special-cases the
+// literal name "index.html" for URL canonicalization) instead of serving
+// the file content directly, unlike nginx/python -m http.server which only
+// apply index resolution to directory requests.
+func TestTwStaticServingExplicitIndexHtmlNotRedirected(t *testing.T) {
+	tmpDir := t.TempDir()
+	indexFile := filepath.Join(tmpDir, "index.html")
+	const content = "<html><body>Explicit Index Request</body></html>"
+	if err := os.WriteFile(indexFile, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to create index.html: %v", err)
+	}
+
+	server := httptest.NewServer(MakeStaticHandler(tmpDir))
+	defer server.Close()
+
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Get(server.URL + "/index.html")
+	if err != nil {
+		t.Fatalf("GET /index.html failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200 for explicit /index.html request, got %d (Location=%q)", resp.StatusCode, resp.Header.Get("Location"))
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != content {
+		t.Errorf("expected index.html content %q, got %q", content, string(body))
+	}
+}
+
 func TestTwStaticServingNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
 	// Don't create any files

@@ -44,6 +44,13 @@ func RandCmd(args []string) error {
 				return fmt.Errorf("invalid number of bytes: %s", arg[2:])
 			}
 			cfg.numBytes = n
+		case strings.HasPrefix(arg, "-") && isDigits(arg[1:]):
+			// Shorthand -NUM, e.g. -16 means -n 16 (see help text)
+			n, err := strconv.Atoi(arg[1:])
+			if err != nil || n < 0 {
+				return fmt.Errorf("invalid number of bytes: %s", arg[1:])
+			}
+			cfg.numBytes = n
 		case arg == "-hex":
 			cfg.hex = true
 			cfg.base64 = false
@@ -137,20 +144,33 @@ doneFlags:
 	return nil
 }
 
+// isDigits reports whether s is non-empty and contains only ASCII digits.
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func printRandUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: gobox rand [OPTIONS] [NUM]")
 	fmt.Fprintln(w, "Generate random bytes.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Options:")
-	fmt.Fprintln(w, "  -n NUM, -NUM    Number of bytes to generate (default: 32)")
+	fmt.Fprintln(w, "  -n NUM, -NUM    Number of bytes to generate (default: 32; 0 is valid and produces empty output)")
 	fmt.Fprintln(w, "  -hex            Hex output (default)")
 	fmt.Fprintln(w, "  -base64         Base64 output")
-	fmt.Fprintln(w, "  -out FILE       Write to FILE")
+	fmt.Fprintln(w, "  -out FILE       Write the encoded output (hex or base64, same as stdout) to FILE")
 	fmt.Fprintln(w, "  -h, --help      Show this help")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Examples:")
 	fmt.Fprintln(w, "  gobox rand 32                      Generate 32 random bytes (hex)")
 	fmt.Fprintln(w, "  gobox rand -n 32 -hex              Generate 32 random bytes (hex)")
 	fmt.Fprintln(w, "  gobox rand -n 24 -base64           Generate 24 random bytes (base64)")
-	fmt.Fprintln(w, "  gobox rand -n 16 -out /tmp/key     Generate 16 bytes to file")
+	fmt.Fprintln(w, "  gobox rand -n 16 -out /tmp/key      Generate 16 bytes, write hex-encoded text to file")
 }

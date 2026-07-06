@@ -73,7 +73,7 @@ func DuCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  gobox du --max-depth 2 --exclude '*.tmp' /var")
 	}
 
-	if err := fsFlags.Parse(args); err != nil {
+	if err := fsFlags.Parse(expandDuBundledFlags(args)); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}
@@ -104,6 +104,44 @@ func DuCmd(args []string) error {
 		printDuRow(grandTotal, "total", opts.human)
 	}
 	return nil
+}
+
+// duBundledBoolFlags lists du's single-character boolean flags that are
+// safe to bundle together, e.g. "-sh" meaning "-s -h".
+var duBundledBoolFlags = map[byte]bool{
+	'h': true,
+	's': true,
+	'a': true,
+	'c': true,
+	'x': true,
+}
+
+// expandDuBundledFlags splits bundled short boolean flags such as "-sh"
+// into separate "-s -h" tokens before they reach Go's flag package, which
+// does not support bundling on its own. Only single-dash tokens made up
+// entirely of known boolean short flags are expanded; long flags (--foo)
+// and flags carrying a value (like -d) are left untouched.
+func expandDuBundledFlags(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		if len(arg) > 2 && arg[0] == '-' && arg[1] != '-' {
+			bundle := true
+			for i := 1; i < len(arg); i++ {
+				if !duBundledBoolFlags[arg[i]] {
+					bundle = false
+					break
+				}
+			}
+			if bundle {
+				for i := 1; i < len(arg); i++ {
+					out = append(out, "-"+string(arg[i]))
+				}
+				continue
+			}
+		}
+		out = append(out, arg)
+	}
+	return out
 }
 
 func diskUsage(root string) (int64, error) {

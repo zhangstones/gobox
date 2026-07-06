@@ -2,6 +2,7 @@ package proc
 
 import (
 	"bufio"
+	"os"
 	"strings"
 	"testing"
 )
@@ -17,6 +18,34 @@ func TestXargsCmdHelpUsesStructuredOptions(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected help to contain %q, got %q", want, out)
 		}
+	}
+}
+
+// TestXargsCmdShortIDoesNotConsumeCommandToken is a regression test for a bug
+// where `-i` (BSD-style, no argument, implicitly {}) incorrectly consumed the
+// following token as the replace-string, treating the actual command (e.g.
+// "echo") as the REPL value instead of leaving it as the command to run.
+func TestXargsCmdShortIDoesNotConsumeCommandToken(t *testing.T) {
+	oldStdin := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stdin: %v", err)
+	}
+	if _, err := w.WriteString("item\n"); err != nil {
+		t.Fatalf("write stdin: %v", err)
+	}
+	_ = w.Close()
+	os.Stdin = r
+	defer func() { os.Stdin = oldStdin }()
+
+	out, err := captureProcOutput(t, func() error {
+		return XargsCmd([]string{"-i", "echo", "item: {}"})
+	})
+	if err != nil {
+		t.Fatalf("xargs -i echo failed: %v (output: %q)", err, out)
+	}
+	if !strings.Contains(out, "item: item") {
+		t.Fatalf("expected {} to be replaced with input line, got %q", out)
 	}
 }
 

@@ -327,17 +327,30 @@ doneFlags:
 		outputFile, writeOut, showHeaders, failOnError, silent, showError)
 }
 
+// wrapCurlError wraps an error that CurlCmd has not already printed itself
+// (e.g. request construction failures); the top-level CLI dispatcher is the
+// sole printer for these, gated by the usual silent/showError rule.
 func wrapCurlError(err error, silent, showError bool) error {
-	return wrapCurlErrorWithCode(err, silent, showError, 2)
-}
-
-func wrapCurlErrorWithCode(err error, silent, showError bool, exitCode int) error {
 	if err == nil {
 		return nil
 	}
 	return curlCommandError{
 		err:            err,
 		suppressStderr: silent && !showError,
+		exitCode:       2,
+	}
+}
+
+// wrapCurlErrorAlreadyPrinted wraps an error for a diagnostic runSingle has
+// already printed directly to os.Stderr (or deliberately suppressed under
+// -s/--silent); the top-level CLI dispatcher must never print it again.
+func wrapCurlErrorAlreadyPrinted(err error, exitCode int) error {
+	if err == nil {
+		return nil
+	}
+	return curlCommandError{
+		err:            err,
+		suppressStderr: true,
 		exitCode:       exitCode,
 	}
 }
@@ -506,7 +519,7 @@ func runSingle(client *http.Client, targetURL, method string, headers []string, 
 		if !silent || showError {
 			fmt.Fprintf(os.Stderr, "curl: %v\n", err)
 		}
-		return wrapCurlError(fmt.Errorf("request failed: %w", err), silent, showError)
+		return wrapCurlErrorAlreadyPrinted(fmt.Errorf("request failed: %w", err), 2)
 	}
 	defer resp.Body.Close()
 
@@ -517,7 +530,7 @@ func runSingle(client *http.Client, targetURL, method string, headers []string, 
 		if !silent || showError {
 			fmt.Fprintf(os.Stderr, "curl: HTTP error %d\n", resp.StatusCode)
 		}
-		return wrapCurlErrorWithCode(fmt.Errorf("HTTP error %d", resp.StatusCode), silent, showError, 22)
+		return wrapCurlErrorAlreadyPrinted(fmt.Errorf("HTTP error %d", resp.StatusCode), 22)
 	}
 
 	// Build output

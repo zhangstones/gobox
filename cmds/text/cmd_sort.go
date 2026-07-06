@@ -111,8 +111,12 @@ func SortCmd(args []string) error {
 			}
 			i++
 			cfg.sep = args[i]
+		case strings.HasPrefix(arg, "-t"):
+			cfg.sep = arg[2:]
 		case arg == "--field-separator=":
-			cfg.sep = arg[18:]
+			return fmt.Errorf("--field-separator= requires an argument")
+		case strings.HasPrefix(arg, "--field-separator="):
+			cfg.sep = arg[len("--field-separator="):]
 		case arg == "-o":
 			if i+1 >= len(args) {
 				return fmt.Errorf("-o requires an argument")

@@ -628,6 +628,65 @@ func TestNCUDPScan(t *testing.T) {
 
 // ============== BENCHMARK MODE TESTS ==============
 
+// TestNCListenUDPMode is a regression test for a bug where "nc -l -u PORT"
+// crashed immediately with "listen udp :PORT: unexpected address type"
+// because the server used net.Listen("udp", ...) instead of net.ListenPacket.
+func TestNCListenUDPMode(t *testing.T) {
+	// Reserve a free UDP port, then release it before starting the listener
+	// under test.
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to reserve UDP port: %v", err)
+	}
+	port := pc.LocalAddr().(*net.UDPAddr).Port
+	pc.Close()
+
+	oldStdout := os.Stdout
+	oldStdin := os.Stdin
+	rOut, wOut, _ := os.Pipe()
+	rIn, wIn, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stdin = rIn
+	defer func() {
+		os.Stdout = oldStdout
+		os.Stdin = oldStdin
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- NcCmdWithContext(ctx, []string{"-l", "-u", strconv.Itoa(port)})
+	}()
+
+	// Give the server a moment to bind before sending.
+	time.Sleep(200 * time.Millisecond)
+
+	client, err := net.Dial("udp", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		t.Fatalf("client dial failed: %v", err)
+	}
+	if _, err := client.Write([]byte("hello udp listener\n")); err != nil {
+		client.Close()
+		t.Fatalf("client write failed: %v", err)
+	}
+	client.Close()
+	_ = wIn.Close()
+
+	err = <-serverErr
+	_ = wOut.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, rOut)
+
+	if err != nil && err != context.DeadlineExceeded && err != context.Canceled {
+		t.Fatalf("udp listen mode returned unexpected error (bug: UDP listen crashes with net.Listen): %v", err)
+	}
+	if !strings.Contains(buf.String(), "hello udp listener") {
+		t.Fatalf("expected listener stdout to include client UDP payload, got %q", buf.String())
+	}
+}
+
 func TestNCBenchmarkServer(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

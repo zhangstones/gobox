@@ -3,6 +3,7 @@ package fs
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -30,6 +31,37 @@ func TestDiskUsageAndHumanSize(t *testing.T) {
 	}
 	if got := utils.HumanSize(1024); got != "1.0KB" {
 		t.Fatalf("unexpected HumanSize for 1KB: %s", got)
+	}
+}
+
+// TestDuCmdBundledShortFlags is a regression test for a bug where du's own
+// help text documents `gobox du -sh .` (bundled short flags) but the flag
+// parser rejected it with "flag provided but not defined: -sh" since Go's
+// flag package does not support bundling by default.
+func TestDuCmdBundledShortFlags(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("abcdef"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	out, err := captureFsCmd(t, func() error {
+		return DuCmd([]string{"-sh", dir})
+	})
+	if err != nil {
+		t.Fatalf("du -sh failed: %v", err)
+	}
+	if !strings.Contains(out, dir) {
+		t.Fatalf("expected summarized output to contain %s, got %q", dir, out)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected -s to summarize into a single line, got %q", out)
+	}
+	fields := strings.Fields(lines[0])
+	if len(fields) != 2 {
+		t.Fatalf("expected two fields in output, got %q", lines[0])
+	}
+	if _, err := strconv.ParseFloat(strings.TrimRight(fields[0], "BKMGT"), 64); err != nil {
+		t.Fatalf("expected -h to produce a human-readable size, got %q", fields[0])
 	}
 }
 

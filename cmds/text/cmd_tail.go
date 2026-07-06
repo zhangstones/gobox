@@ -46,14 +46,11 @@ func TailCmdWithContext(ctx context.Context, args []string) error {
 				return fmt.Errorf("invalid number of lines: %s", arg[3:])
 			}
 			lines = n
-		case arg == "--lines=":
-			if i+1 >= len(args) {
-				return fmt.Errorf("--lines= requires an argument")
-			}
-			i++
-			n, err := strconv.Atoi(args[i])
+		case strings.HasPrefix(arg, "--lines="):
+			val := arg[len("--lines="):]
+			n, err := strconv.Atoi(val)
 			if err != nil || n < 0 {
-				return fmt.Errorf("invalid number of lines: %s", args[i])
+				return fmt.Errorf("invalid number of lines: %s", val)
 			}
 			lines = n
 		case arg == "-f" || arg == "--follow":
@@ -81,14 +78,11 @@ func TailCmdWithContext(ctx context.Context, args []string) error {
 				return fmt.Errorf("invalid sleep interval: %s", arg[3:])
 			}
 			sleepInterval = f
-		case arg == "--sleep-interval=":
-			if i+1 >= len(args) {
-				return fmt.Errorf("--sleep-interval= requires an argument")
-			}
-			i++
-			f, err := strconv.ParseFloat(args[i], 64)
+		case strings.HasPrefix(arg, "--sleep-interval="):
+			val := arg[len("--sleep-interval="):]
+			f, err := strconv.ParseFloat(val, 64)
 			if err != nil || f <= 0 {
-				return fmt.Errorf("invalid sleep interval: %s", args[i])
+				return fmt.Errorf("invalid sleep interval: %s", val)
 			}
 			sleepInterval = f
 		case strings.HasPrefix(arg, "--pid="):

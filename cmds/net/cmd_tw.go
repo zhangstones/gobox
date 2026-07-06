@@ -243,6 +243,17 @@ func MakeStaticHandler(dir string) http.HandlerFunc {
 			return
 		}
 
-		http.ServeFile(w, r, path)
+		// Serve the file directly. Avoid http.ServeFile here: for a request
+		// path whose base name is literally "index.html" it redirects to
+		// "./" instead of serving the content, which only makes sense when
+		// resolving a directory index, not when the client explicitly asked
+		// for that file by name.
+		f, err := os.Open(path)
+		if err != nil {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		defer f.Close()
+		http.ServeContent(w, r, filepath.Base(path), info.ModTime(), f)
 	}
 }

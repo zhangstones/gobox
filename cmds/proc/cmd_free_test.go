@@ -77,6 +77,52 @@ func TestFreeGiB(t *testing.T) {
 	}
 }
 
+// TestFreeBytesUnit is a regression test for Bug #14: gobox free previously
+// rejected -b ("flag provided but not defined"). Native free supports -b to
+// show values in raw bytes.
+func TestFreeBytesUnit(t *testing.T) {
+	out, err := captureProcCmd(t, func() error { return FreeCmd([]string{"-b"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Mem:") {
+		t.Fatalf("expected bytes output, got %q", out)
+	}
+}
+
+// TestFreeKiBUnit is a regression test for Bug #14: gobox free previously
+// rejected -k ("flag provided but not defined"). Native free supports -k to
+// explicitly select KiB, which is also the default unit.
+func TestFreeKiBUnit(t *testing.T) {
+	out, err := captureProcCmd(t, func() error { return FreeCmd([]string{"-k"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Mem:") {
+		t.Fatalf("expected KiB output, got %q", out)
+	}
+}
+
+// TestFreeBytesUnitValues verifies -b reports raw byte counts (not
+// KiB-divided) using injected meminfo data.
+func TestFreeBytesUnitValues(t *testing.T) {
+	setupFreeInjected(t)
+	readMemInfoData = func() (map[string]uint64, error) {
+		return map[string]uint64{
+			"MemTotal":     2048,
+			"MemFree":      1024,
+			"MemAvailable": 1024,
+		}, nil
+	}
+	out, err := captureProcCmd(t, func() error { return FreeCmd([]string{"-b"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "2048") {
+		t.Fatalf("expected raw byte value 2048 in -b output, got %q", out)
+	}
+}
+
 func TestFreeCount(t *testing.T) {
 	out, err := captureProcCmd(t, func() error { return FreeCmd([]string{"-s", "0", "-c", "2"}) })
 	if err != nil {

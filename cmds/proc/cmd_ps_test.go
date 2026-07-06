@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -30,16 +31,25 @@ func captureProcOutput(t *testing.T, fn func() error) (string, error) {
 
 	os.Stdout = wOut
 	os.Stderr = wErr
+
+	// Drain both pipes concurrently while fn runs: on a host with many
+	// processes, ps output can exceed the 64KB pipe buffer, and without a
+	// concurrent reader fn's write blocks forever waiting for a reader that
+	// only starts after fn returns.
+	var outBuf, errBuf bytes.Buffer
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); _, _ = io.Copy(&outBuf, rOut) }()
+	go func() { defer wg.Done(); _, _ = io.Copy(&errBuf, rErr) }()
+
 	runErr := fn()
 	_ = wOut.Close()
 	_ = wErr.Close()
 	os.Stdout = oldStdout
 	os.Stderr = oldStderr
 
-	var buf bytes.Buffer
-	_, _ = io.Copy(&buf, rOut)
-	_, _ = io.Copy(&buf, rErr)
-	return buf.String(), runErr
+	wg.Wait()
+	return outBuf.String() + errBuf.String(), runErr
 }
 
 func TestPsCmdFullFormatShowsExecutable(t *testing.T) {

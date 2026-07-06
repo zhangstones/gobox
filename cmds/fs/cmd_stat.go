@@ -133,10 +133,17 @@ func printStatFS(path, format string, terse bool) error {
 		fmt.Printf("%s %d %d %d\n", path, st.Bsize, st.Blocks, st.Bfree)
 	} else {
 		fmt.Printf("  File: %s\n", path)
-		fmt.Printf("    ID: %x Namelen: %d Type: %s\n", st.Fsid, st.Namelen, statFSTypeName(st.Type))
+		fmt.Printf("    ID: %s Namelen: %d Type: %s\n", formatFsid(st.Fsid), st.Namelen, statFSTypeName(st.Type))
 		fmt.Printf("Block size: %d Blocks: %d Free: %d Available: %d\n", st.Bsize, st.Blocks, st.Bfree, st.Bavail)
 	}
 	return nil
+}
+
+// formatFsid renders a filesystem ID the way GNU coreutils' stat does:
+// the two 32-bit words of f_fsid concatenated as hex (first word unpadded,
+// second word zero-padded to 8 digits), e.g. "fd0000000000".
+func formatFsid(fsid syscall.Fsid) string {
+	return fmt.Sprintf("%x%08x", uint32(fsid.X__val[0]), uint32(fsid.X__val[1]))
 }
 
 func statFSTypeName(fsType int64) string {

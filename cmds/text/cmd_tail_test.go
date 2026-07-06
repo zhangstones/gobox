@@ -104,6 +104,33 @@ func TestTailNLinesEqualsFlag(t *testing.T) {
 	}
 }
 
+// TestTailLongLinesEqualsFlag is a regression test for a bug where
+// "--lines=N" (long option with an "=" value) was rejected with
+// "unknown option: --lines=3" because the parser only matched the
+// literal string "--lines=" instead of the "--lines=" prefix, unlike
+// head's equivalent parsing branch.
+func TestTailLongLinesEqualsFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_long_lines_equals.txt")
+	content := "line1\nline2\nline3\nline4\nline5\n"
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
+
+	output, err := runTailCmd([]string{"--lines=3", filename})
+	if err != nil {
+		t.Fatalf("tail --lines= command failed: %v", err)
+	}
+
+	result := strings.TrimSpace(string(output))
+	lines := strings.Split(result, "\n")
+	if len(lines) != 3 {
+		t.Errorf("Expected 3 lines, got %d: %s", len(lines), result)
+	}
+	if !strings.Contains(result, "line3") || !strings.Contains(result, "line5") {
+		t.Errorf("Expected lines 3-5, got: %s", result)
+	}
+}
+
 func TestTailNLinesZero(t *testing.T) {
 	tmpDir := t.TempDir()
 	filename := filepath.Join(tmpDir, "test_tail_n_zero.txt")
@@ -305,8 +332,6 @@ func TestTailSleepIntervalEqualsFlag(t *testing.T) {
 }
 
 func TestTailSleepIntervalLongFlag(t *testing.T) {
-	// Note: --sleep-interval=VALUE syntax is not supported (bug in implementation)
-	// Only -s VALUE or --sleep-interval VALUE works
 	tmpDir := t.TempDir()
 	filename := filepath.Join(tmpDir, "test_tail_s_long.txt")
 	content := "line1\nline2\n"
@@ -316,6 +341,28 @@ func TestTailSleepIntervalLongFlag(t *testing.T) {
 	output, err := runTailCmd([]string{"--sleep-interval", "0.1", filename})
 	if err != nil {
 		t.Fatalf("tail --sleep-interval command failed: %v", err)
+	}
+
+	result := strings.TrimSpace(string(output))
+	if !strings.Contains(result, "line1") {
+		t.Errorf("Expected content, got: %s", result)
+	}
+}
+
+// TestTailSleepIntervalLongEqualsFlag is a regression test for the same
+// prefix-matching bug as TestTailLongLinesEqualsFlag: "--sleep-interval=SEC"
+// was rejected because the parser only matched the literal string
+// "--sleep-interval=" instead of that string as a prefix.
+func TestTailSleepIntervalLongEqualsFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_s_long_equals.txt")
+	content := "line1\nline2\n"
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
+
+	output, err := runTailCmd([]string{"--sleep-interval=0.1", filename})
+	if err != nil {
+		t.Fatalf("tail --sleep-interval= command failed: %v", err)
 	}
 
 	result := strings.TrimSpace(string(output))

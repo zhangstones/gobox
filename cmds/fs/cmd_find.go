@@ -53,7 +53,8 @@ func FindCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  gobox find /tmp -maxdepth 2 -empty")
 	}
 
-	if err := fsFlags.Parse(args); err != nil {
+	flagArgs, pathArgs := splitFindArgs(args)
+	if err := fsFlags.Parse(flagArgs); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}
@@ -64,6 +65,8 @@ func FindCmd(args []string) error {
 		return fmt.Errorf("invalid type %q: must be 'f' or 'd'", *typ)
 	}
 
+	// fsFlags.Args() should be empty since splitFindArgs already separated
+	// out the paths, but guard against any stray flag-shaped leftovers.
 	if fsFlags.NArg() > 0 {
 		for _, arg := range fsFlags.Args() {
 			if strings.HasPrefix(arg, "-") {
@@ -72,7 +75,7 @@ func FindCmd(args []string) error {
 		}
 	}
 
-	paths := fsFlags.Args()
+	paths := append(fsFlags.Args(), pathArgs...)
 	if len(paths) == 0 {
 		paths = []string{"."}
 	}
@@ -218,6 +221,44 @@ func FindCmd(args []string) error {
 		}
 	}
 	return nil
+}
+
+// findBoolFlags lists find's flags that take no argument value, so that
+// splitFindArgs knows not to consume the next token as a flag value.
+var findBoolFlags = map[string]bool{
+	"not":   true,
+	"print": true,
+	"empty": true,
+}
+
+// splitFindArgs separates flag tokens (and their values) from bare path
+// arguments regardless of where they appear on the command line. This lets
+// paths be given before, after, or interleaved with flags (e.g.
+// `find . -type f -name '*.log'`), matching GNU find and gobox's own
+// documented usage example, instead of requiring all flags to precede paths.
+func splitFindArgs(args []string) (flagArgs []string, paths []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			paths = append(paths, args[i+1:]...)
+			break
+		}
+		if len(arg) > 1 && arg[0] == '-' {
+			flagArgs = append(flagArgs, arg)
+			name := strings.TrimLeft(arg, "-")
+			if eq := strings.IndexByte(name, '='); eq >= 0 {
+				// value embedded via -name=value, nothing more to consume
+				continue
+			}
+			if !findBoolFlags[name] && i+1 < len(args) {
+				i++
+				flagArgs = append(flagArgs, args[i])
+			}
+			continue
+		}
+		paths = append(paths, arg)
+	}
+	return flagArgs, paths
 }
 
 func normalizeFindArgs(args []string) []string {

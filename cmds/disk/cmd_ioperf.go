@@ -249,14 +249,12 @@ func IoperfCmd(args []string) error {
 			startTime := time.Now()
 			deadline := startTime.Add(runDuration)
 
-			// Rate limiting
-			var rateLimitOps int64
-			if rateLimitBytes > 0 {
-				rateLimitOps = rateLimitBytes / bsBytes
-				if rateLimitOps < 1 {
-					rateLimitOps = 1
-				}
-			}
+			// Rate limiting: track aggregate bytes transferred by this job (across
+			// all its iodepth workers) and throttle so that bytes/elapsed-time
+			// stays at or below rateLimitBytes. This is a simple time-based token
+			// bucket rather than a fixed per-op sleep, so it actually enforces the
+			// configured throughput regardless of block size or iodepth.
+			var sharedBytesDone int64
 
 			depth := *ioDepth
 			if depth < 1 {
@@ -293,10 +291,12 @@ func IoperfCmd(args []string) error {
 							break
 						}
 
-						if rateLimitOps > 0 {
-							currentOps := atomic.LoadInt64(&opsCompleted)
-							if currentOps > 0 && currentOps%rateLimitOps == 0 {
-								time.Sleep(1 * time.Millisecond)
+						if rateLimitBytes > 0 {
+							done := atomic.LoadInt64(&sharedBytesDone)
+							expected := time.Duration(float64(done) / float64(rateLimitBytes) * float64(time.Second))
+							elapsed := time.Since(startTime)
+							if expected > elapsed {
+								time.Sleep(expected - elapsed)
 							}
 						}
 
@@ -343,6 +343,8 @@ func IoperfCmd(args []string) error {
 						if ioErr != nil {
 							continue
 						}
+
+						atomic.AddInt64(&sharedBytesDone, int64(n))
 
 						if isRead {
 							readOps++

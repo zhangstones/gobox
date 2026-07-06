@@ -121,10 +121,9 @@ func normalizeLegacyXargsArgs(args []string) []string {
 		arg := args[i]
 		switch {
 		case arg == "-i":
-			out = append(out, "-i")
-			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
-				out = append(out, "{}")
-			}
+			// BSD-style -i takes no argument and always defaults to {};
+			// never consume the following token (that's the command).
+			out = append(out, "-i", "{}")
 		case strings.HasPrefix(arg, "-i") && len(arg) > 2:
 			out = append(out, "-i", arg[2:])
 		default:

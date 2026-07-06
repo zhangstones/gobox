@@ -3,8 +3,11 @@ package net
 import (
 	"bytes"
 	"io"
+	"net"
 	"os"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -697,5 +700,125 @@ func TestNpCmdNegativeInterval(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "interval must be >= 0") {
 		t.Fatalf("unexpected negative interval error: %v", err)
+	}
+}
+
+// ============== REGRESSION TESTS ==============
+
+// TestNpCmdTcpWorkersUniqueSeq is a regression test for a bug where each
+// worker goroutine kept its own local "seq" loop counter starting at 0, so
+// running with multiple concurrent workers (-w N) produced duplicate seq
+// numbers (e.g. two probes both reporting seq=0). Sequence numbers must be
+// drawn from a single shared, atomically-incremented counter so they are
+// unique across all workers.
+func TestNpCmdTcpWorkersUniqueSeq(t *testing.T) {
+	skipIfNotLinux(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start listener: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	acceptDone := make(chan struct{})
+	go func() {
+		defer close(acceptDone)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+
+	output, err := runNpCmd([]string{"--tcp", "-p", strconv.Itoa(port), "-c", "20", "-w", "4", "-i", "0", "-W", "1", "127.0.0.1"})
+	ln.Close()
+
+	select {
+	case <-acceptDone:
+	case <-time.After(2 * time.Second):
+		t.Log("accept loop did not exit promptly after listener close")
+	}
+
+	if err != nil {
+		t.Fatalf("np tcp mode with workers failed: %v", err)
+	}
+
+	seqRe := regexp.MustCompile(`seq=(\d+)`)
+	matches := seqRe.FindAllStringSubmatch(output, -1)
+	if len(matches) == 0 {
+		t.Fatalf("expected at least one seq= entry in output, got none: %q", output)
+	}
+
+	seen := make(map[string]bool)
+	for _, m := range matches {
+		seq := m[1]
+		if seen[seq] {
+			t.Fatalf("duplicate seq=%s found in output (bug: workers used independent local counters instead of a shared atomic counter): %q", seq, output)
+		}
+		seen[seq] = true
+	}
+}
+
+// TestNpCmdTcpProgressSummaryNewline is a regression test for a bug where the
+// periodic "Sent=X Received=Y Errors=Z" progress-summary line was written
+// using a bare "\r" redraw with no trailing newline. On a non-interactive
+// stdout (piped/captured, as in tests and non-TTY usage) "\r" has no special
+// effect, so the summary text ran directly into whatever was printed next,
+// producing corrupted/concatenated output such as
+// "...Errors=0Sent=1 Received=1 Errors=0". Every summary line must be
+// terminated with a real newline when stdout is not a terminal.
+func TestNpCmdTcpProgressSummaryNewline(t *testing.T) {
+	skipIfNotLinux(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start listener: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	acceptDone := make(chan struct{})
+	go func() {
+		defer close(acceptDone)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+
+	// Run long enough (multiple seconds, since the progress ticker fires
+	// once per second) to reliably capture at least one progress summary
+	// line interleaved with per-probe output.
+	output, err := runNpCmd([]string{"--tcp", "-p", strconv.Itoa(port), "-c", "40", "-i", "0.1", "-W", "1", "127.0.0.1"})
+	ln.Close()
+
+	select {
+	case <-acceptDone:
+	case <-time.After(2 * time.Second):
+		t.Log("accept loop did not exit promptly after listener close")
+	}
+
+	if err != nil {
+		t.Fatalf("np tcp mode failed: %v", err)
+	}
+
+	allErrorsRe := regexp.MustCompile(`Errors=\d+`)
+	all := allErrorsRe.FindAllString(output, -1)
+	if len(all) == 0 {
+		t.Skip("no progress summary line observed in this run (timing dependent)")
+	}
+
+	newlineTerminatedRe := regexp.MustCompile(`Errors=\d+\n`)
+	terminated := newlineTerminatedRe.FindAllString(output, -1)
+	if len(terminated) != len(all) {
+		t.Fatalf("found %d 'Errors=' occurrences but only %d were newline-terminated (regression: \\r-based redraw without a TTY check); output=%q", len(all), len(terminated), output)
+	}
+
+	if regexp.MustCompile(`Errors=\d+\S`).MatchString(output) {
+		t.Fatalf("found a summary line fused directly onto trailing output with no newline separator: %q", output)
 	}
 }

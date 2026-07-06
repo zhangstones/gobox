@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // runIoperfCmd runs IoperfCmd and captures stdout and stderr
@@ -867,6 +869,78 @@ func TestIoperfCmdRateLimit(t *testing.T) {
 	if !strings.Contains(result, "READ:") {
 		t.Errorf("Expected READ: in output, got: %s", result)
 	}
+}
+
+// Bug regression test: --rate must actually throttle throughput. Previously
+// the parsed rate limit was converted into an "ops" threshold and only
+// triggered a fixed 1ms sleep every N ops, which barely slowed anything
+// down. Verify measured bandwidth stays within a generous multiple of the
+// configured rate instead of running unbounded.
+func TestIoperfCmdRateLimitThrottlesThroughput(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "testfile_rate_throttle")
+
+	const rateBytesPerSec = 64 * 1024 // 64KB/s
+	args := []string{
+		"--rw=write",
+		"--filename=" + filename,
+		"--size=96k",
+		"--bs=4k",
+		"--rate=64k",
+		"--numjobs=1",
+	}
+
+	start := time.Now()
+	output, err := runIoperfCmd(args)
+	elapsed := time.Since(start).Seconds()
+	if err != nil {
+		t.Fatalf("ioperf rate throttle failed: %v\nOutput: %s", err, output)
+	}
+
+	result := string(output)
+	if !strings.Contains(result, "WRITE:") {
+		t.Fatalf("Expected WRITE: in output, got: %s", result)
+	}
+
+	bwMB := parseBWFromOutput(t, result, "WRITE:")
+	measuredBps := bwMB * 1024 * 1024
+
+	// Generous tolerance: measured bandwidth should stay under 3x the
+	// configured rate limit. Before the fix this ran at full disk speed,
+	// tens of MB/s vs. the 64KB/s target - orders of magnitude over.
+	maxAllowed := float64(rateBytesPerSec) * 3
+	if measuredBps > maxAllowed {
+		t.Fatalf("measured bandwidth %.0f B/s exceeds tolerance %.0f B/s for --rate=64k (elapsed=%.2fs)", measuredBps, maxAllowed, elapsed)
+	}
+}
+
+// parseBWFromOutput extracts the BW=<value>MB/s figure following the given
+// prefix (e.g. "WRITE:") from ioperf's textual output.
+func parseBWFromOutput(t *testing.T, output, prefix string) float64 {
+	t.Helper()
+	idx := strings.Index(output, prefix)
+	if idx < 0 {
+		t.Fatalf("prefix %q not found in output: %s", prefix, output)
+	}
+	line := output[idx:]
+	if nl := strings.IndexByte(line, '\n'); nl >= 0 {
+		line = line[:nl]
+	}
+	bwIdx := strings.Index(line, "BW=")
+	if bwIdx < 0 {
+		t.Fatalf("BW= not found in line: %s", line)
+	}
+	rest := line[bwIdx+len("BW="):]
+	mbIdx := strings.Index(rest, "MB/s")
+	if mbIdx < 0 {
+		t.Fatalf("MB/s not found in line: %s", line)
+	}
+	valueStr := rest[:mbIdx]
+	value, err := strconv.ParseFloat(valueStr, 64)
+	if err != nil {
+		t.Fatalf("failed to parse BW value %q: %v", valueStr, err)
+	}
+	return value
 }
 
 // ============== OUTPUT FORMAT TESTS ==============

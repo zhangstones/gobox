@@ -161,6 +161,37 @@ func TestHexCmdOptionsVerboseRepeatedContent(t *testing.T) {
 
 }
 
+// TestHexCmdOptionsDumpFoldsRepeatedRows is a regression test for a bug
+// where "--dump -C" printed every 16-byte row uncollapsed, unlike real
+// hexdump -C which replaces consecutive identical rows with a single
+// "*" line. This is the default behavior (no -v flag).
+func TestHexCmdOptionsDumpFoldsRepeatedRows(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "repeated")
+	// 64 zero bytes -> 4 identical 16-byte rows, which should fold to
+	// one printed row followed by a single "*" line.
+	if err := os.WriteFile(input, make([]byte, 64), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := captureTextCmd(t, "", func() error {
+		return HexCmd([]string{"--dump", "-C", input})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Count(out, "|................|") != 1 {
+		t.Fatalf("expected repeated rows to be folded to a single printed row, got %q", out)
+	}
+	if strings.Count(out, "*") != 1 {
+		t.Fatalf("expected exactly one '*' line for folded repeats, got %q", out)
+	}
+	if !strings.Contains(out, "00000040") {
+		t.Fatalf("expected final offset line, got %q", out)
+	}
+}
+
 func TestHexCmdOptionsDecodeOutputFile(t *testing.T) {
 	dir := t.TempDir()
 	input := filepath.Join(dir, "bin")

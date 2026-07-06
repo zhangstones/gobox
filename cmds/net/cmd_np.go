@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"gobox/cmds/utils"
 )
 
 // NpCmd implements network ping/connectivity troubleshooting tool
@@ -214,12 +216,19 @@ func npTCP(opts *npOptions) error {
 	stopChan := make(chan struct{})
 	var progressWG sync.WaitGroup
 
+	// Shared, monotonically increasing sequence counter. Each worker used to
+	// keep its own local "for i := 0; ..." loop counter as the seq number,
+	// which meant multiple workers reported duplicate seq values (e.g. two
+	// probes both showing seq=0). A single atomically-incremented counter
+	// shared across all worker goroutines ensures seq numbers are unique.
+	var seqCounter int64 = -1
+
 	// Worker pool
 	for w := 0; w < opts.workers; w++ {
 		wg.Add(1)
 		go func(workerId int) {
 			defer wg.Done()
-			npTCPWorker(workerId, opts, &sent, &received, &errors, &mu, &latencies, stopChan)
+			npTCPWorker(workerId, opts, &sent, &received, &errors, &seqCounter, &mu, &latencies, stopChan)
 		}(w)
 	}
 
@@ -258,12 +267,12 @@ func npTCP(opts *npOptions) error {
 	return nil
 }
 
-func npTCPWorker(workerId int, opts *npOptions, sent, received, errors *int64, mu *sync.Mutex, latencies *[]int64, stopChan chan struct{}) {
+func npTCPWorker(workerId int, opts *npOptions, sent, received, errors, seqCounter *int64, mu *sync.Mutex, latencies *[]int64, stopChan chan struct{}) {
 	addr := net.JoinHostPort(opts.host, strconv.Itoa(opts.port))
 	dialer := net.Dialer{Timeout: opts.wait}
 	configureNpDialer(&dialer, "tcp", opts)
 
-	for i := 0; ; i++ {
+	for {
 		select {
 		case <-stopChan:
 			return
@@ -273,6 +282,8 @@ func npTCPWorker(workerId int, opts *npOptions, sent, received, errors *int64, m
 		if opts.count > 0 && atomic.LoadInt64(sent) >= int64(opts.count) {
 			return
 		}
+
+		seq := atomic.AddInt64(seqCounter, 1)
 
 		start := time.Now()
 
@@ -284,7 +295,7 @@ func npTCPWorker(workerId int, opts *npOptions, sent, received, errors *int64, m
 		if err != nil {
 			atomic.AddInt64(errors, 1)
 			if opts.verbose {
-				fmt.Printf("From %s: seq=%d Connection failed: %v\n", opts.host, i, err)
+				fmt.Printf("From %s: seq=%d Connection failed: %v\n", opts.host, seq, err)
 			}
 			if opts.interval > 0 {
 				time.Sleep(opts.interval)
@@ -300,7 +311,7 @@ func npTCPWorker(workerId int, opts *npOptions, sent, received, errors *int64, m
 
 		if !opts.quiet {
 			fmt.Printf("%d bytes from %s: seq=%d ttl=64 time=%.3f ms\n",
-				64, opts.host, i, float64(latency)/1000.0)
+				64, opts.host, seq, float64(latency)/1000.0)
 		}
 
 		// Long connection mode: wait for server to close, then continue
@@ -743,6 +754,17 @@ func npProgressReporter(sent, received, errors *int64, opts *npOptions, stopChan
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
+	// A carriage-return-based in-place redraw only makes sense on an
+	// interactive terminal, which can reinterpret "\r" to move the cursor
+	// back to the start of the line and overwrite it. When stdout is not a
+	// TTY (piped to a file, captured by tests, redirected in a script, etc.)
+	// "\r" is just an ordinary byte with no special effect, so the summary
+	// line was never terminated by a newline and ran directly into whatever
+	// was printed next (e.g. the following per-probe line), producing
+	// corrupted, concatenated output. Fall back to a plain newline-terminated
+	// line when not attached to a terminal.
+	interactive := utils.IsTerminal(os.Stdout)
+
 	for {
 		select {
 		case <-ticker.C:
@@ -750,7 +772,11 @@ func npProgressReporter(sent, received, errors *int64, opts *npOptions, stopChan
 			r := atomic.LoadInt64(received)
 			e := atomic.LoadInt64(errors)
 			if !opts.quiet {
-				fmt.Printf("\rSent=%d Received=%d Errors=%d", s, r, e)
+				if interactive {
+					fmt.Printf("\rSent=%d Received=%d Errors=%d", s, r, e)
+				} else {
+					fmt.Printf("Sent=%d Received=%d Errors=%d\n", s, r, e)
+				}
 			}
 		case <-stopChan:
 			return

@@ -317,6 +317,55 @@ func TestSortCustomSeparator(t *testing.T) {
 	}
 }
 
+// TestSortConcatenatedSeparator is a regression test for a bug where
+// "-t:" (separator character concatenated directly onto the short flag,
+// e.g. "sort -k2 -t: file") was rejected with "unknown option: -t"
+// because the parser only recognized "-t" as a standalone argument
+// followed by a separate value, falling through to the combined
+// short-flag handler which didn't know about 't'.
+func TestSortConcatenatedSeparator(t *testing.T) {
+	content := "banana:3\napple:1\ncherry:2\n"
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_sep_concat.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
+
+	output, err := runSortCmd([]string{"-k2", "-t:", "-n", filename})
+	if err != nil {
+		t.Fatalf("sort command failed: %v", err)
+	}
+
+	result := output
+	expected := "apple:1\ncherry:2\nbanana:3\n"
+	if result != expected {
+		t.Errorf("Expected:\n%s\nGot:\n%s", expected, result)
+	}
+}
+
+// TestSortFieldSeparatorLongEquals is a regression test ensuring the
+// documented long option "--field-separator=CHAR" actually changes the
+// delimiter; the parser previously only matched the literal string
+// "--field-separator=" (with no value) instead of using the value
+// after "=" as a prefix match.
+func TestSortFieldSeparatorLongEquals(t *testing.T) {
+	content := "banana:3\napple:1\ncherry:2\n"
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_sep_long.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
+
+	output, err := runSortCmd([]string{"-k2", "--field-separator=:", "-n", filename})
+	if err != nil {
+		t.Fatalf("sort command failed: %v", err)
+	}
+
+	result := output
+	expected := "apple:1\ncherry:2\nbanana:3\n"
+	if result != expected {
+		t.Errorf("Expected:\n%s\nGot:\n%s", expected, result)
+	}
+}
+
 func TestSortTabSeparator(t *testing.T) {
 	content := "banana\t3\napple\t1\ncherry\t2\n"
 	tmpDir := t.TempDir()

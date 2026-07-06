@@ -3,6 +3,7 @@ package disk
 import (
 	"bufio"
 	"crypto/sha256"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -169,7 +170,7 @@ func sha256sumCheck(files []string, warn, status, quiet bool) error {
 		}
 	}
 	if failed {
-		return sha256sumExitError{code: 1}
+		return sha256sumExitError{code: 1, err: errors.New("checksum verification failed")}
 	}
 	return nil
 }

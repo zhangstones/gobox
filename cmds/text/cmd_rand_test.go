@@ -557,9 +557,18 @@ func TestRandCmdInvalidBytes(t *testing.T) {
 }
 
 func TestRandCmdNegativePositional(t *testing.T) {
-	_, err := runRandCmd([]string{"-10"})
-	if err == nil {
-		t.Errorf("Expected error for negative positional argument")
+	// "-10" is the documented -NUM shorthand (equivalent to "-n 10"), not a
+	// negative byte count, so it must succeed and produce 10 bytes of hex.
+	output, err := runRandCmd([]string{"-10"})
+	if err != nil {
+		t.Fatalf("rand command failed: %v", err)
+	}
+	result := strings.TrimSpace(output)
+	if len(result) != 20 {
+		t.Errorf("Expected 20 hex characters for 10 bytes, got %d: %s", len(result), result)
+	}
+	if _, err := hex.DecodeString(result); err != nil {
+		t.Errorf("Output is not valid hex: %s", result)
 	}
 }
 
@@ -612,6 +621,55 @@ func TestRandCmdHelpShort(t *testing.T) {
 }
 
 // ============== COMBINED FLAGS TESTS ==============
+
+// ============== REGRESSION TESTS ==============
+
+// TestRandCmdNumShorthand is a regression test for Bug #5: the help text
+// documents "-NUM" (e.g. -16) as shorthand for "-n NUM", but it previously
+// errored with "unknown option: -16".
+func TestRandCmdNumShorthand(t *testing.T) {
+	output, err := runRandCmd([]string{"-16"})
+	if err != nil {
+		t.Fatalf("rand -16 failed: %v", err)
+	}
+	result := strings.TrimSpace(output)
+	// 16 bytes = 32 hex chars
+	if len(result) != 32 {
+		t.Errorf("Expected 32 hex characters for 16 bytes, got %d: %s", len(result), result)
+	}
+	if _, err := hex.DecodeString(result); err != nil {
+		t.Errorf("Output is not valid hex: %s", result)
+	}
+}
+
+func TestRandCmdNumShorthandBase64(t *testing.T) {
+	output, err := runRandCmd([]string{"-24", "-base64"})
+	if err != nil {
+		t.Fatalf("rand -24 -base64 failed: %v", err)
+	}
+	result := strings.TrimSpace(output)
+	if len(result) != 32 {
+		t.Errorf("Expected 32 base64 characters for 24 bytes, got %d: %s", len(result), result)
+	}
+}
+
+// TestRandCmdHelpDocumentsOutAndZero is a regression test for Bug #6: the
+// help text must clarify that -out writes the encoded (hex/base64) text
+// representation, not raw bytes, and that -n 0 is valid, documented
+// behavior producing empty output (rather than an undocumented silent
+// success that looks inconsistent with the negative-number validation).
+func TestRandCmdHelpDocumentsOutAndZero(t *testing.T) {
+	output, err := runRandCmd([]string{"--help"})
+	if err != nil {
+		t.Fatalf("rand --help failed: %v", err)
+	}
+	if !strings.Contains(output, "encoded") {
+		t.Errorf("Expected help to clarify -out writes encoded output, got: %s", output)
+	}
+	if !strings.Contains(output, "0 is valid") {
+		t.Errorf("Expected help to document that -n 0 is valid, got: %s", output)
+	}
+}
 
 func TestRandCmdCombinedShortFlags(t *testing.T) {
 	// Test -n24 -b (24 bytes with base64)

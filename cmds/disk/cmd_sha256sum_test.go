@@ -387,6 +387,47 @@ func TestSha256sumCmdOptionsCheckPartialFailureAggregatesExit(t *testing.T) {
 
 }
 
+// TestSha256sumCmdOptionsCheckMismatchReportsFailedNotExitCode is a regression
+// test for a bug where a mismatched checksum caused sha256sum -c to return an
+// uninformative "sha256sum: exit code 1" style error instead of the same kind
+// of "<file>: FAILED" summary error that md5sum -c produces on mismatch.
+func TestSha256sumCmdOptionsCheckMismatchReportsFailedNotExitCode(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(oldWd) }()
+
+	if err := os.WriteFile("file", []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Mismatched checksum (all zeros) for "file".
+	if err := os.WriteFile("mismatch.check", []byte(strings.Repeat("0", 64)+"  file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := captureSha256Cmd(t, "", func() error {
+		return Sha256sumCmd([]string{"-c", "mismatch.check"})
+	})
+	if !strings.Contains(out, "file: FAILED") {
+		t.Fatalf("expected %q to contain \"file: FAILED\", got %q", out, out)
+	}
+	exitErr, ok := err.(sha256sumExitError)
+	if !ok {
+		t.Fatalf("expected sha256sumExitError, got %T %v", err, err)
+	}
+	if exitErr.ExitCode() != 1 {
+		t.Fatalf("expected exit code 1, got %d", exitErr.ExitCode())
+	}
+	if err.Error() == "exit code 1" {
+		t.Fatalf("expected an informative mismatch message like md5sum's, got uninformative %q", err.Error())
+	}
+}
+
 func TestSha256sumCmdOptionsWarnMalformed(t *testing.T) {
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()

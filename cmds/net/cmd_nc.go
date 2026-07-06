@@ -327,6 +327,15 @@ func ncServer(ctx context.Context, port string, udp, zeroIO, verbose, benchMode 
 	}
 
 	addr := net.JoinHostPort("", port)
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if udp {
+		return ncUDPServer(ctx, network, addr, port, zeroIO, verbose)
+	}
+
 	listener, err := net.Listen(network, addr)
 	if err != nil {
 		return fmt.Errorf("listen failed: %w", err)
@@ -337,9 +346,6 @@ func ncServer(ctx context.Context, port string, udp, zeroIO, verbose, benchMode 
 		fmt.Printf("Listening on port %s\n", port)
 	}
 
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
@@ -391,6 +397,105 @@ func ncServer(ctx context.Context, port string, udp, zeroIO, verbose, benchMode 
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-time.After(time.Second):
+		return nil
+	}
+}
+
+// ncUDPServer implements netcat UDP listen mode. UDP has no "listener"/"accept"
+// concept in net.Listen, so it must use net.ListenPacket (or net.ListenUDP)
+// instead of net.Listen("udp", ...), which is not supported and returns an
+// "unexpected address type" error.
+func ncUDPServer(ctx context.Context, network, addr, port string, zeroIO, verbose bool) error {
+	pc, err := net.ListenPacket(network, addr)
+	if err != nil {
+		return fmt.Errorf("listen failed: %w", err)
+	}
+	defer pc.Close()
+
+	if verbose {
+		fmt.Printf("Listening on port %s (udp)\n", port)
+	}
+
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = pc.Close()
+		case <-done:
+		}
+	}()
+
+	buf := make([]byte, 65535)
+	n, raddr, err := pc.ReadFrom(buf)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return err
+	}
+
+	if verbose {
+		fmt.Printf("Connection from %s\n", raddr.String())
+	}
+
+	if zeroIO {
+		return nil
+	}
+
+	if n > 0 {
+		os.Stdout.Write(buf[:n])
+	}
+
+	stdinDone := make(chan error, 1)
+	go func() {
+		sbuf := make([]byte, 65535)
+		for {
+			m, rerr := os.Stdin.Read(sbuf)
+			if m > 0 {
+				if _, werr := pc.WriteTo(sbuf[:m], raddr); werr != nil {
+					stdinDone <- werr
+					return
+				}
+			}
+			if rerr != nil {
+				if rerr == io.EOF {
+					stdinDone <- nil
+				} else {
+					stdinDone <- rerr
+				}
+				return
+			}
+		}
+	}()
+
+	for {
+		_ = pc.SetReadDeadline(time.Now().Add(time.Second))
+		n, _, rerr := pc.ReadFrom(buf)
+		if n > 0 {
+			os.Stdout.Write(buf[:n])
+		}
+		if rerr != nil {
+			if ne, ok := rerr.(net.Error); ok && ne.Timeout() {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case serr := <-stdinDone:
+					return serr
+				default:
+					continue
+				}
+			}
+			break
+		}
+	}
+
+	select {
+	case serr := <-stdinDone:
+		return serr
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
 		return nil
 	}
 }

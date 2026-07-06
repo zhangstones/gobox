@@ -761,6 +761,53 @@ func TestCurlFailOnError5xx(t *testing.T) {
 	}
 }
 
+// TestCurlFailOnErrorMessagePrintedOnce is a regression test for a bug where
+// "-f"/"--fail" against a 4xx/5xx response printed the "HTTP error NNN"
+// diagnostic twice: once inside runSingle (direct fmt.Fprintf to os.Stderr)
+// and once more by the top-level CLI dispatcher (main.go's run()), which also
+// prints returned errors unless SuppressCLIError() is true. The fix makes
+// curl's own error always carry SuppressCLIError()==true, since CurlCmd
+// already fully owns printing (or deliberately suppressing, under -s) its
+// own diagnostic; the top-level dispatcher must never print it again.
+func TestCurlFailOnErrorMessagePrintedOnce(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Not Found", http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	stdout, stderr, err := runCurlCmdFull([]string{"-f", server.URL})
+	if err == nil {
+		t.Fatalf("expected -f to fail on HTTP 404")
+	}
+	if stdout != "" {
+		t.Fatalf("expected fail-on-error to suppress body, got stdout=%q", stdout)
+	}
+	if !strings.Contains(strings.ToLower(stderr), "http error 404") {
+		t.Fatalf("expected CurlCmd to print the diagnostic itself, got stderr=%q", stderr)
+	}
+
+	// Emulate main.go's run() dispatch: it prints "curl: <err>" exactly once
+	// unless the error opts out via SuppressCLIError(). Since CurlCmd already
+	// printed above, the dispatcher must stay silent here.
+	var cliBuf bytes.Buffer
+	type cliErrorSilencer interface {
+		SuppressCLIError() bool
+	}
+	suppressed := false
+	if silencer, ok := err.(cliErrorSilencer); ok {
+		suppressed = silencer.SuppressCLIError()
+	}
+	if !suppressed {
+		fmt.Fprintln(&cliBuf, "curl:", err)
+	}
+
+	combined := strings.ToLower(stderr + cliBuf.String())
+	count := strings.Count(combined, "http error 404")
+	if count != 1 {
+		t.Fatalf("expected \"HTTP error 404\" to appear exactly once across CurlCmd stderr + CLI dispatch, got %d occurrences: %q", count, combined)
+	}
+}
+
 func TestCurlNoFailOnSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "success")

@@ -1,6 +1,7 @@
 package text
 
 import (
+	"bytes"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -18,7 +19,7 @@ func HexCmd(args []string) error {
 	canonical := fsFlags.Bool("C", false, "canonical dump")
 	limit := fsFlags.Int64("n", -1, "read at most LEN bytes")
 	offset := fsFlags.Int64("s", 0, "skip OFFSET bytes")
-	_ = fsFlags.Bool("v", false, "do not fold repeated lines")
+	verbose := fsFlags.Bool("v", false, "do not fold repeated lines")
 	format := fsFlags.String("e", "", "format string subset")
 	output := fsFlags.String("o", "", "write output to file")
 	fsFlags.Usage = func() {
@@ -98,7 +99,7 @@ func HexCmd(args []string) error {
 			err = dumpHexFormat(out, data, *format)
 		} else {
 			_ = canonical
-			err = dumpCanonicalHex(out, data, *offset)
+			err = dumpCanonicalHex(out, data, *offset, !*verbose)
 		}
 	}
 	return err
@@ -119,13 +120,26 @@ func readAllInputs(files []string) ([]byte, error) {
 	return out, nil
 }
 
-func dumpCanonicalHex(w io.Writer, data []byte, base int64) error {
+func dumpCanonicalHex(w io.Writer, data []byte, base int64, fold bool) error {
+	var prevChunk []byte
+	havePrevFull := false
+	starPrinted := false
 	for off := 0; off < len(data); off += 16 {
 		end := off + 16
 		if end > len(data) {
 			end = len(data)
 		}
 		chunk := data[off:end]
+		isFullRow := len(chunk) == 16
+
+		if fold && isFullRow && havePrevFull && bytes.Equal(chunk, prevChunk) {
+			if !starPrinted {
+				fmt.Fprintln(w, "*")
+				starPrinted = true
+			}
+			continue
+		}
+
 		fmt.Fprintf(w, "%08x  ", int64(off)+base)
 		for i := 0; i < 16; i++ {
 			if i < len(chunk) {
@@ -146,6 +160,12 @@ func dumpCanonicalHex(w io.Writer, data []byte, base int64) error {
 			}
 		}
 		fmt.Fprintln(w, "|")
+
+		if isFullRow {
+			prevChunk = append([]byte(nil), chunk...)
+		}
+		havePrevFull = isFullRow
+		starPrinted = false
 	}
 	fmt.Fprintf(w, "%08x\n", int64(len(data))+base)
 	return nil

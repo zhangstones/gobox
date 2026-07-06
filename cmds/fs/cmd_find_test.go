@@ -210,3 +210,48 @@ func TestFindBangAliasForNot(t *testing.T) {
 		t.Fatalf("expected ! alias to keep visible path, got %q", output)
 	}
 }
+
+// TestFindPathBeforeFlags is a regression test for a bug where find's own
+// help text documents `gobox find . -type f -name '*.log'` (path before
+// flags) but the parser rejected any flag-shaped argument once a bare path
+// had been seen, failing with "unexpected option found after flags".
+func TestFindPathBeforeFlags(t *testing.T) {
+	dir := t.TempDir()
+	match := filepath.Join(dir, "app.log")
+	other := filepath.Join(dir, "app.txt")
+	if err := os.WriteFile(match, []byte("data"), 0o644); err != nil {
+		t.Fatalf("write match: %v", err)
+	}
+	if err := os.WriteFile(other, []byte("data"), 0o644); err != nil {
+		t.Fatalf("write other: %v", err)
+	}
+
+	output, err := runFindCmd(t, []string{dir, "-type", "f", "-name", "*.log"})
+	if err != nil {
+		t.Fatalf("FindCmd failed with path before flags: %v", err)
+	}
+	if !strings.Contains(output, match) {
+		t.Fatalf("expected output to contain %s, got %q", match, output)
+	}
+	if strings.Contains(output, other) {
+		t.Fatalf("expected output to exclude %s, got %q", other, output)
+	}
+}
+
+// TestFindPathInterleavedWithFlags exercises paths given between flags to
+// confirm order-independence beyond the simple "path first" case.
+func TestFindPathInterleavedWithFlags(t *testing.T) {
+	dir := t.TempDir()
+	match := filepath.Join(dir, "app.log")
+	if err := os.WriteFile(match, []byte("data"), 0o644); err != nil {
+		t.Fatalf("write match: %v", err)
+	}
+
+	output, err := runFindCmd(t, []string{"-type", "f", dir, "-name", "*.log"})
+	if err != nil {
+		t.Fatalf("FindCmd failed with interleaved path: %v", err)
+	}
+	if !strings.Contains(output, match) {
+		t.Fatalf("expected output to contain %s, got %q", match, output)
+	}
+}

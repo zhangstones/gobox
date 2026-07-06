@@ -21,6 +21,8 @@ var (
 func FreeCmd(args []string) error {
 	fsFlags := flag.NewFlagSet("free", flag.ContinueOnError)
 	human := fsFlags.Bool("h", false, "human readable")
+	bytesUnit := fsFlags.Bool("b", false, "show bytes")
+	kiB := fsFlags.Bool("k", false, "show KiB (default)")
 	miB := fsFlags.Bool("m", false, "show MiB")
 	giB := fsFlags.Bool("g", false, "show GiB")
 	interval := fsFlags.Int("s", 0, "repeat every SEC seconds")
@@ -31,6 +33,8 @@ func FreeCmd(args []string) error {
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Units:")
 		fmt.Fprintln(os.Stderr, "  -h          human readable")
+		fmt.Fprintln(os.Stderr, "  -b          show bytes")
+		fmt.Fprintln(os.Stderr, "  -k          show KiB (default)")
 		fmt.Fprintln(os.Stderr, "  -m          show MiB")
 		fmt.Fprintln(os.Stderr, "  -g          show GiB")
 		fmt.Fprintln(os.Stderr)
@@ -44,6 +48,7 @@ func FreeCmd(args []string) error {
 		}
 		return err
 	}
+	_ = kiB // -k is accepted for parity with native free; KiB is already the default unit
 	if *count <= 0 {
 		*count = 1
 	}
@@ -55,7 +60,7 @@ func FreeCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-		printFree(mem, *human, *miB, *giB)
+		printFree(mem, *human, *bytesUnit, *miB, *giB)
 	}
 	return nil
 }
@@ -85,7 +90,7 @@ func parseMemInfo(r io.Reader) (map[string]uint64, error) {
 	return out, scanner.Err()
 }
 
-func printFree(m map[string]uint64, human, miB, giB bool) {
+func printFree(m map[string]uint64, human, bytesUnit, miB, giB bool) {
 	total := m["MemTotal"]
 	free := m["MemFree"]
 	buffCache := m["Buffers"] + m["Cached"] + m["SReclaimable"]
@@ -101,14 +106,16 @@ func printFree(m map[string]uint64, human, miB, giB bool) {
 		swapUsed = swapTotal - swapFree
 	}
 	fmt.Printf("%13s %12s %12s %12s %12s\n", "total", "used", "free", "buff/cache", "available")
-	fmt.Printf("Mem:  %12s %12s %12s %12s %12s\n", formatMem(total, human, miB, giB), formatMem(used, human, miB, giB), formatMem(free, human, miB, giB), formatMem(buffCache, human, miB, giB), formatMem(available, human, miB, giB))
-	fmt.Printf("Swap: %12s %12s %12s\n", formatMem(swapTotal, human, miB, giB), formatMem(swapUsed, human, miB, giB), formatMem(swapFree, human, miB, giB))
+	fmt.Printf("Mem:  %12s %12s %12s %12s %12s\n", formatMem(total, human, bytesUnit, miB, giB), formatMem(used, human, bytesUnit, miB, giB), formatMem(free, human, bytesUnit, miB, giB), formatMem(buffCache, human, bytesUnit, miB, giB), formatMem(available, human, bytesUnit, miB, giB))
+	fmt.Printf("Swap: %12s %12s %12s\n", formatMem(swapTotal, human, bytesUnit, miB, giB), formatMem(swapUsed, human, bytesUnit, miB, giB), formatMem(swapFree, human, bytesUnit, miB, giB))
 }
 
-func formatMem(v uint64, human, miB, giB bool) string {
+func formatMem(v uint64, human, bytesUnit, miB, giB bool) string {
 	switch {
 	case human:
 		return utils.HumanSize(int64(v))
+	case bytesUnit:
+		return fmt.Sprintf("%d", v)
 	case giB:
 		return fmt.Sprintf("%d", v/1024/1024/1024)
 	case miB:

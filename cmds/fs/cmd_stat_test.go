@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -204,6 +205,56 @@ func TestStatCmdOptionsFilesystemFormat(t *testing.T) {
 		}
 	}
 
+}
+
+// TestFormatFsid is a regression test for a bug where `stat -f`'s default
+// output printed the raw Go struct for the filesystem ID (e.g. "{[64768 0]}")
+// instead of a human-readable hex value like GNU coreutils' stat does.
+func TestFormatFsid(t *testing.T) {
+	fsid := syscall.Fsid{X__val: [2]int32{64768, 0}}
+	got := formatFsid(fsid)
+	want := "fd0000000000"
+	if got != want {
+		t.Fatalf("formatFsid(%v) = %q, want %q", fsid, got, want)
+	}
+	if strings.ContainsAny(got, "{[]}") {
+		t.Fatalf("formatFsid should not leak raw struct formatting, got %q", got)
+	}
+}
+
+// TestStatCmdOptionsFilesystemDefaultOutput ensures the default (non -c,
+// non -t) `stat -f` output renders the ID field as a hex string rather than
+// Go's default struct representation of syscall.Fsid.
+func TestStatCmdOptionsFilesystemDefaultOutput(t *testing.T) {
+	dir := t.TempDir()
+
+	out, err := captureFsCmd(t, func() error {
+		return StatCmd([]string{"-f", dir})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "ID: ") {
+		t.Fatalf("expected ID field in output, got %q", out)
+	}
+	if strings.ContainsAny(out, "{[]}") {
+		t.Fatalf("expected human-readable ID, got raw struct formatting in %q", out)
+	}
+	idLine := ""
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "ID: ") {
+			idLine = line
+			break
+		}
+	}
+	fields := strings.Fields(idLine)
+	// fields: "ID:" "<hex>" "Namelen:" "N" "Type:" "<name>"
+	if len(fields) < 2 {
+		t.Fatalf("unexpected ID line %q", idLine)
+	}
+	if _, err := strconv.ParseUint(fields[1], 16, 64); err != nil {
+		t.Fatalf("expected hex ID value, got %q: %v", fields[1], err)
+	}
 }
 
 func TestStatFSTypeName(t *testing.T) {

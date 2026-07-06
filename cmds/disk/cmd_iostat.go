@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -249,18 +250,86 @@ func readDiskstats(path string) (map[string]ioCounters, error) {
 	return out, scanner.Err()
 }
 
+// selfCgroupPaths reads /proc/self/cgroup and returns the current process's
+// cgroup v2 unified path (if any) and its cgroup v1 blkio subsystem path (if
+// any). Either may be empty if that hierarchy isn't in use.
+func selfCgroupPaths() (v2Path string, v1BlkioPath string) {
+	data, err := readFileIostat("/proc/self/cgroup")
+	if err != nil {
+		return "", ""
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), ":", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		id, controllers, path := parts[0], parts[1], parts[2]
+		if id == "0" && controllers == "" {
+			v2Path = path
+			continue
+		}
+		for _, c := range strings.Split(controllers, ",") {
+			if c == "blkio" {
+				v1BlkioPath = path
+			}
+		}
+	}
+	return v2Path, v1BlkioPath
+}
+
+// buildCgroupReader resolves stats for the *current process's own cgroup*
+// where possible, rather than unconditionally reading the root cgroup (which
+// aggregates the whole system and would look identical to plain diskstats
+// output). If the io controller isn't delegated to this process's own
+// cgroup, it falls back to the root cgroup as a best-effort approximation
+// and warns that the data is system-wide rather than cgroup-scoped.
 func buildCgroupReader() (func() (map[string]ioCounters, error), error) {
+	v2Path, v1Path := selfCgroupPaths()
+
+	if v2Path != "" {
+		path := filepath.Join("/sys/fs/cgroup", v2Path, "io.stat")
+		if _, err := statIostat(path); err == nil {
+			return func() (map[string]ioCounters, error) {
+				return readCgroupV2(path)
+			}, nil
+		}
+	}
+
+	if v1Path != "" {
+		bytesPath := filepath.Join("/sys/fs/cgroup/blkio", v1Path, "blkio.throttle.io_service_bytes")
+		servicedPath := filepath.Join("/sys/fs/cgroup/blkio", v1Path, "blkio.throttle.io_serviced")
+		if _, err := statIostat(bytesPath); err == nil {
+			return func() (map[string]ioCounters, error) {
+				return readCgroupV1(bytesPath, servicedPath)
+			}, nil
+		}
+		bytesPath = filepath.Join("/sys/fs/cgroup/blkio", v1Path, "blkio.io_service_bytes")
+		servicedPath = filepath.Join("/sys/fs/cgroup/blkio", v1Path, "blkio.io_serviced")
+		if _, err := statIostat(bytesPath); err == nil {
+			return func() (map[string]ioCounters, error) {
+				return readCgroupV1(bytesPath, servicedPath)
+			}, nil
+		}
+	}
+
+	// Fall back to the root cgroup as a best-effort approximation when the io
+	// controller isn't delegated to this process's own cgroup (e.g. session
+	// scopes that don't enable the io controller). This is not truly
+	// cgroup-scoped, so warn rather than silently presenting it as such.
 	if _, err := statIostat("/sys/fs/cgroup/io.stat"); err == nil {
+		fmt.Fprintln(os.Stderr, "iostat: warning: io controller not delegated to current cgroup; falling back to root cgroup (system-wide) io.stat")
 		return func() (map[string]ioCounters, error) {
 			return readCgroupV2("/sys/fs/cgroup/io.stat")
 		}, nil
 	}
 	if _, err := statIostat("/sys/fs/cgroup/blkio/blkio.throttle.io_service_bytes"); err == nil {
+		fmt.Fprintln(os.Stderr, "iostat: warning: blkio not delegated to current cgroup; falling back to root cgroup (system-wide) blkio stats")
 		return func() (map[string]ioCounters, error) {
 			return readCgroupV1("/sys/fs/cgroup/blkio/blkio.throttle.io_service_bytes", "/sys/fs/cgroup/blkio/blkio.throttle.io_serviced")
 		}, nil
 	}
 	if _, err := statIostat("/sys/fs/cgroup/blkio/blkio.io_service_bytes"); err == nil {
+		fmt.Fprintln(os.Stderr, "iostat: warning: blkio not delegated to current cgroup; falling back to root cgroup (system-wide) blkio stats")
 		return func() (map[string]ioCounters, error) {
 			return readCgroupV1("/sys/fs/cgroup/blkio/blkio.io_service_bytes", "/sys/fs/cgroup/blkio/blkio.io_serviced")
 		}, nil
