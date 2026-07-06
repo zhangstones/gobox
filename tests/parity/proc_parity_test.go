@@ -1737,6 +1737,52 @@ func TestParity_FreeCases(t *testing.T) {
 		}
 	})
 
+	t.Run("FREE-006", func(t *testing.T) {
+		env := t.TempDir()
+		base := runGoboxCLI(t, env, "", "free")
+		gobox := runGoboxCLI(t, env, "", "free", "-b")
+		if base.ExitCode != 0 || gobox.ExitCode != 0 || findLineWithPrefix(gobox.Stdout, "Mem:") == "" {
+			t.Fatalf("free -b mismatch base=%+v gobox=%+v", base, gobox)
+		}
+		baseFields := freeRowFields(t, base.Stdout, "Mem:")
+		goboxMem := findLineWithPrefix(gobox.Stdout, "Mem:")
+		if containsAny(goboxMem, []string{"KB", "MB", "GB", "TB", "Ki", "Mi", "Gi", "Ti"}) {
+			t.Fatalf("free -b Mem row should stay numeric without human unit suffixes\n%s", gobox.Stdout)
+		}
+		fields := strings.Fields(goboxMem)
+		if len(fields) < 6 {
+			t.Fatalf("free -b Mem row missing numeric columns\n%s", gobox.Stdout)
+		}
+		for i, field := range fields[1:] {
+			got, err := strconv.ParseUint(field, 10, 64)
+			if err != nil {
+				t.Fatalf("free -b Mem row should stay numeric, got %q in %q", field, goboxMem)
+			}
+			baseKiB, err := strconv.ParseUint(baseFields[i+1], 10, 64)
+			if err != nil {
+				t.Fatalf("free baseline row should stay numeric, got %q in %q", baseFields[i+1], base.Stdout)
+			}
+			if want := baseKiB * 1024; got != want {
+				t.Fatalf("free -b should convert KiB to bytes at column %d: got=%d want=%d\nbase=%s\nbytes=%s", i+1, got, want, base.Stdout, gobox.Stdout)
+			}
+		}
+	})
+
+	t.Run("FREE-007", func(t *testing.T) {
+		env := t.TempDir()
+		base := runGoboxCLI(t, env, "", "free")
+		gobox := runGoboxCLI(t, env, "", "free", "-k")
+		if base.ExitCode != 0 || gobox.ExitCode != 0 || findLineWithPrefix(gobox.Stdout, "Mem:") == "" {
+			t.Fatalf("free -k mismatch base=%+v gobox=%+v", base, gobox)
+		}
+		baseFields := freeRowFields(t, base.Stdout, "Mem:")
+		goboxFields := freeRowFields(t, gobox.Stdout, "Mem:")
+		for i := range baseFields[1:] {
+			if baseFields[i+1] != goboxFields[i+1] {
+				t.Fatalf("free -k (default unit) should match default output at column %d: base=%q gobox=%q", i+1, baseFields[i+1], goboxFields[i+1])
+			}
+		}
+	})
 }
 
 func TestParity_TimeoutCases(t *testing.T) {

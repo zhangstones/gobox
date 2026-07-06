@@ -215,7 +215,8 @@
 | `gobox sort -n` | `sort -n` | ✅ 一致 | 按数值排序 |
 | `gobox sort -r` | `sort -r` | ✅ 一致 | 反向排序 |
 | `gobox sort -k NUM` | `sort -k` | ✅ 一致 | 按第 NUM 列排序 |
-| `gobox sort -t CHAR` | `sort -t` | ✅ 一致 | 使用 CHAR 作为字段分隔符 |
+| `gobox sort -t CHAR` | `sort -t` | ✅ 一致 | 字段分隔符，支持 `-t CHAR` 和 `-tCHAR` 两种写法 |
+| `gobox sort --field-separator=CHAR` | `sort --field-separator` | ✅ 一致 | `-t` 的长选项形式 |
 | `gobox sort -u` | `sort -u` | ✅ 一致 | 去重（仅保留唯一行） |
 | `gobox sort -M` | `sort -M` | ✅ 一致 | 按月份排序 |
 | `gobox sort -h` | `sort -h` | ✅ 一致 | 按人类可读数字排序（1K、2M） |
@@ -270,9 +271,10 @@
 | `gobox rand` | `openssl rand -hex 32` | 🆕 gobox扩展 | 默认生成 32 字节随机数据，并以 hex 文本输出 |
 | `gobox rand NUM` | `openssl rand -hex NUM` | 🆕 gobox扩展 | 通过位置参数指定要生成的字节数 |
 | `gobox rand -n NUM` | `openssl rand -hex NUM` | 🆕 gobox扩展 | 通过显式参数指定要生成的字节数 |
+| `gobox rand -NUM` | `openssl rand -hex NUM` | 🆕 gobox扩展 | `-n NUM` 的简写（如 `-16`） |
 | `gobox rand -hex` | `openssl rand -hex` | 🆕 gobox扩展 | 以 hex 编码输出随机字节（默认行为） |
 | `gobox rand -base64` | `openssl rand -base64` | 🆕 gobox扩展 | 以 base64 编码输出随机字节 |
-| `gobox rand -out FILE` | `openssl rand -out FILE` | 🆕 gobox扩展 | 将生成结果写入指定文件 |
+| `gobox rand -out FILE` | `openssl rand -out FILE` | 🆕 gobox扩展 | 写入的是编码文本（hex/base64），不是原始字节 |
 | `gobox rand -h` / `gobox rand --help` | `openssl rand -help` | 🆕 gobox扩展 | 显示帮助信息 |
 
 ### hex
@@ -281,7 +283,7 @@
 
 | gobox 参数 | 对应原生命令参数/参考基线 | 实现一致性 | 功能说明 |
 |------------|---------------|------------|----------|
-| `gobox hex --dump -C FILE...` | `hexdump -C` | ⚠️ 部分一致 | canonical 十六进制与 ASCII 对照输出；常用查看语义一致，排版细节不承诺完全同形 |
+| `gobox hex --dump -C FILE...` | `hexdump -C` | ⚠️ 部分一致 | canonical 十六进制与 ASCII 对照输出；默认折叠重复行为 `*`，排版细节不承诺完全同形 |
 | `gobox hex --dump -n LEN FILE...` | `hexdump -n` | ⚠️ 部分一致 | 只读取前 LEN 字节 |
 | `gobox hex --dump -s OFFSET FILE...` | `hexdump -s` | ⚠️ 部分一致 | 从指定偏移开始读取 |
 | `gobox hex --dump -v FILE...` | `hexdump -v` | ⚠️ 部分一致 | 不折叠重复输出行 |
@@ -429,7 +431,7 @@
 | gobox 参数 | 对应原生命令参数/参考基线 | 实现一致性 | 功能说明 |
 |------------|---------------|------------|----------|
 | `gobox ifstat -A` | `ifstat -a` | ✅ 常用一致 | 显示所有接口（包括虚拟接口）；接口枚举策略以 gobox `/sys` 视图为准 |
-| `gobox ifstat -a` | `ifstat -a` | ✅ 常用一致 | 显示绝对值（累计值）；高频读数语义对齐 |
+| `gobox ifstat -a` | `ifstat -a` | ⚠️ 部分一致 | 显示绝对值（累计值）；表头仍沿用速率模式的 `.../s` 列名，未按累计值改名 |
 | `gobox ifstat -d` | `netstat -ed` (丢包统计) | 🆕 gobox扩展 | 显示丢包计数 |
 | `gobox ifstat -e` | `netstat -e` (错误统计) | 🆕 gobox扩展 | 显示错误包计数 |
 | `gobox ifstat -i string` | `ifstat -i` | ✅ 常用一致 | 指定网络接口（逗号分隔） |
@@ -524,6 +526,8 @@
 |------------|---------------|------------|----------|
 | `gobox free` | `free` | ⚠️ 部分一致 | 显示内存总量、已用、可用、buffer/cache 和 swap；常用数值语义一致，表格排版为精简实现 |
 | `gobox free -h` | `free -h` | ⚠️ 部分一致 | 以人类可读格式显示内存 |
+| `gobox free -b` | `free -b` | ⚠️ 部分一致 | 以字节显示内存 |
+| `gobox free -k` | `free -k` | ⚠️ 部分一致 | 以 KiB 显示内存（默认单位，显式指定亦被接受） |
 | `gobox free -m` | `free -m` | ⚠️ 部分一致 | 以 MiB 显示内存 |
 | `gobox free -g` | `free -g` | ⚠️ 部分一致 | 以 GiB 显示内存 |
 | `gobox free -s SEC -c COUNT` | `free -s -c` | ⚠️ 部分一致 | 按间隔重复采样指定次数 |

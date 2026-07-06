@@ -781,6 +781,8 @@ func TestParity_SortCases(t *testing.T) {
 			}
 		}},
 		{ID: "SORT-001b", Name: "sort -n empty file", GoboxArgs: []string{"sort", "-n", "empty.txt"}, NativeCommand: "sort", NativeArgs: []string{"-n", "empty.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "empty.txt"), "") }},
+		{ID: "SORT-012a", Name: "sort -tCHAR concatenated", GoboxArgs: []string{"sort", "-t,", "-k", "2", "input.txt"}, NativeCommand: "sort", NativeArgs: []string{"-t,", "-k", "2", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "a,2\nb,1\n") }},
+		{ID: "SORT-012b", Name: "sort --field-separator=CHAR", GoboxArgs: []string{"sort", "--field-separator=,", "-k", "2", "input.txt"}, NativeCommand: "sort", NativeArgs: []string{"--field-separator=,", "-k", "2", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "a,2\nb,1\n") }},
 	})
 
 	t.Run("SORT-008", func(t *testing.T) {
@@ -944,6 +946,12 @@ func TestParity_HexCases(t *testing.T) {
 		}},
 		{ID: "HEX-005", Name: "hex --dump -e", GoboxArgs: []string{"hex", "--dump", "-e", "%02x", "data.bin"}, NativeCommand: "hexdump", NativeArgs: []string{"-v", "-e", `1/1 "%02x"`, "data.bin"}, Setup: func(t *testing.T, env *parityEnv) {
 			_ = os.WriteFile(filepath.Join(env.Dir, "data.bin"), []byte("abc"), 0o644)
+		}},
+		{ID: "HEX-009", Name: "hex --dump -C default folds repeated rows", GoboxArgs: []string{"hex", "--dump", "-C", "data.bin"}, NativeCommand: "hexdump", NativeArgs: []string{"-C", "data.bin"}, Setup: func(t *testing.T, env *parityEnv) {
+			data := append([]byte(strings.Repeat("A", 16)), []byte(strings.Repeat("A", 16))...)
+			data = append(data, []byte(strings.Repeat("A", 16))...)
+			data = append(data, []byte("last row")...)
+			_ = os.WriteFile(filepath.Join(env.Dir, "data.bin"), data, 0o644)
 		}},
 	})
 
@@ -1311,6 +1319,27 @@ func TestParity_RandCases(t *testing.T) {
 			if !strings.Contains(res.Stdout, want) {
 				t.Fatalf("rand -h missing %q in %q", want, res.Stdout)
 			}
+		}
+	})
+
+	t.Run("RAND-008", func(t *testing.T) {
+		// -NUM bare shorthand must behave exactly like -n NUM: same byte
+		// count, same hex encoding.
+		shorthand := runGoboxCLI(t, t.TempDir(), "", "rand", "-16")
+		if shorthand.ExitCode != 0 {
+			t.Fatalf("rand -16 failed: %+v", shorthand)
+		}
+		explicit := runGoboxCLI(t, t.TempDir(), "", "rand", "-n", "16")
+		if explicit.ExitCode != 0 {
+			t.Fatalf("rand -n 16 failed: %+v", explicit)
+		}
+		shorthandLine := strings.TrimSpace(shorthand.Stdout)
+		explicitLine := strings.TrimSpace(explicit.Stdout)
+		if len(shorthandLine) != 32 {
+			t.Fatalf("rand -16: expected 32 hex chars (16 bytes), got %d chars: %q", len(shorthandLine), shorthandLine)
+		}
+		if len(shorthandLine) != len(explicitLine) {
+			t.Fatalf("rand -16 and rand -n 16 should produce the same output length, got %d vs %d", len(shorthandLine), len(explicitLine))
 		}
 	})
 }

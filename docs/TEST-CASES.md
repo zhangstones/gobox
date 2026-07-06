@@ -230,6 +230,7 @@
 | SORT-009 | `-c` | exact | `sort -c` | 已排序/未排序文本 | 退出码一致 |
 | SORT-010 | `-o FILE` | exact | `sort -o` | 输出文件 | 写文件结果一致 |
 | SORT-011 | `-z` | exact | `sort -z` | 零分隔文本 | 零终止处理一致 |
+| SORT-012 | `-tCHAR` 粘连写法 / `--field-separator=CHAR` | exact | `sort -t`/`--field-separator` | 分隔列文本 | 粘连短选项和长选项形式与 `-t CHAR` 结果一致 |
 
 ### uniq
 
@@ -275,12 +276,14 @@
 | RAND-005 | `-base64` | behavior | `openssl rand -base64` | none | base64 模式必须相对默认 hex 输出改变编码字母表和长度语义 |
 | RAND-006 | `-out FILE` | contract | `openssl rand -out FILE` | temp output file | 生成结果写入指定文件，stdout 不混入随机正文 |
 | RAND-007 | `-h, --help` | contract | `openssl rand -help` | none | 帮助输出成功并包含 `gobox rand` 用法与主要参数说明 |
+| RAND-008 | `-NUM` 简写 | contract | gobox-only | byte-count operand | 裸数字简写与 `-n NUM` 效果一致，输出编码长度与请求字节数匹配 |
 
 ### hex
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
 | HEX-001 | `--dump -C` | structured | `hexdump -C` | binary fixture | canonical 十六进制输出字段语义一致 |
+| HEX-009 | `--dump -C` 默认折叠重复行 | exact | `hexdump -C` | repeated 16-byte rows fixture | 默认输出将连续重复行折叠为 `*`，与 native 折叠位置一致 |
 | HEX-002 | `--dump -n LEN` | structured | `hexdump -n` | binary fixture | 读取长度限制一致 |
 | HEX-003 | `--dump -s OFFSET` | structured | `hexdump -s` | binary fixture | 起始偏移一致 |
 | HEX-004 | `--dump -v` | structured | `hexdump -v` | repeated binary fixture | 重复行不折叠语义一致 |
@@ -519,6 +522,8 @@
 | FREE-003 | `-m` | behavior | `free -m` | local Linux host | `-m` 必须相对默认输出切换为 MiB 数值视图 |
 | FREE-004 | `-g` | behavior | `free -g` | local Linux host | `-g` 必须相对默认输出切换为 GiB 数值视图 |
 | FREE-005 | `-s SEC -c COUNT` | behavior | `free -s -c` | local Linux host | 按指定次数采样并退出 |
+| FREE-006 | `-b` | behavior | `free -b` | local Linux host | `-b` 必须相对默认输出切换为字节数值视图 |
+| FREE-007 | `-k` | contract | `free -k` | local Linux host | `-k`（默认单位）显式指定时被接受，输出与默认一致 |
 
 ### xargs
 
