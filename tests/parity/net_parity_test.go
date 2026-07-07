@@ -2928,8 +2928,22 @@ func TestParity_IfstatCases(t *testing.T) {
 				}
 				header, rows := ifstatHeaderAndRows(out)
 				baseHeader, baseRows := ifstatHeaderAndRows(base.Stdout)
-				if header != baseHeader || len(rows) == 0 || len(rows) != len(baseRows) {
-					t.Fatalf("ifstat -a missing header or rows: %q", out)
+				cols, baseCols := ifstatHeaderColumns(header), ifstatHeaderColumns(baseHeader)
+				if len(cols) != len(baseCols) || len(cols) == 0 || cols[0] != "Interface" || len(rows) == 0 || len(rows) != len(baseRows) {
+					t.Fatalf("ifstat -a header/rows shape mismatch: %q vs %q", header, baseHeader)
+				}
+				// -a must switch the rx/tx column labels to non-rate names
+				// (cumulative counters, not per-second rates) instead of
+				// reusing the default mode's ".../s" rate labels.
+				if !strings.Contains(header, "rxpkts") || !strings.Contains(header, "txpkts") ||
+					!strings.Contains(header, "rxKB") || !strings.Contains(header, "txKB") {
+					t.Fatalf("ifstat -a header should use absolute-mode column labels: %q", header)
+				}
+				if strings.Contains(header, "rxpps/s") || strings.Contains(header, "txpps/s") {
+					t.Fatalf("ifstat -a header should not reuse rate-mode labels: %q", header)
+				}
+				if header == baseHeader {
+					t.Fatalf("ifstat -a header should differ from default rate-mode header: %q", header)
 				}
 				wantFields := len(ifstatHeaderColumns(header))
 				outByIface := ifstatRowsByInterface(rows, wantFields)

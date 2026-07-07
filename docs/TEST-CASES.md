@@ -93,7 +93,7 @@
 | DU-003 | `-a` | structured | `du -a` | file tree | 文件与目录项均输出 |
 | DU-004 | `-c` | structured | `du -c` | multiple paths | 输出 total 汇总行 |
 | DU-005 | `-d`, `--max-depth` | structured | `du -d` | nested tree | 最大深度限制生效 |
-| DU-006 | `--exclude` | structured | `du --exclude` | mixed file names | 排除模式过滤生效 |
+| DU-006 | `--exclude` | structured | `du --exclude` | mixed file names | 不含 `/` 的模式按 basename 匹配（任意深度），含 `/` 的模式按相对 root 路径匹配；非法模式报错 |
 | DU-007 | `-x` | contract | `du -x` | local tree | 参数可解析并保持单文件系统遍历语义 |
 | DU-008 | `--apparent-size` | structured | `du --apparent-size` | sparse/small files | 使用表观大小统计 |
 
@@ -429,7 +429,7 @@
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
 | IFSTAT-001 | `-A` | contract | gobox-only | local interfaces | 显示全部接口集合不弱于默认模式 |
-| IFSTAT-002 | `-a` | behavior | gobox-only | local interfaces | `-a` 必须相对默认模式改变输出并切换到绝对值视图 |
+| IFSTAT-002 | `-a` | behavior | gobox-only | local interfaces | `-a` 必须相对默认模式改变输出并切换到绝对值视图，表头列名同步改为非速率的 `rxpkts`/`txpkts`/`rxKB`/`txKB` |
 | IFSTAT-003 | `-d` | behavior | gobox-only | local interfaces | `-d` 必须相对默认模式增加 drop 列 |
 | IFSTAT-004 | `-e` | behavior | gobox-only | local interfaces | `-e` 必须相对默认模式增加 error 列 |
 | IFSTAT-005 | `-i string` | contract | gobox-only | selected iface | 仅输出指定接口 |
@@ -517,7 +517,7 @@
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
-| FREE-001 | default memory summary | structured | `free` | local Linux host | Mem/Swap 行必须包含可解析的核心列集合 |
+| FREE-001 | default memory summary | structured | `free` | local Linux host | Mem/Swap 行必须包含可解析的核心列集合，表头须含 `shared` 列（6 列与原生一致） |
 | FREE-002 | `-h` | behavior | `free -h` | local Linux host | `-h` 必须相对默认输出切换为人类可读单位 |
 | FREE-003 | `-m` | behavior | `free -m` | local Linux host | `-m` 必须相对默认输出切换为 MiB 数值视图 |
 | FREE-004 | `-g` | behavior | `free -g` | local Linux host | `-g` 必须相对默认输出切换为 GiB 数值视图 |
@@ -542,7 +542,7 @@
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
 | KILL-001 | PID default signal | behavior | `kill` | controlled child process | 默认 `TERM` 信号使目标进程退出 |
-| KILL-002 | `-l, --list` | structured | `kill -l` | none | 常用信号列表可解析，允许信号全集和格式差异 |
+| KILL-002 | `-l, --list` | exact | `kill -l` | none | 完整 64 个信号（含实时信号）的编号表格与原生 `kill -l` 逐字节一致；名字与编号双向互查覆盖标准信号和实时信号（RTMIN/RTMAX） |
 | KILL-003 | `-s SIGNAL` | behavior | `kill -s` | controlled child process | 指定信号发送语义一致 |
 | KILL-004 | `-SIGNAL` | behavior | `kill -SIGNAL` | controlled child process | 短信号格式语义一致 |
 | KILL-005 | `-f PATTERN` | behavior | `pkill -f` | controlled named process | 完整命令行匹配集合一致 |

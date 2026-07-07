@@ -159,17 +159,24 @@ func collectDiskUsage(root string, opts duOptions) ([]duRow, int64, error) {
 		rootDev = uint64(st.Dev)
 	}
 	rows := []duRow{}
-	total := walkDu(root, info, 0, root, rootDev, opts, &rows)
+	total, err := walkDu(root, info, 0, root, rootDev, opts, &rows)
+	if err != nil {
+		return nil, 0, err
+	}
 	return rows, total, nil
 }
 
-func walkDu(path string, info fs.FileInfo, depth int, root string, rootDev uint64, opts duOptions, rows *[]duRow) int64 {
-	if excludedDuPath(root, path, opts.excludes) {
-		return 0
+func walkDu(path string, info fs.FileInfo, depth int, root string, rootDev uint64, opts duOptions, rows *[]duRow) (int64, error) {
+	excluded, err := excludedDuPath(root, path, opts.excludes)
+	if err != nil {
+		return 0, err
+	}
+	if excluded {
+		return 0, nil
 	}
 	if opts.oneFS && depth > 0 {
 		if st, ok := info.Sys().(*syscall.Stat_t); ok && uint64(st.Dev) != rootDev {
-			return 0
+			return 0, nil
 		}
 	}
 
@@ -184,40 +191,56 @@ func walkDu(path string, info fs.FileInfo, depth int, root string, rootDev uint6
 				if err != nil {
 					continue
 				}
-				total += walkDu(child, childInfo, depth+1, root, rootDev, opts, rows)
+				childTotal, err := walkDu(child, childInfo, depth+1, root, rootDev, opts, rows)
+				if err != nil {
+					return 0, err
+				}
+				total += childTotal
 			}
 		}
 		if opts.maxDepth < 0 || depth <= opts.maxDepth {
 			*rows = append(*rows, duRow{path: path, size: total})
 		}
-		return total
+		return total, nil
 	}
 
 	if (opts.all || depth == 0) && (opts.maxDepth < 0 || depth <= opts.maxDepth) {
 		*rows = append(*rows, duRow{path: path, size: total})
 	}
-	return total
+	return total, nil
 }
 
-func excludedDuPath(root, path string, patterns []string) bool {
+// excludedDuPath reports whether path should be skipped given --exclude
+// patterns. Matching follows GNU du/fnmatch precedence: a pattern containing
+// "/" matches only against the path relative to root; a pattern without "/"
+// matches only against the entry's basename (at any depth). The root
+// argument is cleaned first so behavior doesn't depend on whether it was
+// spelled as an absolute or relative path.
+func excludedDuPath(root, path string, patterns []string) (bool, error) {
 	if len(patterns) == 0 {
-		return false
+		return false, nil
 	}
-	base := filepath.Base(path)
-	rel, err := filepath.Rel(root, path)
+	rel, err := filepath.Rel(filepath.Clean(root), path)
 	if err != nil {
 		rel = path
 	}
 	rel = filepath.ToSlash(rel)
+	base := filepath.Base(path)
 	for _, pattern := range patterns {
-		if ok, _ := filepath.Match(pattern, base); ok {
-			return true
+		slashPattern := filepath.ToSlash(pattern)
+		target := base
+		if strings.Contains(slashPattern, "/") {
+			target = rel
 		}
-		if ok, _ := filepath.Match(filepath.ToSlash(pattern), rel); ok {
-			return true
+		ok, err := filepath.Match(slashPattern, target)
+		if err != nil {
+			return false, fmt.Errorf("du: invalid pattern %q: %w", pattern, err)
+		}
+		if ok {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func duFileSize(info fs.FileInfo, apparent bool) int64 {

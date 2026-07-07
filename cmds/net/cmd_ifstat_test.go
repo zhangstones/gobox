@@ -471,6 +471,51 @@ func TestIfstatCmdAbsoluteValues(t *testing.T) {
 	if result == "" {
 		t.Errorf("Expected output with absolute values, got empty")
 	}
+	header := strings.Split(result, "\n")[0]
+	if !strings.Contains(header, "rxpkts") || !strings.Contains(header, "txpkts") || !strings.Contains(header, "rxKB") || !strings.Contains(header, "txKB") {
+		t.Errorf("expected -a header to use absolute-mode column labels, got: %s", header)
+	}
+	if strings.Contains(header, "rxpps/s") || strings.Contains(header, "txpps/s") {
+		t.Errorf("did not expect -a header to reuse rate-mode labels, got: %s", header)
+	}
+}
+
+// TestIfstatCmdDefaultHeaderUsesRateLabels is a regression test locking in
+// that default (non -a) mode keeps the rate-style column labels.
+func TestIfstatCmdDefaultHeaderUsesRateLabels(t *testing.T) {
+	skipIfNoInterfaces(t)
+
+	output, err := runIfstatCmd([]string{"-n", "1"})
+	if err != nil {
+		t.Fatalf("ifstat failed: %v", err)
+	}
+	header := strings.Split(strings.TrimSpace(string(output)), "\n")[0]
+	for _, want := range []string{"rxpps/s", "txpps/s", "rxKB/s", "txKB/s"} {
+		if !strings.Contains(header, want) {
+			t.Errorf("expected default header to contain %q, got: %s", want, header)
+		}
+	}
+}
+
+// TestIfstatCmdAbsoluteHeaderDiffersFromDefault is a regression test for a
+// bug where -a printed cumulative values under rate-style ".../s" column
+// names. The absolute-mode header must differ from the default header.
+func TestIfstatCmdAbsoluteHeaderDiffersFromDefault(t *testing.T) {
+	skipIfNoInterfaces(t)
+
+	defaultOutput, err := runIfstatCmd([]string{"-n", "1"})
+	if err != nil {
+		t.Fatalf("ifstat failed: %v", err)
+	}
+	absOutput, err := runIfstatCmd([]string{"-n", "1", "-a"})
+	if err != nil {
+		t.Fatalf("ifstat -a failed: %v", err)
+	}
+	defaultHeader := strings.Split(strings.TrimSpace(string(defaultOutput)), "\n")[0]
+	absHeader := strings.Split(strings.TrimSpace(string(absOutput)), "\n")[0]
+	if defaultHeader == absHeader {
+		t.Errorf("expected -a header to differ from default header, both were: %s", defaultHeader)
+	}
 }
 
 func TestIfstatCmdShowAllInterfaces(t *testing.T) {
@@ -701,9 +746,10 @@ func TestIfstatCmdAllFlags(t *testing.T) {
 	}
 
 	result := string(output)
-	// Should have header with all columns
+	// Should have header with all columns. -a is set, so the rx/tx columns
+	// use absolute-mode (non-rate) labels.
 	header := strings.Split(result, "\n")[0]
-	expectedCols := []string{"Interface", "rxpps/s", "txpps/s", "rxKB/s", "txKB/s", "rxerrs", "txerrs", "rxdrop", "txdrop"}
+	expectedCols := []string{"Interface", "rxpkts", "txpkts", "rxKB", "txKB", "rxerrs", "txerrs", "rxdrop", "txdrop"}
 	for _, col := range expectedCols {
 		if !strings.Contains(header, col) {
 			t.Errorf("Expected column '%s' in header, got: %s", col, header)

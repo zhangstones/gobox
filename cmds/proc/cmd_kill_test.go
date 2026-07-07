@@ -3,6 +3,7 @@ package proc
 import (
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -54,10 +55,91 @@ func TestKillCmdOptionsListSignals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "TERM") || !strings.Contains(out, "KILL") {
+	if !strings.Contains(out, "SIGTERM") || !strings.Contains(out, "SIGKILL") {
 		t.Fatalf("unexpected signal list %q", out)
 	}
 
+}
+
+// TestKillCmdListAllSignalsGridShape is a regression test for gobox kill -l
+// previously listing only 5 hardcoded signals on a single line. It must now
+// print the full 64-signal GNU grid, skipping the unused 32/33 slots.
+func TestKillCmdListAllSignalsGridShape(t *testing.T) {
+	out, err := captureProcCmd(t, func() error {
+		return KillCmd([]string{"-l"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches := regexp.MustCompile(`(\d+)\) (SIG\S+)`).FindAllStringSubmatch(out, -1)
+	if len(matches) != 62 {
+		t.Fatalf("expected 62 numbered signal entries (1-31, 34-64), got %d: %q", len(matches), out)
+	}
+	if strings.Contains(out, "32) ") || strings.Contains(out, "33) ") {
+		t.Fatalf("expected signals 32/33 to be omitted, got %q", out)
+	}
+	if matches[0][1] != "1" || matches[0][2] != "SIGHUP" {
+		t.Fatalf("expected first entry to be \"1) SIGHUP\", got %v", matches[0])
+	}
+	last := matches[len(matches)-1]
+	if last[1] != "64" || last[2] != "SIGRTMAX" {
+		t.Fatalf("expected last entry to be \"64) SIGRTMAX\", got %v", last)
+	}
+}
+
+// TestKillCmdListRealtimeSignalNaming locks in GNU kill -l's real-time
+// signal naming convention (verified against the live host's kill -l):
+// 34-49 named relative to RTMIN, 50-64 named relative to RTMAX.
+func TestKillCmdListRealtimeSignalNaming(t *testing.T) {
+	out, err := captureProcCmd(t, func() error {
+		return KillCmd([]string{"-l"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"34) SIGRTMIN\t",
+		"35) SIGRTMIN+1\t",
+		"49) SIGRTMIN+15",
+		"50) SIGRTMAX-14",
+		"63) SIGRTMAX-1\t64) SIGRTMAX",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in kill -l output, got %q", want, out)
+		}
+	}
+}
+
+// TestKillCmdNumericRoundTripAllSignals verifies -l NAME <-> -l NUMBER
+// round-trips work for signals beyond the original 5-signal table,
+// including a real-time signal.
+func TestKillCmdNumericRoundTripAllSignals(t *testing.T) {
+	cases := []struct {
+		name string
+		num  string
+	}{
+		{"HUP", "1"},
+		{"USR1", "10"},
+		{"TERM", "15"},
+		{"RTMIN", "34"},
+		{"RTMAX", "64"},
+	}
+	for _, c := range cases {
+		out, err := captureProcCmd(t, func() error { return KillCmd([]string{"-l", c.name}) })
+		if err != nil {
+			t.Fatalf("-l %s failed: %v", c.name, err)
+		}
+		if strings.TrimSpace(out) != c.num {
+			t.Fatalf("-l %s: expected %q, got %q", c.name, c.num, strings.TrimSpace(out))
+		}
+		out, err = captureProcCmd(t, func() error { return KillCmd([]string{"-l", c.num}) })
+		if err != nil {
+			t.Fatalf("-l %s failed: %v", c.num, err)
+		}
+		if strings.TrimSpace(out) != c.name {
+			t.Fatalf("-l %s: expected %q, got %q", c.num, c.name, strings.TrimSpace(out))
+		}
+	}
 }
 
 func TestKillCmdOptionsNumericSignalDryRunPid(t *testing.T) {

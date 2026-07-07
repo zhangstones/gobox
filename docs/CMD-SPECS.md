@@ -74,7 +74,7 @@
 | `gobox du -a` | `du -a` | ✅ 一致 | 显示文件和目录项 |
 | `gobox du -c` | `du -c` | ✅ 一致 | 输出 total 汇总行 |
 | `gobox du -d N, --max-depth N` | `du -d N` | ✅ 一致 | 限制目录输出深度 |
-| `gobox du --exclude PATTERN` | `du --exclude` | ⚠️ 部分一致 | 按 shell-style 模式排除路径 |
+| `gobox du --exclude PATTERN` | `du --exclude` | ✅ 常用一致 | 按 shell-style 模式排除路径：不含 `/` 按 basename 匹配（任意深度），含 `/` 按相对 root 路径匹配；非法模式报错 |
 | `gobox du -x` | `du -x` | ⚠️ 部分一致 | 不跨文件系统遍历 |
 | `gobox du --apparent-size` | `du --apparent-size` | ✅ 一致 | 使用文件表观大小而非已分配块数 |
 
@@ -431,7 +431,7 @@
 | gobox 参数 | 对应原生命令参数/参考基线 | 实现一致性 | 功能说明 |
 |------------|---------------|------------|----------|
 | `gobox ifstat -A` | `ifstat -a` | ✅ 常用一致 | 显示所有接口（包括虚拟接口）；接口枚举策略以 gobox `/sys` 视图为准 |
-| `gobox ifstat -a` | `ifstat -a` | ⚠️ 部分一致 | 显示绝对值（累计值）；表头仍沿用速率模式的 `.../s` 列名，未按累计值改名 |
+| `gobox ifstat -a` | `ifstat -a` | ✅ 常用一致 | 显示绝对值（累计值）；表头改用 `rxpkts`/`txpkts`/`rxKB`/`txKB` 等非速率列名 |
 | `gobox ifstat -d` | `netstat -ed` (丢包统计) | 🆕 gobox扩展 | 显示丢包计数 |
 | `gobox ifstat -e` | `netstat -e` (错误统计) | 🆕 gobox扩展 | 显示错误包计数 |
 | `gobox ifstat -i string` | `ifstat -i` | ✅ 常用一致 | 指定网络接口（逗号分隔） |
@@ -524,12 +524,12 @@
 
 | gobox 参数 | 对应原生命令参数/参考基线 | 实现一致性 | 功能说明 |
 |------------|---------------|------------|----------|
-| `gobox free` | `free` | ⚠️ 部分一致 | 显示内存总量、已用、可用、buffer/cache 和 swap；常用数值语义一致，表格排版为精简实现 |
-| `gobox free -h` | `free -h` | ⚠️ 部分一致 | 以人类可读格式显示内存 |
-| `gobox free -b` | `free -b` | ⚠️ 部分一致 | 以字节显示内存 |
-| `gobox free -k` | `free -k` | ⚠️ 部分一致 | 以 KiB 显示内存（默认单位，显式指定亦被接受） |
-| `gobox free -m` | `free -m` | ⚠️ 部分一致 | 以 MiB 显示内存 |
-| `gobox free -g` | `free -g` | ⚠️ 部分一致 | 以 GiB 显示内存 |
+| `gobox free` | `free` | ✅ 常用一致 | 显示内存总量、已用、可用、共享内存、buffer/cache 和 swap，6 列表头与原生一致 |
+| `gobox free -h` | `free -h` | ✅ 常用一致 | 以人类可读格式显示内存 |
+| `gobox free -b` | `free -b` | ✅ 常用一致 | 以字节显示内存 |
+| `gobox free -k` | `free -k` | ✅ 常用一致 | 以 KiB 显示内存（默认单位，显式指定亦被接受） |
+| `gobox free -m` | `free -m` | ✅ 常用一致 | 以 MiB 显示内存 |
+| `gobox free -g` | `free -g` | ✅ 常用一致 | 以 GiB 显示内存 |
 | `gobox free -s SEC -c COUNT` | `free -s -c` | ⚠️ 部分一致 | 按间隔重复采样指定次数 |
 
 ### xargs
@@ -553,7 +553,7 @@
 | gobox 参数 | 对应原生命令参数/参考基线 | 实现一致性 | 功能说明 |
 |------------|---------------|------------|----------|
 | `gobox kill PID...` | `kill PID...` | ✅ 一致 | 向指定 PID 发送默认 `TERM` 信号 |
-| `gobox kill -l, --list [SIGNAL]` | `kill -l` | ⚠️ 部分一致 | 列出常用信号，信号表不是完整 GNU 输出 |
+| `gobox kill -l, --list [SIGNAL]` | `kill -l` | ✅ 常用一致 | 列出完整 64 个 Linux 信号（含实时信号），5 列编号表格与 GNU kill -l 输出一致 |
 | `gobox kill -s SIGNAL PID...` | `kill -s` | ✅ 一致 | 指定要发送的信号 |
 | `gobox kill -SIGNAL PID...` | `kill -SIGNAL` | ✅ 一致 | 使用短格式指定信号 |
 | `gobox kill -f PATTERN` | `pkill -f` | ⚠️ 部分一致 | 按完整命令行匹配进程；匹配范围和权限边界为精简实现 |

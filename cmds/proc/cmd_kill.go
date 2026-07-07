@@ -12,15 +12,72 @@ import (
 	"syscall"
 )
 
-var supportedSignals = []struct {
+type signalSpec struct {
 	name string
 	sig  syscall.Signal
-}{
-	{name: "HUP", sig: syscall.SIGHUP},
-	{name: "INT", sig: syscall.SIGINT},
-	{name: "QUIT", sig: syscall.SIGQUIT},
-	{name: "KILL", sig: syscall.SIGKILL},
-	{name: "TERM", sig: syscall.SIGTERM},
+}
+
+// supportedSignals covers the full set of Linux signals recognized by GNU
+// kill -l: standard signals 1-31 (32/33 are unused/reserved and omitted,
+// matching native kill -l), plus real-time signals 34-64 named relative to
+// SIGRTMIN/SIGRTMAX using GNU's symmetric convention.
+var supportedSignals = buildSupportedSignals()
+
+func buildSupportedSignals() []signalSpec {
+	specs := []signalSpec{
+		{name: "HUP", sig: syscall.SIGHUP},
+		{name: "INT", sig: syscall.SIGINT},
+		{name: "QUIT", sig: syscall.SIGQUIT},
+		{name: "ILL", sig: syscall.SIGILL},
+		{name: "TRAP", sig: syscall.SIGTRAP},
+		{name: "ABRT", sig: syscall.SIGABRT},
+		{name: "BUS", sig: syscall.SIGBUS},
+		{name: "FPE", sig: syscall.SIGFPE},
+		{name: "KILL", sig: syscall.SIGKILL},
+		{name: "USR1", sig: syscall.SIGUSR1},
+		{name: "SEGV", sig: syscall.SIGSEGV},
+		{name: "USR2", sig: syscall.SIGUSR2},
+		{name: "PIPE", sig: syscall.SIGPIPE},
+		{name: "ALRM", sig: syscall.SIGALRM},
+		{name: "TERM", sig: syscall.SIGTERM},
+		{name: "STKFLT", sig: syscall.SIGSTKFLT},
+		{name: "CHLD", sig: syscall.SIGCHLD},
+		{name: "CONT", sig: syscall.SIGCONT},
+		{name: "STOP", sig: syscall.SIGSTOP},
+		{name: "TSTP", sig: syscall.SIGTSTP},
+		{name: "TTIN", sig: syscall.SIGTTIN},
+		{name: "TTOU", sig: syscall.SIGTTOU},
+		{name: "URG", sig: syscall.SIGURG},
+		{name: "XCPU", sig: syscall.SIGXCPU},
+		{name: "XFSZ", sig: syscall.SIGXFSZ},
+		{name: "VTALRM", sig: syscall.SIGVTALRM},
+		{name: "PROF", sig: syscall.SIGPROF},
+		{name: "WINCH", sig: syscall.SIGWINCH},
+		{name: "IO", sig: syscall.SIGIO},
+		{name: "PWR", sig: syscall.SIGPWR},
+		{name: "SYS", sig: syscall.SIGSYS},
+	}
+	// Real-time signals 34-64. GNU kill -l names the lower half relative to
+	// RTMIN (34=RTMIN, 35=RTMIN+1, ... 49=RTMIN+15) and the upper half
+	// relative to RTMAX (50=RTMAX-14, ... 63=RTMAX-1, 64=RTMAX).
+	const rtMin, rtMax = 34, 64
+	for n := rtMin; n <= rtMax; n++ {
+		var name string
+		switch {
+		case n == rtMax:
+			name = "RTMAX"
+		case n-rtMin <= rtMax-n:
+			if n == rtMin {
+				name = "RTMIN"
+			} else {
+				name = fmt.Sprintf("RTMIN+%d", n-rtMin)
+			}
+		default:
+			name = fmt.Sprintf("RTMAX-%d", rtMax-n)
+		}
+		specs = append(specs, signalSpec{name: name, sig: syscall.Signal(n)})
+	}
+	return specs
 }
 
 func KillCmd(args []string) error {
@@ -87,11 +144,7 @@ func KillCmd(args []string) error {
 			fmt.Println(int(sig.(syscall.Signal)))
 			return nil
 		}
-		names := make([]string, 0, len(supportedSignals))
-		for _, spec := range supportedSignals {
-			names = append(names, spec.name)
-		}
-		fmt.Println(strings.Join(names, " "))
+		printSignalGrid(supportedSignals)
 		return nil
 	}
 	if *sigName != "" {
@@ -244,4 +297,22 @@ func signalName(sig syscall.Signal) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// printSignalGrid prints the signal table the way GNU kill -l does: a
+// 5-column, tab-separated grid of " N) SIGNAME" entries, number right
+// justified to 2 characters, with a possibly-short final row.
+func printSignalGrid(specs []signalSpec) {
+	const cols = 5
+	for i, spec := range specs {
+		fmt.Printf("%2d) SIG%s", int(spec.sig), spec.name)
+		if (i+1)%cols == 0 {
+			fmt.Println()
+		} else {
+			fmt.Print("\t")
+		}
+	}
+	if len(specs)%cols != 0 {
+		fmt.Println()
+	}
 }

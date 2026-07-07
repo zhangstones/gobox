@@ -101,6 +101,101 @@ func TestDuApparentAllSummaryTotalAndExclude(t *testing.T) {
 	}
 }
 
+// TestDuExcludeMalformedPatternReturnsError is a regression test: an invalid
+// glob pattern must surface as an error (matching GNU du), not be silently
+// ignored (which would leave every file un-excluded with no diagnostic).
+func TestDuExcludeMalformedPatternReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("abc"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := DuCmd([]string{"--exclude", "[", dir})
+	if err == nil {
+		t.Fatal("expected an error for a malformed --exclude pattern")
+	}
+	if !strings.Contains(err.Error(), "[") {
+		t.Fatalf("expected error to mention the offending pattern, got: %v", err)
+	}
+}
+
+// TestDuExcludeNoSlashPatternMatchesBasenameOnly verifies a pattern without
+// "/" excludes any file with that basename regardless of depth, matching
+// GNU du/fnmatch semantics for no-slash patterns.
+func TestDuExcludeNoSlashPatternMatchesBasenameOnly(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "skip.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "skip.txt"), []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "keep.txt"), []byte("c"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureFsCmd(t, func() error {
+		return DuCmd([]string{"-a", "--exclude", "skip.txt", dir})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "skip.txt") {
+		t.Fatalf("expected skip.txt excluded at every depth, got %q", out)
+	}
+	if !strings.Contains(out, "keep.txt") {
+		t.Fatalf("expected keep.txt to remain, got %q", out)
+	}
+}
+
+// TestDuExcludeWithSlashPatternMatchesRelativePath verifies a pattern
+// containing "/" matches consistently against the path relative to root,
+// regardless of whether root was spelled as an absolute or relative path.
+func TestDuExcludeWithSlashPatternMatchesRelativePath(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "skip.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "keep.txt"), []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	absOut, err := captureFsCmd(t, func() error {
+		return DuCmd([]string{"-a", "--exclude", "sub/skip.txt", dir})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(absOut, "skip.txt") || !strings.Contains(absOut, "keep.txt") {
+		t.Fatalf("absolute root: expected skip.txt excluded and keep.txt present, got %q", absOut)
+	}
+
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldwd)
+	if err := os.Chdir(filepath.Dir(dir)); err != nil {
+		t.Fatal(err)
+	}
+	relRoot := filepath.Base(dir)
+	relOut, err := captureFsCmd(t, func() error {
+		return DuCmd([]string{"-a", "--exclude", "sub/skip.txt", relRoot})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(relOut, "skip.txt") || !strings.Contains(relOut, "keep.txt") {
+		t.Fatalf("relative root: expected skip.txt excluded and keep.txt present, got %q", relOut)
+	}
+}
+
 func TestDuMaxDepthZeroPrintsOnlyRoot(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "sub")

@@ -112,11 +112,14 @@ func TestTimeoutCmdOptionsPreserveStatusAccepted(t *testing.T) {
 
 }
 
+// USR1 was previously unsupported by cmd_kill.go's signal table (shared via
+// parseSignal), but the table now covers the full 64 Linux signals, so this
+// test uses a name that will never be a real signal instead.
 func TestTimeoutCmdOptionsUnsupportedSignal(t *testing.T) {
 
-	if err := TimeoutCmd([]string{"-s", "USR1", "0.1s", "sleep", "1"}); err == nil {
+	if err := TimeoutCmd([]string{"-s", "NOTASIGNAL", "0.1s", "sleep", "1"}); err == nil {
 		t.Fatal("expected unsupported signal error")
-	} else if !strings.Contains(err.Error(), "unsupported signal USR1") {
+	} else if !strings.Contains(err.Error(), "unsupported signal NOTASIGNAL") {
 		t.Fatalf("unexpected signal error: %v", err)
 	}
 

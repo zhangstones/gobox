@@ -170,12 +170,19 @@ func IfstatCmd(args []string) error {
 		}
 	}
 
+	// Column names: absolute mode (-a) shows cumulative counters, not
+	// per-second rates, so it must not reuse the rate-style ".../s" labels.
+	rxCol, txCol, rxKBCol, txKBCol := "rxpps/s", "txpps/s", "rxKB/s", "txKB/s"
+	if *absolute {
+		rxCol, txCol, rxKBCol, txKBCol = "rxpkts", "txpkts", "rxKB", "txKB"
+	}
+
 	if len(ifaces) == 0 {
 		if wantedIfaces != nil {
 			// User specified interfaces but none were found - warn was already printed above
 			// Print header (to stdout) so the command produces some output
 			fmt.Printf("%-12s  %9s  %9s  %9s  %9s\n",
-				"Interface", "rxpps/s", "txpps/s", "rxKB/s", "txKB/s")
+				"Interface", rxCol, txCol, rxKBCol, txKBCol)
 			return nil
 		}
 		return errors.New("ifstat: no network interfaces found")
@@ -196,16 +203,16 @@ func IfstatCmd(args []string) error {
 	printHeader := func() {
 		if showErrorsCol && showDropsCol {
 			fmt.Printf("%-*s  %9s  %9s  %9s  %9s  %7s  %7s  %7s  %7s\n",
-				interfaceWidth, "Interface", "rxpps/s", "txpps/s", "rxKB/s", "txKB/s", "rxerrs", "txerrs", "rxdrop", "txdrop")
+				interfaceWidth, "Interface", rxCol, txCol, rxKBCol, txKBCol, "rxerrs", "txerrs", "rxdrop", "txdrop")
 		} else if showErrorsCol {
 			fmt.Printf("%-*s  %9s  %9s  %9s  %9s  %7s  %7s\n",
-				interfaceWidth, "Interface", "rxpps/s", "txpps/s", "rxKB/s", "txKB/s", "rxerrs", "txerrs")
+				interfaceWidth, "Interface", rxCol, txCol, rxKBCol, txKBCol, "rxerrs", "txerrs")
 		} else if showDropsCol {
 			fmt.Printf("%-*s  %9s  %9s  %9s  %9s  %7s  %7s\n",
-				interfaceWidth, "Interface", "rxpps/s", "txpps/s", "rxKB/s", "txKB/s", "rxdrop", "txdrop")
+				interfaceWidth, "Interface", rxCol, txCol, rxKBCol, txKBCol, "rxdrop", "txdrop")
 		} else {
 			fmt.Printf("%-*s  %9s  %9s  %9s  %9s\n",
-				interfaceWidth, "Interface", "rxpps/s", "txpps/s", "rxKB/s", "txKB/s")
+				interfaceWidth, "Interface", rxCol, txCol, rxKBCol, txKBCol)
 		}
 	}
 

@@ -123,6 +123,76 @@ func TestFreeBytesUnitValues(t *testing.T) {
 	}
 }
 
+// TestFreeIncludesSharedColumn is a regression test for gobox free missing
+// the "shared" column that native free always shows between "free" and
+// "buff/cache". Native free reads it from /proc/meminfo's Shmem field.
+func TestFreeIncludesSharedColumn(t *testing.T) {
+	setupFreeInjected(t)
+	readMemInfoData = func() (map[string]uint64, error) {
+		return map[string]uint64{
+			"MemTotal":     2048,
+			"MemFree":      1024,
+			"MemAvailable": 1024,
+			"Shmem":        512,
+		}, nil
+	}
+	out, err := captureProcCmd(t, func() error { return FreeCmd(nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected at least header + Mem row, got %q", out)
+	}
+	header := strings.Fields(lines[0])
+	wantHeader := []string{"total", "used", "free", "shared", "buff/cache", "available"}
+	if len(header) != len(wantHeader) {
+		t.Fatalf("expected %d header columns %v, got %v", len(wantHeader), wantHeader, header)
+	}
+	for i, want := range wantHeader {
+		if header[i] != want {
+			t.Fatalf("header column %d: want %q, got %q (full header %v)", i, want, header[i], header)
+		}
+	}
+	memFields := strings.Fields(lines[1])
+	if len(memFields) != 7 {
+		t.Fatalf("expected Mem row with label + 6 value fields, got %v", memFields)
+	}
+	if memFields[0] != "Mem:" {
+		t.Fatalf("expected Mem row to start with \"Mem:\", got %q", memFields[0])
+	}
+	// fields: Mem: total used free shared buff/cache available -> shared is index 4
+	if memFields[4] != "0" {
+		t.Fatalf("expected shared column (KiB) to be 0 (512 bytes < 1 KiB), got %q in %v", memFields[4], memFields)
+	}
+}
+
+// TestFreeSharedColumnRespectsUnits verifies the shared column converts
+// consistently with the other columns across -m/-g.
+func TestFreeSharedColumnRespectsUnits(t *testing.T) {
+	setupFreeInjected(t)
+	readMemInfoData = func() (map[string]uint64, error) {
+		return map[string]uint64{
+			"MemTotal":     4 * 1024 * 1024,
+			"MemFree":      1 * 1024 * 1024,
+			"MemAvailable": 1 * 1024 * 1024,
+			"Shmem":        2 * 1024 * 1024,
+		}, nil
+	}
+	out, err := captureProcCmd(t, func() error { return FreeCmd([]string{"-m"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	memFields := strings.Fields(lines[1])
+	if len(memFields) != 7 {
+		t.Fatalf("expected Mem row with label + 6 value fields, got %v", memFields)
+	}
+	if memFields[4] != "2" {
+		t.Fatalf("expected shared column to report 2 MiB, got %q in %v", memFields[4], memFields)
+	}
+}
+
 func TestFreeCount(t *testing.T) {
 	out, err := captureProcCmd(t, func() error { return FreeCmd([]string{"-s", "0", "-c", "2"}) })
 	if err != nil {

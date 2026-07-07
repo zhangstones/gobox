@@ -93,6 +93,7 @@ func parseMemInfo(r io.Reader) (map[string]uint64, error) {
 func printFree(m map[string]uint64, human, bytesUnit, miB, giB bool) {
 	total := m["MemTotal"]
 	free := m["MemFree"]
+	shared := m["Shmem"]
 	buffCache := m["Buffers"] + m["Cached"] + m["SReclaimable"]
 	available := m["MemAvailable"]
 	var used uint64
@@ -105,8 +106,8 @@ func printFree(m map[string]uint64, human, bytesUnit, miB, giB bool) {
 	if swapTotal > swapFree {
 		swapUsed = swapTotal - swapFree
 	}
-	fmt.Printf("%13s %12s %12s %12s %12s\n", "total", "used", "free", "buff/cache", "available")
-	fmt.Printf("Mem:  %12s %12s %12s %12s %12s\n", formatMem(total, human, bytesUnit, miB, giB), formatMem(used, human, bytesUnit, miB, giB), formatMem(free, human, bytesUnit, miB, giB), formatMem(buffCache, human, bytesUnit, miB, giB), formatMem(available, human, bytesUnit, miB, giB))
+	fmt.Printf("%13s %12s %12s %12s %12s %12s\n", "total", "used", "free", "shared", "buff/cache", "available")
+	fmt.Printf("Mem:  %12s %12s %12s %12s %12s %12s\n", formatMem(total, human, bytesUnit, miB, giB), formatMem(used, human, bytesUnit, miB, giB), formatMem(free, human, bytesUnit, miB, giB), formatMem(shared, human, bytesUnit, miB, giB), formatMem(buffCache, human, bytesUnit, miB, giB), formatMem(available, human, bytesUnit, miB, giB))
 	fmt.Printf("Swap: %12s %12s %12s\n", formatMem(swapTotal, human, bytesUnit, miB, giB), formatMem(swapUsed, human, bytesUnit, miB, giB), formatMem(swapFree, human, bytesUnit, miB, giB))
 }
 

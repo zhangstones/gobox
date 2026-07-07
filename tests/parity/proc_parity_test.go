@@ -1589,16 +1589,19 @@ func TestParity_FreeCases(t *testing.T) {
 		if goboxMem == "" || nativeMem == "" {
 			t.Fatalf("free output missing Mem row\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
-		if len(strings.Fields(goboxMem)) < 6 || len(strings.Fields(nativeMem)) < 6 {
-			t.Fatalf("free Mem row missing expected columns\ngobox=%s\nnative=%s", goboxMem, nativeMem)
+		if len(strings.Fields(goboxMem)) < 7 || len(strings.Fields(nativeMem)) < 7 {
+			t.Fatalf("free Mem row missing expected columns (want label + 6 values incl. shared)\ngobox=%s\nnative=%s", goboxMem, nativeMem)
 		}
 		if findLineWithPrefix(gobox.Stdout, "Swap:") == "" || findLineWithPrefix(native.Stdout, "Swap:") == "" {
 			t.Fatalf("free output missing Swap row\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
-		// Header must contain "total"
+		// Header must contain "total" and "shared" (native free's 6-column header).
 		goboxLines := nonEmptyLines(gobox.Stdout)
 		if len(goboxLines) < 1 || !strings.Contains(goboxLines[0], "total") {
 			t.Fatalf("free header missing 'total' keyword: %q", gobox.Stdout)
+		}
+		if !strings.Contains(goboxLines[0], "shared") {
+			t.Fatalf("free header missing 'shared' column: %q", gobox.Stdout)
 		}
 		// Mem: data columns 1-3 must be parseable integers
 		goboxMemFields := strings.Fields(goboxMem)
@@ -1658,7 +1661,7 @@ func TestParity_FreeCases(t *testing.T) {
 			t.Fatalf("free -m Mem row should stay numeric without human unit suffixes\n%s", gobox.Stdout)
 		}
 		fields := strings.Fields(goboxMem)
-		if len(fields) < 6 {
+		if len(fields) < 7 {
 			t.Fatalf("free -m Mem row missing numeric columns\n%s", gobox.Stdout)
 		}
 		for i, field := range fields[1:] {
@@ -1689,7 +1692,7 @@ func TestParity_FreeCases(t *testing.T) {
 			t.Fatalf("free -g Mem row should stay numeric without human unit suffixes\n%s", gobox.Stdout)
 		}
 		fields := strings.Fields(goboxMem)
-		if len(fields) < 6 {
+		if len(fields) < 7 {
 			t.Fatalf("free -g Mem row missing numeric columns\n%s", gobox.Stdout)
 		}
 		for i, field := range fields[1:] {
@@ -1726,10 +1729,10 @@ func TestParity_FreeCases(t *testing.T) {
 				continue
 			}
 			fields := strings.Fields(line)
-			if len(fields) < 6 {
-				t.Fatalf("free -s/-c Mem: row has fewer than 5 data columns: %q", line)
+			if len(fields) < 7 {
+				t.Fatalf("free -s/-c Mem: row has fewer than 6 data columns: %q", line)
 			}
-			for i := 1; i <= 5; i++ {
+			for i := 1; i <= 6; i++ {
 				if _, err := strconv.ParseInt(fields[i], 10, 64); err != nil {
 					t.Fatalf("free -s/-c Mem: column %d not parseable as int: %q in %q", i, fields[i], line)
 				}
@@ -1750,7 +1753,7 @@ func TestParity_FreeCases(t *testing.T) {
 			t.Fatalf("free -b Mem row should stay numeric without human unit suffixes\n%s", gobox.Stdout)
 		}
 		fields := strings.Fields(goboxMem)
-		if len(fields) < 6 {
+		if len(fields) < 7 {
 			t.Fatalf("free -b Mem row missing numeric columns\n%s", gobox.Stdout)
 		}
 		for i, field := range fields[1:] {
