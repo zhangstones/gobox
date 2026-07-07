@@ -101,18 +101,18 @@
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
-| DF-001 | default filesystem usage | structured | `df` | local filesystems | 关键挂载点、容量字段和退出码语义一致 |
-| DF-002 | `-h` | structured | `df -h` | local filesystems | 人类可读容量字段存在且单位语义一致 |
+| DF-001 | default filesystem usage | structured | `df` | local filesystems | 关键挂载点、容量字段和退出码语义一致，列宽按内容动态计算 |
+| DF-002 | `-h` | structured | `df -h` | local filesystems | 人类可读容量字段存在且单位语义一致，自适应精度（≥10 无小数、<10 一位小数）、`Avail` 表头 |
 | DF-003 | `-T` | structured | `df -T` | local filesystems | 文件系统类型列存在且关键挂载点一致 |
-| DF-004 | `-i` | structured | `df -i` | local filesystems | inode 字段存在且关键挂载点一致 |
+| DF-004 | `-i` | structured | `df -i` | local filesystems | inode 字段存在且关键挂载点一致；零 inode 伪文件系统默认隐藏（需 `-a`） |
 | DF-005 | `PATH...` | structured | `df PATH...` | temp dir path | 仅输出指定路径所在文件系统 |
-| DF-006 | `-H` | structured | `df -H` | controlled statfs fixture | SI 单位格式生效 |
+| DF-006 | `-H` | structured | `df -H` | controlled statfs fixture | SI 单位格式生效，千位前缀为小写 `k` |
 | DF-007 | `-a` | structured | `df -a` | duplicate/zero mount fixture | all 模式包含默认隐藏项 |
 | DF-008 | `-l` | structured | `df -l` | local/remote mount fixture | 仅保留本地文件系统 |
 | DF-009 | `-t TYPE` | structured | `df -t` | mixed fs type fixture | 类型包含过滤生效 |
 | DF-010 | `-x TYPE` | structured | `df -x` | mixed fs type fixture | 类型排除过滤生效 |
 | DF-011 | `--total` | structured | `df --total` | controlled statfs fixture | total 汇总行生效 |
-| DF-012 | `-P` | structured | `df -P` | controlled statfs fixture | POSIX 表头和单行格式生效 |
+| DF-012 | `-P` | structured | `df -P` | controlled statfs fixture | POSIX 表头（含 `Capacity` 百分比列名）和单行格式生效 |
 
 ### readpath
 
@@ -131,10 +131,10 @@
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
-| STAT-001 | default file metadata | structured | `stat` | temp file | 类型、大小、权限、时间字段语义一致 |
-| STAT-002 | `-L, --dereference` | structured | `stat -L` | symlink file | 显示目标文件而非 symlink 本身 |
+| STAT-001 | default file metadata | exact | `stat` | temp file | 默认多行输出与原生逐行一致（`Birth:` 行除外） |
+| STAT-002 | `-L, --dereference` | structured | `stat -L` | symlink file | 显示目标文件而非 symlink 本身，Access 模式字段一致 |
 | STAT-003 | `-f, --file-system` | structured | `stat -f` | temp dir | 文件系统字段语义一致 |
-| STAT-004 | `-c, --format` | exact | `stat -c` | temp file | 指定格式输出完全一致 |
+| STAT-004 | `-c, --format` | exact | `stat -c` | temp file | 指定格式输出完全一致，覆盖 `%f/%u/%g/%U/%G/%A/%i/%h/%d/%D/%o/%b/%X/%Y/%Z/%x/%z` 等常用指令 |
 | STAT-005 | `-t, --terse` | structured | `stat -t` | temp file | 简洁字段数量与关键字段一致 |
 
 ### truncate

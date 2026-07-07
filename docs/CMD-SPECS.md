@@ -82,18 +82,18 @@
 
 | gobox 参数 | 对应原生命令参数/参考基线 | 实现一致性 | 功能说明 |
 |------------|---------------|------------|----------|
-| `gobox df` | `df` | ⚠️ 部分一致 | 显示文件系统容量、已用、可用和挂载点；环境敏感挂载项与原生命令不承诺全集同形 |
-| `gobox df -h` | `df -h` | ⚠️ 部分一致 | 以人类可读格式显示容量 |
-| `gobox df -T` | `df -T` | ⚠️ 部分一致 | 显示文件系统类型 |
-| `gobox df -i` | `df -i` | ⚠️ 部分一致 | 显示 inode 使用情况 |
+| `gobox df` | `df` | ✅ 常用一致 | 显示文件系统容量、已用、可用和挂载点，列宽按内容动态计算，与原生排版一致；哪些挂载点出现/顺序仍是环境相关，不承诺全集同形 |
+| `gobox df -h` | `df -h` | ✅ 常用一致 | 人类可读格式，采用与原生一致的自适应精度（数值 ≥10 不显示小数，<10 显示 1 位小数），表头用 `Avail` |
+| `gobox df -T` | `df -T` | ✅ 常用一致 | 显示文件系统类型 |
+| `gobox df -i` | `df -i` | ✅ 常用一致 | 显示 inode 使用情况；默认隐藏零 inode 的伪文件系统（需 `-a` 才显示），与原生一致 |
 | `gobox df PATH...` | `df PATH...` | ⚠️ 部分一致 | 只显示指定路径所在文件系统 |
-| `gobox df -H` | `df -H` | ⚠️ 部分一致 | 使用 SI 单位显示容量 |
-| `gobox df -a` | `df -a` | ⚠️ 部分一致 | 包含默认隐藏的文件系统 |
+| `gobox df -H` | `df -H` | ✅ 常用一致 | SI 单位显示容量，千位前缀用小写 `k`（原生约定），其余同 `-h` 的自适应精度 |
+| `gobox df -a` | `df -a` | ⚠️ 部分一致 | 包含默认隐藏的文件系统；个别 autofs 触发挂载点（如 systemd 的 binfmt_misc）与原生存在行内容差异 |
 | `gobox df -l` | `df -l` | ⚠️ 部分一致 | 仅显示本地文件系统 |
 | `gobox df -t TYPE` | `df -t` | ⚠️ 部分一致 | 仅显示指定文件系统类型 |
 | `gobox df -x TYPE` | `df -x` | ⚠️ 部分一致 | 排除指定文件系统类型 |
 | `gobox df --total` | `df --total` | ⚠️ 部分一致 | 输出 total 汇总行 |
-| `gobox df -P` | `df -P` | ⚠️ 部分一致 | 使用 POSIX 风格表头 |
+| `gobox df -P` | `df -P` | ✅ 常用一致 | POSIX 风格表头，百分比列标为 `Capacity` |
 
 ### readpath
 
@@ -114,10 +114,10 @@
 
 | gobox 参数 | 对应原生命令参数/参考基线 | 实现一致性 | 功能说明 |
 |------------|---------------|------------|----------|
-| `gobox stat FILE...` | `stat FILE...` | ⚠️ 部分一致 | 输出文件类型、大小、权限、时间等元信息；字段覆盖常用子集，文本排版不承诺完全同形 |
-| `gobox stat -L, --dereference FILE...` | `stat -L` | ⚠️ 部分一致 | 跟随符号链接，显示目标文件信息 |
+| `gobox stat FILE...` | `stat FILE...` | ✅ 常用一致 | 默认多行输出（File/Size/Device/Inode/Access/Uid/Gid/Modify/Change）与原生排版一致；不输出 `Birth:` 行（文件系统出生时间支持不普遍） |
+| `gobox stat -L, --dereference FILE...` | `stat -L` | ✅ 常用一致 | 跟随符号链接，显示目标文件信息，排版同默认输出 |
 | `gobox stat -f, --file-system FILE...` | `stat -f` | ⚠️ 部分一致 | 输出文件系统信息 |
-| `gobox stat -c, --format FORMAT FILE...` | `stat -c` | ⚠️ 部分一致 | 支持常用格式字段子集 |
+| `gobox stat -c, --format FORMAT FILE...` | `stat -c` | ✅ 常用一致 | 支持常用格式指令：`%n/%s/%f/%F/%u/%g/%U/%G/%a/%A/%X/%Y/%Z/%x/%y/%z/%i/%h/%d/%D/%o/%b` |
 | `gobox stat -t, --terse FILE...` | `stat -t` | ⚠️ 部分一致 | 使用简洁单行格式输出 |
 
 ### truncate

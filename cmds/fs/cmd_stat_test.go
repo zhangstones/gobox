@@ -32,6 +32,80 @@ func TestStatCmdOptionsFormatTokens(t *testing.T) {
 
 }
 
+// TestStatCmdOptionsExpandedFormatDirectives is a regression test for the
+// previously-missing GNU stat -c directives: %f (raw hex mode), %u/%g
+// (numeric uid/gid), %U/%G (user/group name), %A (rwx permission string),
+// %i (inode), %h (link count), %d/%D (device decimal/hex), %o (block size),
+// %b (blocks), %X/%Y/%Z (atime/mtime/ctime epoch), %x/%z (atime/ctime
+// human-readable).
+func TestStatCmdOptionsExpandedFormatDirectives(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := info.Sys().(*syscall.Stat_t)
+
+	out, err := captureFsCmd(t, func() error {
+		return StatCmd([]string{"-c", "%u|%g|%U|%G|%A|%i|%h|%o|%b|%Y", file})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strconv.FormatUint(uint64(st.Uid), 10) + "|" +
+		strconv.FormatUint(uint64(st.Gid), 10) + "|" +
+		lookupUserName(st.Uid) + "|" +
+		lookupGroupName(st.Gid) + "|" +
+		"-rw-r--r--|" +
+		strconv.FormatUint(st.Ino, 10) + "|" +
+		strconv.FormatUint(st.Nlink, 10) + "|" +
+		strconv.FormatInt(st.Blksize, 10) + "|" +
+		strconv.FormatInt(st.Blocks, 10) + "|" +
+		strconv.FormatInt(st.Mtim.Sec, 10)
+	if !strings.Contains(out, want) {
+		t.Fatalf("expected expanded format directives %q in output %q", want, out)
+	}
+
+	rawOut, err := captureFsCmd(t, func() error {
+		return StatCmd([]string{"-c", "%f", file})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRaw := strconv.FormatUint(uint64(st.Mode), 16)
+	if !strings.Contains(rawOut, wantRaw) {
+		t.Fatalf("expected raw hex mode %q in output %q", wantRaw, rawOut)
+	}
+}
+
+// TestStatCmdOptionsDefaultOutputIncludesDeviceAndOwner is a regression test
+// for the default (non -c, non -t) output previously only showing
+// File/Size/Modify; it must now also show Device/Inode/Links and
+// Access/Uid/Gid, matching GNU stat's default layout.
+func TestStatCmdOptionsDefaultOutputIncludesDeviceAndOwner(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := captureFsCmd(t, func() error {
+		return StatCmd([]string{file})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Device:", "Inode:", "Links:", "Uid:", "Gid:", "Access:", "Modify:", "Change:"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in default stat output %q", want, out)
+		}
+	}
+}
+
 func TestStatCmdHelpUsesMergedLongFlags(t *testing.T) {
 	_, out, err := captureFsCmdFull(t, func() error {
 		return StatCmd([]string{"--help"})

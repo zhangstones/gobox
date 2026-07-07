@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -135,7 +136,7 @@ func DfCmd(args []string) error {
 			}
 			return err
 		}
-		if !opts.all && !opts.inodes && row.stat.Blocks == 0 {
+		if !opts.all && row.stat.Blocks == 0 {
 			continue
 		}
 		rows = append(rows, row)
@@ -144,9 +145,11 @@ func DfCmd(args []string) error {
 		rows = append(rows, totalDfRow(rows, opts))
 	}
 	sourceWidth, typeWidth := dfColumnWidths(rows, opts)
-	printDfHeader(sourceWidth, typeWidth, opts)
+	col1Header, col2Header, col3Header, pctHeader := dfColumnHeaders(opts)
+	w1, w2, w3, w4 := dfNumericWidths(rows, opts, col1Header, col2Header, col3Header, pctHeader)
+	printDfHeader(sourceWidth, typeWidth, w1, w2, w3, w4, opts)
 	for _, row := range rows {
-		printDfRow(row, sourceWidth, typeWidth, opts)
+		printDfRow(row, sourceWidth, typeWidth, w1, w2, w3, w4, opts)
 	}
 	if len(rows) == 0 && rowErr != nil {
 		return rowErr
@@ -210,6 +213,56 @@ func readDfRow(m mountInfo) (dfRow, error) {
 	return dfRow{mount: m, stat: st}, nil
 }
 
+// dfRowValues returns the pre-formatted strings for a row's three numeric
+// columns (blocks/used/available, or inodes/iused/ifree) plus the use%
+// column, used both to size columns dynamically and to print rows.
+func dfRowValues(row dfRow, opts dfOptions) (col1, col2, col3, pct string) {
+	st := row.stat
+	if opts.inodes {
+		// Some pseudo-filesystems (observed with vboxsf) report Ffree >
+		// Files, which structurally shouldn't happen; compute used as a
+		// signed value so it doesn't wrap around to a huge unsigned
+		// number, and show "-" for the percentage like native df does
+		// when the inode accounting is nonsensical.
+		used := int64(st.Files) - int64(st.Ffree)
+		pct := "-"
+		if st.Files > 0 && used >= 0 {
+			pct = percent(uint64(used), st.Files)
+		}
+		return fmt.Sprintf("%d", st.Files), fmt.Sprintf("%d", used), fmt.Sprintf("%d", st.Ffree), pct
+	}
+	blockSize := uint64(st.Bsize)
+	total := st.Blocks * blockSize
+	free := st.Bavail * blockSize
+	used := (st.Blocks - st.Bfree) * blockSize
+	totalText, usedText, freeText := formatDfSize(total, used, free, opts)
+	return totalText, usedText, freeText, percent(used, total)
+}
+
+// dfNumericWidths computes native df's dynamic column widths: each column is
+// as wide as its header label, or its widest formatted value across all
+// rows, whichever is larger (native df never truncates values, and never
+// pads wider than necessary either).
+func dfNumericWidths(rows []dfRow, opts dfOptions, col1Header, col2Header, col3Header, pctHeader string) (int, int, int, int) {
+	w1, w2, w3, w4 := len(col1Header), len(col2Header), len(col3Header), len(pctHeader)
+	for _, row := range rows {
+		c1, c2, c3, pct := dfRowValues(row, opts)
+		if l := len(c1); l > w1 {
+			w1 = l
+		}
+		if l := len(c2); l > w2 {
+			w2 = l
+		}
+		if l := len(c3); l > w3 {
+			w3 = l
+		}
+		if l := len(pct); l > w4 {
+			w4 = l
+		}
+	}
+	return w1, w2, w3, w4
+}
+
 func dfColumnWidths(rows []dfRow, opts dfOptions) (int, int) {
 	sourceWidth := len("Filesystem")
 	typeWidth := len("Type")
@@ -224,54 +277,47 @@ func dfColumnWidths(rows []dfRow, opts dfOptions) (int, int) {
 	return sourceWidth, typeWidth
 }
 
-func printDfHeader(sourceWidth, typeWidth int, opts dfOptions) {
-	blockHeader := "1K-blocks"
-	if opts.human {
-		blockHeader = "Size"
+// dfColumnHeaders returns the three numeric column labels for the current
+// mode (blocks vs inodes, and the block-size unit label).
+func dfColumnHeaders(opts dfOptions) (col1, col2, col3, pctHeader string) {
+	if opts.inodes {
+		return "Inodes", "IUsed", "IFree", "IUse%"
 	}
-	if opts.si {
+	blockHeader := "1K-blocks"
+	availHeader := "Available"
+	pctHeader = "Use%"
+	if opts.human || opts.si {
 		blockHeader = "Size"
+		// Native df abbreviates "Available" to "Avail" once the size
+		// column itself is abbreviated (human/SI units).
+		availHeader = "Avail"
 	}
 	if opts.posix && !opts.human && !opts.si {
 		blockHeader = "1024-blocks"
+		// Strict POSIX mode (-P without -h/-H) labels the percentage
+		// column "Capacity" instead of "Use%".
+		pctHeader = "Capacity"
 	}
-	if opts.inodes {
-		if opts.showType {
-			fmt.Printf("%-*s %-*s %10s %10s %10s %5s %s\n", sourceWidth, "Filesystem", typeWidth, "Type", "Inodes", "IUsed", "IFree", "IUse%", "Mounted on")
-			return
-		}
-		fmt.Printf("%-*s %10s %10s %10s %5s %s\n", sourceWidth, "Filesystem", "Inodes", "IUsed", "IFree", "IUse%", "Mounted on")
-		return
-	}
-	if opts.showType {
-		fmt.Printf("%-*s %-*s %10s %10s %10s %5s %s\n", sourceWidth, "Filesystem", typeWidth, "Type", blockHeader, "Used", "Available", "Use%", "Mounted on")
-		return
-	}
-	fmt.Printf("%-*s %10s %10s %10s %5s %s\n", sourceWidth, "Filesystem", blockHeader, "Used", "Available", "Use%", "Mounted on")
+	return blockHeader, "Used", availHeader, pctHeader
 }
 
-func printDfRow(row dfRow, sourceWidth, typeWidth int, opts dfOptions) {
-	m := row.mount
-	st := row.stat
-	if opts.inodes {
-		used := st.Files - st.Ffree
-		if opts.showType {
-			fmt.Printf("%-*s %-*s %10d %10d %10d %5s %s\n", sourceWidth, m.Source, typeWidth, m.FSType, st.Files, used, st.Ffree, percent(used, st.Files), m.Target)
-			return
-		}
-		fmt.Printf("%-*s %10d %10d %10d %5s %s\n", sourceWidth, m.Source, st.Files, used, st.Ffree, percent(used, st.Files), m.Target)
-		return
-	}
-	blockSize := uint64(st.Bsize)
-	total := st.Blocks * blockSize
-	free := st.Bavail * blockSize
-	used := (st.Blocks - st.Bfree) * blockSize
-	totalText, usedText, freeText := formatDfSize(total, used, free, opts)
+func printDfHeader(sourceWidth, typeWidth, w1, w2, w3, w4 int, opts dfOptions) {
+	col1, col2, col3, pctHeader := dfColumnHeaders(opts)
 	if opts.showType {
-		fmt.Printf("%-*s %-*s %10s %10s %10s %5s %s\n", sourceWidth, m.Source, typeWidth, m.FSType, totalText, usedText, freeText, percent(used, total), m.Target)
+		fmt.Printf("%-*s %-*s %*s %*s %*s %*s %s\n", sourceWidth, "Filesystem", typeWidth, "Type", w1, col1, w2, col2, w3, col3, w4, pctHeader, "Mounted on")
 		return
 	}
-	fmt.Printf("%-*s %10s %10s %10s %5s %s\n", sourceWidth, m.Source, totalText, usedText, freeText, percent(used, total), m.Target)
+	fmt.Printf("%-*s %*s %*s %*s %*s %s\n", sourceWidth, "Filesystem", w1, col1, w2, col2, w3, col3, w4, pctHeader, "Mounted on")
+}
+
+func printDfRow(row dfRow, sourceWidth, typeWidth, w1, w2, w3, w4 int, opts dfOptions) {
+	m := row.mount
+	c1, c2, c3, pct := dfRowValues(row, opts)
+	if opts.showType {
+		fmt.Printf("%-*s %-*s %*s %*s %*s %*s %s\n", sourceWidth, m.Source, typeWidth, m.FSType, w1, c1, w2, c2, w3, c3, w4, pct, m.Target)
+		return
+	}
+	fmt.Printf("%-*s %*s %*s %*s %*s %s\n", sourceWidth, m.Source, w1, c1, w2, c2, w3, c3, w4, pct, m.Target)
 }
 
 func formatDfSize(total, used, free uint64, opts dfOptions) (string, string, string) {
@@ -284,21 +330,35 @@ func formatDfSize(total, used, free uint64, opts dfOptions) (string, string, str
 	return fmt.Sprintf("%d", total/1024), fmt.Sprintf("%d", used/1024), fmt.Sprintf("%d", free/1024)
 }
 
+// humanSizeBase formats a byte count the way GNU df -h/-H does: no unit
+// suffix (and no decimal) for exactly zero, a bare number for the sub-unit
+// byte range, and otherwise an adaptive-precision value with a K/M/G/T/P/E
+// suffix (no trailing "B") — one decimal place while the rounded magnitude
+// is below 10, none once it reaches 10 or more.
 func humanSizeBase(b uint64, unit uint64) string {
+	if b == 0 {
+		return "0"
+	}
 	if b < unit {
-		return fmt.Sprintf("%dB", b)
+		return fmt.Sprintf("%d", b)
 	}
 	div, exp := unit, 0
 	for n := b / unit; n >= unit; n /= unit {
 		div *= unit
 		exp++
 	}
-	value := float64(b) / float64(div)
+	scaled := float64(b) / float64(div)
+	rounded := math.Round(scaled*10) / 10
 	suf := "KMGTPE"[exp]
-	if unit == 1000 {
-		return fmt.Sprintf("%.1f%cB", value, suf)
+	if unit == 1000 && exp == 0 {
+		// GNU df's SI (-H) mode uses the strict-SI lowercase "k" for the
+		// kilo prefix specifically; mega/giga/etc. stay uppercase.
+		suf = 'k'
 	}
-	return fmt.Sprintf("%.1f%c", value, suf)
+	if rounded >= 10 {
+		return fmt.Sprintf("%.0f%c", rounded, suf)
+	}
+	return fmt.Sprintf("%.1f%c", rounded, suf)
 }
 
 func dfMountAllowed(m mountInfo, opts dfOptions) bool {

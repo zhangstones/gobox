@@ -1677,23 +1677,23 @@ func TestParity_StatCases(t *testing.T) {
 				if gobox.ExitCode != native.ExitCode {
 					t.Fatalf("stat default exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 				}
-				if got, want := statFieldValue(gobox.Stdout, "File:"), statFieldValue(native.Stdout, "File:"); got != want || got != "data" {
-					t.Fatalf("stat default file field mismatch gobox=%q native=%q", got, want)
+				// gobox's default output now mirrors GNU stat's full multi-line
+				// layout (File/Size/Device/Access/Modify/Change), so compare
+				// line-for-line. gobox intentionally omits the optional
+				// " Birth:" line (filesystem-birth-time support varies and
+				// isn't universally available), so strip it from native
+				// before comparing.
+				var nativeLines []string
+				for _, line := range strings.Split(strings.TrimRight(native.Stdout, "\n"), "\n") {
+					if strings.HasPrefix(strings.TrimSpace(line), "Birth:") {
+						continue
+					}
+					nativeLines = append(nativeLines, line)
 				}
-				if got, want := statFieldValue(gobox.Stdout, "Size:"), statFieldValue(native.Stdout, "Size:"); got != want || got != "5" {
-					t.Fatalf("stat default size field mismatch gobox=%q native=%q", got, want)
-				}
-				// Mode field: gobox emits Mode: NNNN; native emits Access: (NNNN/...).
-				goboxMode := statFieldValue(gobox.Stdout, "Mode:")
-				nativeMode := statModeFromAccess(native.Stdout)
-				if goboxMode == "" {
-					t.Fatalf("stat default gobox missing Mode field\n%s", gobox.Stdout)
-				}
-				if nativeMode == "" {
-					t.Fatalf("stat default native missing mode in Access field\n%s", native.Stdout)
-				}
-				if goboxMode != nativeMode {
-					t.Fatalf("stat default mode mismatch gobox=%q native=%q", goboxMode, nativeMode)
+				goboxLines := strings.Split(strings.TrimRight(gobox.Stdout, "\n"), "\n")
+				if strings.Join(goboxLines, "\n") != strings.Join(nativeLines, "\n") {
+					t.Fatalf("stat default output mismatch\n--- gobox ---\n%s\n--- native (Birth line stripped) ---\n%s",
+						strings.Join(goboxLines, "\n"), strings.Join(nativeLines, "\n"))
 				}
 			},
 		},
@@ -1722,10 +1722,14 @@ func TestParity_StatCases(t *testing.T) {
 				if !strings.Contains(statLineWithPrefix(gobox.Stdout, "Size:"), "regular file") || !strings.Contains(statLineWithPrefix(native.Stdout, "Size:"), "regular file") {
 					t.Fatalf("stat -L missing regular file type\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 				}
-				// Mode field parity.
-				goboxMode := statFieldValue(gobox.Stdout, "Mode:")
+				// Mode field parity (gobox's default output now includes an
+				// "Access: (mode/perm)" line like native).
+				goboxMode := statModeFromAccess(gobox.Stdout)
 				nativeMode := statModeFromAccess(native.Stdout)
-				if goboxMode != "" && nativeMode != "" && goboxMode != nativeMode {
+				if goboxMode == "" || nativeMode == "" {
+					t.Fatalf("stat -L missing Access mode field gobox=%q native=%q", goboxMode, nativeMode)
+				}
+				if goboxMode != nativeMode {
 					t.Fatalf("stat -L mode mismatch gobox=%q native=%q", goboxMode, nativeMode)
 				}
 			},

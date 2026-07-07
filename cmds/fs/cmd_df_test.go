@@ -64,7 +64,10 @@ func TestDfHuman(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Filesystem", "Use%", "15.0K"} {
+	// GNU df -h uses adaptive precision: a rounded magnitude of 10 or more
+	// drops the decimal place, so 15360 bytes (15 KiB exactly) renders as
+	// "15K", not "15.0K".
+	for _, want := range []string{"Filesystem", "Use%", "15K"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected %q in df output %q", want, out)
 		}
@@ -77,7 +80,11 @@ func TestDfSIHuman(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "15.4K") {
+	// GNU df -H (SI) uses a lowercase "k" specifically for the kilo prefix
+	// (mega/giga/etc. stay uppercase), and the same adaptive precision as
+	// -h: 15360 bytes / 1000 = 15.36 rounds to 15.4, which is >= 10 so it
+	// renders without a decimal: "15k".
+	if !strings.Contains(out, "15k") {
 		t.Fatalf("expected SI formatted used size in df output %q", out)
 	}
 }
@@ -357,7 +364,12 @@ func TestDfZeroTotalsRenderDashPercent(t *testing.T) {
 		return []mountInfo{{Source: "zero", Target: "/zero", FSType: "tmpfs"}}, nil
 	}
 	statfsDfPath = func(_ string, st *syscall.Statfs_t) error {
+		// Nonzero Blocks keeps the row from being hidden by the
+		// zero-block visibility filter (matching native df, which hides
+		// truly-empty pseudo-filesystems unless -a is given); Files stays
+		// zero to exercise the zero-total dash-percent rendering.
 		st.Bsize = 1024
+		st.Blocks = 10
 		return nil
 	}
 	t.Cleanup(func() {
@@ -399,5 +411,190 @@ func TestDfExplicitPathStatErrorReturnsError(t *testing.T) {
 	})
 	if _, err := captureFsCmd(t, func() error { return DfCmd([]string{"/missing"}) }); err == nil {
 		t.Fatal("expected explicit path stat error")
+	}
+}
+
+// TestDfHumanAdaptivePrecision is a regression test for gobox df -h always
+// showing exactly one decimal place. Native df uses adaptive precision: a
+// rounded magnitude >= 10 drops the decimal, < 10 keeps one decimal.
+func TestDfHumanAdaptivePrecision(t *testing.T) {
+	oldGOOS, oldReadMounts, oldStatPath, oldStatfs := dfGOOS, readMounts, statDfPath, statfsDfPath
+	dfGOOS = "linux"
+	readMounts = func() ([]mountInfo, error) {
+		return []mountInfo{{Source: "dev-small", Target: "/small", FSType: "tmpfs"}}, nil
+	}
+	// Total of exactly 20 MiB (>=10, no decimal) and a free amount giving
+	// exactly 8 MiB used (<10, decimal) exercises both branches of the
+	// adaptive-precision rule in one row.
+	statfsDfPath = func(_ string, st *syscall.Statfs_t) error {
+		st.Bsize = 1024
+		st.Blocks = 20 * 1024 // total: 20 MiB
+		st.Bfree = 12 * 1024  // free: 12 MiB -> used: 8 MiB
+		st.Bavail = 12 * 1024
+		return nil
+	}
+	t.Cleanup(func() {
+		dfGOOS, readMounts, statDfPath, statfsDfPath = oldGOOS, oldReadMounts, oldStatPath, oldStatfs
+	})
+	out, err := captureFsCmd(t, func() error { return DfCmd([]string{"-h"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "20M") {
+		t.Fatalf("expected total 20M (no decimal, >=10) in %q", out)
+	}
+	if !strings.Contains(out, "8.0M") {
+		t.Fatalf("expected used 8.0M (decimal, <10) in %q", out)
+	}
+	if !strings.Contains(out, "12M") {
+		t.Fatalf("expected avail 12M (no decimal, >=10) in %q", out)
+	}
+}
+
+// TestDfSILowercaseKilo is a regression test for the SI (-H) kilo prefix:
+// GNU df uses a lowercase "k" specifically at the kilo level, unlike -h's
+// uppercase "K" and unlike SI's own mega/giga letters which stay uppercase.
+func TestDfSILowercaseKilo(t *testing.T) {
+	oldGOOS, oldReadMounts, oldStatPath, oldStatfs := dfGOOS, readMounts, statDfPath, statfsDfPath
+	dfGOOS = "linux"
+	readMounts = func() ([]mountInfo, error) {
+		return []mountInfo{{Source: "dev-k", Target: "/k", FSType: "tmpfs"}}, nil
+	}
+	statfsDfPath = func(_ string, st *syscall.Statfs_t) error {
+		st.Bsize = 1024
+		st.Blocks = 5 // 5120 bytes -> 5.12k in SI, rendered "5.1k"
+		st.Bfree = 0
+		st.Bavail = 0
+		return nil
+	}
+	t.Cleanup(func() {
+		dfGOOS, readMounts, statDfPath, statfsDfPath = oldGOOS, oldReadMounts, oldStatPath, oldStatfs
+	})
+	out, err := captureFsCmd(t, func() error { return DfCmd([]string{"-H"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "5.1k") {
+		t.Fatalf("expected lowercase SI kilo suffix \"5.1k\" in %q", out)
+	}
+	if strings.Contains(out, "5.1K") {
+		t.Fatalf("did not expect uppercase K for SI kilo in %q", out)
+	}
+}
+
+// TestDfHumanAvailHeaderAbbreviated is a regression test: native df
+// abbreviates the "Available" header to "Avail" once the size column
+// itself switches to human/SI units.
+func TestDfHumanAvailHeaderAbbreviated(t *testing.T) {
+	dir := setupDfFixture(t)
+	out, err := captureFsCmd(t, func() error { return DfCmd([]string{"-h", dir}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Avail ") {
+		t.Fatalf("expected abbreviated \"Avail\" header in -h output %q", out)
+	}
+	if strings.Contains(out, "Available") {
+		t.Fatalf("did not expect full \"Available\" header in -h output %q", out)
+	}
+}
+
+// TestDfPosixCapacityHeader is a regression test: strict POSIX mode (-P
+// without -h/-H) labels the percentage column "Capacity", not "Use%".
+func TestDfPosixCapacityHeader(t *testing.T) {
+	dir := setupDfFixture(t)
+	out, err := captureFsCmd(t, func() error { return DfCmd([]string{"-P", dir}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Capacity") {
+		t.Fatalf("expected \"Capacity\" header in -P output %q", out)
+	}
+	if strings.Contains(out, "Use%") {
+		t.Fatalf("did not expect \"Use%%\" header in -P output %q", out)
+	}
+}
+
+// TestDfInodesHidesZeroBlockFilesystemsByDefault is a regression test for a
+// bug where -i bypassed the same zero-block visibility filter that default
+// df and -T apply, leaking dozens of zero-inode pseudo-filesystems
+// (bpf/cgroup2/tracefs/...) into -i output unless -a was given.
+func TestDfInodesHidesZeroBlockFilesystemsByDefault(t *testing.T) {
+	oldGOOS, oldReadMounts, oldStatPath, oldStatfs := dfGOOS, readMounts, statDfPath, statfsDfPath
+	dfGOOS = "linux"
+	readMounts = func() ([]mountInfo, error) {
+		return []mountInfo{
+			{Source: "real", Target: "/real", FSType: "tmpfs"},
+			{Source: "pseudo", Target: "/sys/fs/pseudo", FSType: "pseudofs"},
+		}, nil
+	}
+	statfsDfPath = func(target string, st *syscall.Statfs_t) error {
+		st.Bsize = 1024
+		if target == "/real" {
+			st.Blocks = 10
+			st.Bfree = 5
+			st.Bavail = 5
+			st.Files = 10
+			st.Ffree = 5
+		}
+		// pseudo mount: everything stays zero (Blocks == 0).
+		return nil
+	}
+	t.Cleanup(func() {
+		dfGOOS, readMounts, statDfPath, statfsDfPath = oldGOOS, oldReadMounts, oldStatPath, oldStatfs
+	})
+
+	out, err := captureFsCmd(t, func() error { return DfCmd([]string{"-i"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "pseudo") {
+		t.Fatalf("expected zero-block pseudo filesystem hidden from -i without -a, got %q", out)
+	}
+	if !strings.Contains(out, "real") {
+		t.Fatalf("expected real filesystem present in -i output %q", out)
+	}
+
+	allOut, err := captureFsCmd(t, func() error { return DfCmd([]string{"-i", "-a"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(allOut, "pseudo") {
+		t.Fatalf("expected zero-block pseudo filesystem present in -i -a output %q", allOut)
+	}
+}
+
+// TestDfInodesNegativeUsedDoesNotUnderflow is a regression test for a bug
+// where Ffree > Files (observed on some pseudo-filesystems, e.g. vboxsf)
+// caused an unsigned-subtraction underflow, printing a huge nonsensical
+// "used" inode count instead of a small negative number, and a bogus
+// percentage instead of "-".
+func TestDfInodesNegativeUsedDoesNotUnderflow(t *testing.T) {
+	oldGOOS, oldReadMounts, oldStatPath, oldStatfs := dfGOOS, readMounts, statDfPath, statfsDfPath
+	dfGOOS = "linux"
+	readMounts = func() ([]mountInfo, error) {
+		return []mountInfo{{Source: "weird", Target: "/weird", FSType: "vboxsf"}}, nil
+	}
+	statfsDfPath = func(_ string, st *syscall.Statfs_t) error {
+		st.Bsize = 1024
+		st.Blocks = 10
+		st.Bfree = 5
+		st.Bavail = 5
+		st.Files = 1000
+		st.Ffree = 2000000 // Ffree > Files: structurally inconsistent
+		return nil
+	}
+	t.Cleanup(func() {
+		dfGOOS, readMounts, statDfPath, statfsDfPath = oldGOOS, oldReadMounts, oldStatPath, oldStatfs
+	})
+	out, err := captureFsCmd(t, func() error { return DfCmd([]string{"-i"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "-1999000") {
+		t.Fatalf("expected signed negative used inode count -1999000, got %q", out)
+	}
+	if strings.Contains(out, "18446744") {
+		t.Fatalf("expected no unsigned-underflow wraparound value, got %q", out)
 	}
 }

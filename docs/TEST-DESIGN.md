@@ -688,7 +688,10 @@ Parity 测试失败时，必须尽量输出：
 1. `docs/TEST-DESIGN.md` 明确说明四类测试模型、执行器、skip 策略与目录结构
 2. `docs/TEST-CASES.md` 覆盖 `docs/CMD-SPECS.md` 当前所有命令参数
 3. 自动化测试代码中已落地全部 `Case ID`，或对确实无法稳定自动化的环境依赖项显式 `Skip`
-4. `go test ./...` 通过
+4. 单元测试、smoke 测试、parity 测试分别执行并通过（不依赖一次性的 `go test ./...` 全量跑）：
+   - `go test ./cmds/...`（单元测试）
+   - `go test ./tests/smoke/...`（smoke 测试）
+   - `go test ./tests/parity/...`（parity 测试）
 5. 若发现实现与文档不符，优先修实现；若实现短期不改，则必须同步收缩文档承诺与测试口径
 
 ---

@@ -4,7 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/user"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -80,23 +82,205 @@ func StatCmd(args []string) error {
 		} else if *terse {
 			fmt.Printf("%s %d %o %s\n", file, info.Size(), info.Mode().Perm(), info.ModTime().Format(time.RFC3339))
 		} else {
-			fmt.Printf("  File: %s\n", file)
-			fmt.Printf("  Size: %d\tMode: %04o\tType: %s\n", info.Size(), info.Mode().Perm(), fileType(info))
-			fmt.Printf("Modify: %s\n", info.ModTime().Format(time.RFC3339))
+			printStatDefault(file, info)
 		}
 	}
 	return nil
 }
 
+// printStatDefault prints file metadata in GNU coreutils' default multi-line
+// stat format: File/Size/Device/Inode/Access/Modify/Change, matching the
+// well-known layout users expect from real `stat FILE`.
+func printStatDefault(file string, info os.FileInfo) {
+	st, _ := info.Sys().(*syscall.Stat_t)
+	var dev, ino, nlink uint64
+	var uid, gid uint32
+	var blocks, blksize int64 = 0, 4096
+	var atim, mtim, ctim syscall.Timespec
+	if st != nil {
+		dev, ino, nlink = st.Dev, st.Ino, st.Nlink
+		uid, gid = st.Uid, st.Gid
+		blocks, blksize = st.Blocks, st.Blksize
+		atim, mtim, ctim = st.Atim, st.Mtim, st.Ctim
+	}
+	perm := permString(info.Mode())
+	fullMode := statFullOctal(info.Mode())
+
+	fmt.Printf("  File: %s\n", file)
+	fmt.Printf("  Size: %-10d\tBlocks: %-10d IO Block: %-6d %s\n", info.Size(), blocks, blksize, fileType(info))
+	fmt.Printf("Device: %xh/%dd\tInode: %-11d Links: %d\n", dev, dev, ino, nlink)
+	fmt.Printf("Access: (%04o/%s)  Uid: (%5d/%8s)   Gid: (%5d/%8s)\n", fullMode, perm, uid, lookupUserName(uid), gid, lookupGroupName(gid))
+	fmt.Printf("Access: %s\n", statTimeString(atim))
+	fmt.Printf("Modify: %s\n", statTimeString(mtim))
+	fmt.Printf("Change: %s\n", statTimeString(ctim))
+}
+
+// permString builds the 10-character permission string GNU stat/ls show,
+// e.g. "-rw-r--r--", including setuid/setgid/sticky bits (s/S, t/T).
+func permString(mode os.FileMode) string {
+	var typeChar byte
+	switch {
+	case mode&os.ModeSymlink != 0:
+		typeChar = 'l'
+	case mode.IsDir():
+		typeChar = 'd'
+	case mode&os.ModeNamedPipe != 0:
+		typeChar = 'p'
+	case mode&os.ModeSocket != 0:
+		typeChar = 's'
+	case mode&os.ModeCharDevice != 0:
+		typeChar = 'c'
+	case mode&os.ModeDevice != 0:
+		typeChar = 'b'
+	default:
+		typeChar = '-'
+	}
+	b := []byte{typeChar, '-', '-', '-', '-', '-', '-', '-', '-', '-'}
+	const rwx = "rwxrwxrwx"
+	perm := mode.Perm()
+	for i := 0; i < 9; i++ {
+		if perm&(1<<uint(8-i)) != 0 {
+			b[1+i] = rwx[i]
+		}
+	}
+	if mode&os.ModeSetuid != 0 {
+		if b[3] == 'x' {
+			b[3] = 's'
+		} else {
+			b[3] = 'S'
+		}
+	}
+	if mode&os.ModeSetgid != 0 {
+		if b[6] == 'x' {
+			b[6] = 's'
+		} else {
+			b[6] = 'S'
+		}
+	}
+	if mode&os.ModeSticky != 0 {
+		if b[9] == 'x' {
+			b[9] = 't'
+		} else {
+			b[9] = 'T'
+		}
+	}
+	return string(b)
+}
+
+// statFullOctal returns the permission bits plus setuid/setgid/sticky as a
+// single octal number the way GNU stat's %a/default output shows it (e.g.
+// 4755 for a setuid binary), not just the low 9 permission bits.
+func statFullOctal(mode os.FileMode) uint32 {
+	m := uint32(mode.Perm())
+	if mode&os.ModeSetuid != 0 {
+		m |= 04000
+	}
+	if mode&os.ModeSetgid != 0 {
+		m |= 02000
+	}
+	if mode&os.ModeSticky != 0 {
+		m |= 01000
+	}
+	return m
+}
+
+func statTimeString(ts syscall.Timespec) string {
+	return time.Unix(ts.Sec, ts.Nsec).Format("2006-01-02 15:04:05.000000000 -0700")
+}
+
+func lookupUserName(uid uint32) string {
+	if u, err := user.LookupId(strconv.FormatUint(uint64(uid), 10)); err == nil {
+		return u.Username
+	}
+	return strconv.FormatUint(uint64(uid), 10)
+}
+
+func lookupGroupName(gid uint32) string {
+	if g, err := user.LookupGroupId(strconv.FormatUint(uint64(gid), 10)); err == nil {
+		return g.Name
+	}
+	return strconv.FormatUint(uint64(gid), 10)
+}
+
+// formatStat renders a stat -c/--format FORMAT string against file. It
+// supports the common GNU stat file-mode directives and %% for a literal
+// percent sign; unrecognized directives are left as-is (directive char
+// included) rather than silently dropped.
 func formatStat(format, name string, info os.FileInfo) string {
-	out := format
-	out = strings.ReplaceAll(out, "%n", name)
-	out = strings.ReplaceAll(out, "%s", fmt.Sprintf("%d", info.Size()))
-	out = strings.ReplaceAll(out, "%F", fileType(info))
-	out = strings.ReplaceAll(out, "%a", fmt.Sprintf("%o", info.Mode().Perm()))
-	out = strings.ReplaceAll(out, "%y", info.ModTime().Format("2006-01-02 15:04:05.000000000 -0700"))
-	out = strings.ReplaceAll(out, "%Y", fmt.Sprintf("%d", info.ModTime().Unix()))
-	return out
+	st, _ := info.Sys().(*syscall.Stat_t)
+	var dev, ino, nlink uint64
+	var uid, gid, rawMode uint32
+	var blocks, blksize int64
+	var atim, mtim, ctim syscall.Timespec
+	if st != nil {
+		dev, ino, nlink = st.Dev, st.Ino, st.Nlink
+		uid, gid = st.Uid, st.Gid
+		blocks, blksize = st.Blocks, st.Blksize
+		atim, mtim, ctim = st.Atim, st.Mtim, st.Ctim
+		rawMode = st.Mode
+	}
+
+	var out strings.Builder
+	runes := []rune(format)
+	for i := 0; i < len(runes); i++ {
+		if runes[i] != '%' || i == len(runes)-1 {
+			out.WriteRune(runes[i])
+			continue
+		}
+		i++
+		switch runes[i] {
+		case '%':
+			out.WriteByte('%')
+		case 'n':
+			out.WriteString(name)
+		case 's':
+			fmt.Fprintf(&out, "%d", info.Size())
+		case 'f':
+			fmt.Fprintf(&out, "%x", rawMode)
+		case 'F':
+			out.WriteString(fileType(info))
+		case 'u':
+			fmt.Fprintf(&out, "%d", uid)
+		case 'g':
+			fmt.Fprintf(&out, "%d", gid)
+		case 'U':
+			out.WriteString(lookupUserName(uid))
+		case 'G':
+			out.WriteString(lookupGroupName(gid))
+		case 'a':
+			fmt.Fprintf(&out, "%o", info.Mode().Perm())
+		case 'A':
+			out.WriteString(permString(info.Mode()))
+		case 'X':
+			fmt.Fprintf(&out, "%d", atim.Sec)
+		case 'Y':
+			fmt.Fprintf(&out, "%d", mtim.Sec)
+		case 'Z':
+			fmt.Fprintf(&out, "%d", ctim.Sec)
+		case 'x':
+			out.WriteString(statTimeString(atim))
+		case 'y':
+			out.WriteString(info.ModTime().Format("2006-01-02 15:04:05.000000000 -0700"))
+		case 'z':
+			out.WriteString(statTimeString(ctim))
+		case 'i':
+			fmt.Fprintf(&out, "%d", ino)
+		case 'h':
+			fmt.Fprintf(&out, "%d", nlink)
+		case 'd':
+			fmt.Fprintf(&out, "%d", dev)
+		case 'D':
+			fmt.Fprintf(&out, "%x", dev)
+		case 'o':
+			fmt.Fprintf(&out, "%d", blksize)
+		case 'b':
+			fmt.Fprintf(&out, "%d", blocks)
+		default:
+			out.WriteByte('%')
+			out.WriteRune(runes[i])
+		}
+	}
+	return out.String()
 }
 
 func fileType(info os.FileInfo) string {
