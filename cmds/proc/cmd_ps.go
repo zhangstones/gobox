@@ -20,23 +20,28 @@ import (
 )
 
 type procInfo struct {
-	pid      int
-	tgid     int
-	ppid     int
-	exe      string
-	cmdline  string
-	vsize    int64 // bytes
-	rss      int64 // bytes
-	utime    int64
-	stime    int64
-	cpu      float64 // percent
-	uid      int
-	user     string
-	state    string
-	tty      string
-	start    time.Time
-	elapsed  time.Duration
-	cpuTicks int64
+	pid       int
+	tgid      int
+	ppid      int
+	exe       string
+	cmdline   string
+	vsize     int64 // bytes
+	rss       int64 // bytes
+	utime     int64
+	stime     int64
+	cpu       float64 // percent
+	uid       int
+	user      string
+	state     string
+	tty       string
+	start     time.Time
+	elapsed   time.Duration
+	cpuTicks  int64
+	flags     uint64 // raw kernel flags word (/proc/PID/stat field 9)
+	priority  int64  // raw kernel priority (/proc/PID/stat field 18)
+	nice      int64  // /proc/PID/stat field 19
+	processor int64  // last-run CPU (/proc/PID/stat field 39, PSR)
+	wchan     string // /proc/PID/wchan; empty when running
 }
 
 type procSnapshot struct {
@@ -231,7 +236,7 @@ func PsCmd(args []string) error {
 			return exitErr
 		}
 		if *extendedFull {
-			printCustomPS(infos, []string{"uid", "pid", "ppid", "pcpu", "pmem", "vsz", "rss", "tty", "stat", "start", "time", "args"}, *maxCmd, memTotal, ttyWidth)
+			printPSExtraFullFormat(infos, *maxCmd, ttyWidth)
 			return exitErr
 		}
 		if *longFormat {
@@ -916,14 +921,39 @@ func printPSFullFormat(infos []procInfo, maxCmd int, ttyWidth int) {
 	printPSAlignedTableWithHeaders([]string{"UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"}, rows, ttyWidth)
 }
 
-// printPSLongFormat implements --long (GNU ps -l). Native ps -l's full
-// column set is "F S UID PID PPID C PRI NI ADDR SZ WCHAN TTY TIME CMD"; F
-// (process flags), C (cpu counter), PRI/NI (priority/nice), ADDR (kernel
-// scheduling address) and SZ/WCHAN (page count / wait channel) all need
-// /proc/PID/stat fields gobox doesn't currently collect, so this shows the
-// subset it can: S UID PID PPID TTY TIME CMD, in native's relative order,
-// using native's single-letter "S" state header instead of the BSD-style
-// "STAT" used elsewhere (e.g. ps aux).
+// printPSExtraFullFormat implements -F (GNU ps -F, "extra full format"),
+// whose native column set is "UID PID PPID C SZ RSS PSR STIME TTY TIME CMD".
+func printPSExtraFullFormat(infos []procInfo, maxCmd int, ttyWidth int) {
+	rows := make([][]string, 0, len(infos))
+	for _, pi := range infos {
+		userName := pi.user
+		if userName == "" {
+			userName = strconv.Itoa(pi.uid)
+		}
+		rows = append(rows, []string{
+			userName,
+			strconv.Itoa(pi.pid),
+			strconv.Itoa(pi.ppid),
+			strconv.Itoa(int(pi.cpu)),
+			renderPSField(pi, "sz", maxCmd, 0),
+			renderPSField(pi, "rss", maxCmd, 0),
+			renderPSField(pi, "psr", maxCmd, 0),
+			formatStartTime(pi.start),
+			renderPSField(pi, "tty", maxCmd, 0),
+			formatCPUTime(pi.utime + pi.stime),
+			renderPSCommand(pi.cmdline, pi.exe, maxCmd),
+		})
+	}
+	printPSAlignedTableWithHeaders([]string{"UID", "PID", "PPID", "C", "SZ", "RSS", "PSR", "STIME", "TTY", "TIME", "CMD"}, rows, ttyWidth)
+}
+
+// printPSLongFormat implements --long (GNU ps -l). Native ps -l's column set
+// is "F S UID PID PPID C PRI NI ADDR SZ WCHAN TTY TIME CMD". PRI here is the
+// raw kernel priority (/proc/PID/stat field 18, same convention as `ps -o
+// pri`); native ps -l historically remaps this to a different internal
+// scale that isn't part of any documented, stable formula, so it isn't
+// reproduced here. ADDR is always "-": modern 64-bit kernels no longer
+// expose scheduler addresses, and that's what native ps prints too.
 func printPSLongFormat(infos []procInfo, maxCmd int, ttyWidth int) {
 	rows := make([][]string, 0, len(infos))
 	for _, pi := range infos {
@@ -932,16 +962,23 @@ func printPSLongFormat(infos []procInfo, maxCmd int, ttyWidth int) {
 			userName = strconv.Itoa(pi.uid)
 		}
 		rows = append(rows, []string{
+			renderPSField(pi, "f", maxCmd, 0),
 			renderPSField(pi, "stat", maxCmd, 0),
 			userName,
 			strconv.Itoa(pi.pid),
 			strconv.Itoa(pi.ppid),
+			strconv.Itoa(int(pi.cpu)),
+			renderPSField(pi, "pri", maxCmd, 0),
+			renderPSField(pi, "ni", maxCmd, 0),
+			renderPSField(pi, "addr", maxCmd, 0),
+			renderPSField(pi, "sz", maxCmd, 0),
+			renderPSField(pi, "wchan", maxCmd, 0),
 			renderPSField(pi, "tty", maxCmd, 0),
 			formatCPUTime(pi.utime + pi.stime),
 			renderPSCommand(pi.cmdline, pi.exe, maxCmd),
 		})
 	}
-	printPSAlignedTableWithHeaders([]string{"S", "UID", "PID", "PPID", "TTY", "TIME", "CMD"}, rows, ttyWidth)
+	printPSAlignedTableWithHeaders([]string{"F", "S", "UID", "PID", "PPID", "C", "PRI", "NI", "ADDR", "SZ", "WCHAN", "TTY", "TIME", "CMD"}, rows, ttyWidth)
 }
 
 func printPSAlignedTableWithHeaders(headers []string, rows [][]string, ttyWidth int) {
@@ -1045,6 +1082,23 @@ func renderPSField(pi procInfo, field string, maxCmd int, memTotal int64) string
 		return strconv.FormatInt(pi.vsize/1024, 10)
 	case "vms":
 		return strconv.FormatInt(pi.vsize/1024, 10)
+	case "sz":
+		return strconv.FormatInt(pi.vsize/int64(os.Getpagesize()), 10)
+	case "psr":
+		return strconv.FormatInt(pi.processor, 10)
+	case "pri":
+		return strconv.FormatInt(pi.priority, 10)
+	case "ni":
+		return strconv.FormatInt(pi.nice, 10)
+	case "addr":
+		return "-"
+	case "wchan":
+		if pi.wchan == "" {
+			return "-"
+		}
+		return pi.wchan
+	case "f":
+		return strconv.Itoa(psFlagsColumn(pi.flags))
 	case "uid":
 		return strconv.Itoa(pi.uid)
 	case "user":
@@ -1241,11 +1295,20 @@ func readProcStatFromPaths(pid, tgid int, statPath, statusPath, cmdPath, commPat
 		if tty, err := strconv.ParseInt(rest[4], 10, 64); err == nil {
 			pi.tty = procTTY(tgid, tty)
 		}
+		if flags, err := strconv.ParseUint(rest[6], 10, 64); err == nil {
+			pi.flags = flags
+		}
 		if ut, err := strconv.ParseInt(rest[11], 10, 64); err == nil {
 			pi.utime = ut
 		}
 		if st, err := strconv.ParseInt(rest[12], 10, 64); err == nil {
 			pi.stime = st
+		}
+		if p, err := strconv.ParseInt(rest[15], 10, 64); err == nil {
+			pi.priority = p
+		}
+		if n, err := strconv.ParseInt(rest[16], 10, 64); err == nil {
+			pi.nice = n
 		}
 		if start, err := strconv.ParseInt(rest[19], 10, 64); err == nil && !bootTime.IsZero() {
 			pi.start = bootTime.Add(time.Duration(start/procClockTicks) * time.Second)
@@ -1259,8 +1322,14 @@ func readProcStatFromPaths(pid, tgid int, statPath, statusPath, cmdPath, commPat
 		if r, err := strconv.ParseInt(rest[21], 10, 64); err == nil {
 			pi.rss = r * pageSize
 		}
+		if len(rest) > 36 {
+			if p, err := strconv.ParseInt(rest[36], 10, 64); err == nil {
+				pi.processor = p
+			}
+		}
 	}
 	readProcStatus(&pi, statusPath)
+	pi.wchan = readProcWchan(filepath.Join(filepath.Dir(statPath), "wchan"))
 
 	if data, err := os.ReadFile(cmdPath); err == nil {
 		cmdline := strings.ReplaceAll(string(data), "\x00", " ")
@@ -1327,11 +1396,20 @@ func readProcStat(pid int, pageSize int64, bootTime time.Time, now time.Time) (p
 		if tty, err := strconv.ParseInt(rest[4], 10, 64); err == nil {
 			pi.tty = procTTY(pid, tty)
 		}
+		if flags, err := strconv.ParseUint(rest[6], 10, 64); err == nil {
+			pi.flags = flags
+		}
 		if ut, err := strconv.ParseInt(rest[11], 10, 64); err == nil {
 			pi.utime = ut
 		}
 		if st, err := strconv.ParseInt(rest[12], 10, 64); err == nil {
 			pi.stime = st
+		}
+		if p, err := strconv.ParseInt(rest[15], 10, 64); err == nil {
+			pi.priority = p
+		}
+		if n, err := strconv.ParseInt(rest[16], 10, 64); err == nil {
+			pi.nice = n
 		}
 		if start, err := strconv.ParseInt(rest[19], 10, 64); err == nil && !bootTime.IsZero() {
 			pi.start = bootTime.Add(time.Duration(start/procClockTicks) * time.Second)
@@ -1345,8 +1423,14 @@ func readProcStat(pid int, pageSize int64, bootTime time.Time, now time.Time) (p
 		if r, err := strconv.ParseInt(rest[21], 10, 64); err == nil {
 			pi.rss = r * pageSize
 		}
+		if len(rest) > 36 {
+			if p, err := strconv.ParseInt(rest[36], 10, 64); err == nil {
+				pi.processor = p
+			}
+		}
 	}
 	readProcStatus(&pi, filepath.Join("/proc", strconv.Itoa(pid), "status"))
+	pi.wchan = readProcWchan(filepath.Join("/proc", strconv.Itoa(pid), "wchan"))
 
 	// cmdline
 	cmdPath := filepath.Join("/proc", strconv.Itoa(pid), "cmdline")
@@ -1393,6 +1477,31 @@ func readProcStatus(pi *procInfo, path string) {
 			}
 		}
 	}
+}
+
+// readProcWchan reads /proc/PID/wchan, which holds the name of the kernel
+// function the process is blocked in (empty when running/not blocked).
+// Best-effort: unreadable (permission, already-exited) yields "".
+func readProcWchan(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// psFlagsColumn renders the ps -l "F" column from the raw kernel flags word
+// (/proc/PID/stat field 9), matching procps' bit mapping: PF_FORKNOEXEC
+// (0x40) contributes 1, PF_SUPERPRIV (0x100) contributes 4.
+func psFlagsColumn(flags uint64) int {
+	f := 0
+	if flags&0x40 != 0 {
+		f |= 1
+	}
+	if flags&0x100 != 0 {
+		f |= 4
+	}
+	return f
 }
 
 func lookupUsername(uid int) string {

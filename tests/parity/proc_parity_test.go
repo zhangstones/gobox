@@ -981,14 +981,24 @@ func TestParity_PsCases(t *testing.T) {
 		if !foundNativePID {
 			t.Fatalf("native ps -F missing target pid\n%s", native.Stdout)
 		}
-		if got := strings.Fields(goboxLines[0]); len(got) < 8 || got[0] != "UID" || got[1] != "PID" || got[2] != "PPID" || got[len(got)-1] != "CMD" {
-			t.Fatalf("gobox ps -F header shape mismatch: %q", goboxLines[0])
+		// ps -F's column set is now aligned to native exactly (UID PID PPID
+		// C SZ RSS PSR STIME TTY TIME CMD), not just a same-length subset,
+		// so require the headers to match verbatim.
+		goboxHeader := strings.Fields(goboxLines[0])
+		nativeHeader := strings.Fields(nativeLines[0])
+		if strings.Join(goboxHeader, " ") != strings.Join(nativeHeader, " ") {
+			t.Fatalf("ps -F header mismatch\ngobox:  %q\nnative: %q", goboxLines[0], nativeLines[0])
 		}
-		if got := strings.Fields(nativeLines[0]); len(got) < 8 || got[0] != "UID" || got[1] != "PID" || got[2] != "PPID" || got[len(got)-1] != "CMD" {
-			t.Fatalf("native ps -F header shape mismatch: %q", nativeLines[0])
-		}
-		if len(strings.Fields(goboxLines[1])) < 8 {
+		goboxFields := strings.Fields(goboxLines[1])
+		if len(goboxFields) < len(goboxHeader) {
 			t.Fatalf("gobox ps -F target row does not contain full-format columns: %q", goboxLines[1])
+		}
+		// SZ and RSS (indices 4 and 5) must be real numeric values, proving
+		// the new /proc/PID/stat-derived columns are actually populated.
+		for _, idx := range []int{4, 5} {
+			if _, err := strconv.Atoi(goboxFields[idx]); err != nil {
+				t.Fatalf("ps -F expected numeric field at index %d, got %q in %q", idx, goboxFields[idx], goboxLines[1])
+			}
 		}
 	})
 
@@ -1206,8 +1216,10 @@ func TestParity_PsCases(t *testing.T) {
 	// them. Relocated here to keep the CLAUDE.md-documented targeted test
 	// command traceable to actual ps coverage.
 	t.Run("PS-019", func(t *testing.T) {
-		res := runGoboxCLI(t, t.TempDir(), "", "ps", "--long", "-n", "5", "-i", "1")
-		native := runNativeCLI(t, t.TempDir(), "", "ps", "-l")
+		pid := strconv.Itoa(os.Getpid())
+		env := t.TempDir()
+		res := runGoboxCLI(t, env, "", "ps", "--long", "-p", pid, "-i", "1")
+		native := runNativeCLI(t, env, "", "ps", "-l", "-p", pid)
 		if res.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("ps --long failed gobox=%+v native=%+v", res, native)
 		}
@@ -1216,28 +1228,34 @@ func TestParity_PsCases(t *testing.T) {
 		if len(goboxLines) < 2 || len(nativeLines) < 2 {
 			t.Fatalf("ps --long expected header plus rows\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
 		}
-		for _, want := range []string{"UID", "PID", "PPID", "TTY", "TIME", "CMD"} {
-			if !strings.Contains(goboxLines[0], want) {
-				t.Fatalf("gobox ps --long header missing %q: %q", want, goboxLines[0])
-			}
+		// ps --long's column set is now aligned to native's full "F S UID
+		// PID PPID C PRI NI ADDR SZ WCHAN TTY TIME CMD" layout, not just a
+		// same-length subset, so require the headers to match verbatim
+		// (this also proves the single-letter "S" state header, not the
+		// BSD-style "STAT" gobox uses elsewhere, e.g. ps aux).
+		goboxHeader := strings.Fields(goboxLines[0])
+		nativeHeader := strings.Fields(nativeLines[0])
+		if strings.Join(goboxHeader, " ") != strings.Join(nativeHeader, " ") {
+			t.Fatalf("ps --long header mismatch\ngobox:  %q\nnative: %q", goboxLines[0], nativeLines[0])
 		}
-		// Native ps -l uses the single-letter "S" state header, not the
-		// BSD-style "STAT" gobox uses elsewhere (e.g. ps aux).
-		hasS := false
-		for _, f := range strings.Fields(goboxLines[0]) {
-			if f == "S" {
-				hasS = true
-				break
-			}
+		goboxFields := strings.Fields(goboxLines[1])
+		if len(goboxFields) < len(goboxHeader) {
+			t.Fatalf("gobox ps --long target row does not contain long-format columns: %q", goboxLines[1])
 		}
-		if !hasS {
-			t.Fatalf("gobox ps --long header missing single-letter S field: %q", goboxLines[0])
+		pidIdx := columnIndex(goboxLines[0], "PID")
+		if pidIdx < 0 || goboxFields[pidIdx] != pid {
+			t.Fatalf("ps --long target row missing pid %s: %q", pid, goboxLines[1])
 		}
-		if strings.Contains(goboxLines[0], "STAT") {
-			t.Fatalf("gobox ps --long header should use S, not STAT: %q", goboxLines[0])
+		addrIdx := columnIndex(goboxLines[0], "ADDR")
+		if addrIdx < 0 || goboxFields[addrIdx] != "-" {
+			t.Fatalf("ps --long ADDR column should be \"-\", got %q in %q", goboxFields[addrIdx], goboxLines[1])
 		}
-		if !strings.Contains(nativeLines[0], "PID") || !strings.Contains(nativeLines[0], "PPID") {
-			t.Fatalf("native ps -l baseline missing expected long columns: %q", nativeLines[0])
+		szIdx := columnIndex(goboxLines[0], "SZ")
+		if szIdx < 0 {
+			t.Fatalf("ps --long missing SZ column: %q", goboxLines[0])
+		}
+		if _, err := strconv.Atoi(goboxFields[szIdx]); err != nil {
+			t.Fatalf("ps --long expected numeric SZ, got %q in %q", goboxFields[szIdx], goboxLines[1])
 		}
 	})
 
@@ -1579,6 +1597,37 @@ func TestParity_LsofCases(t *testing.T) {
 		}
 	})
 
+	t.Run("LSOF-012", func(t *testing.T) {
+		env := t.TempDir()
+		sockPath := filepath.Join(env, "test.sock")
+		ln, err := net.Listen("unix", sockPath)
+		if err != nil {
+			t.Fatalf("listen unix: %v", err)
+		}
+		defer ln.Close()
+		pid := strconv.Itoa(os.Getpid())
+		gobox := runGoboxCLI(t, env, "", "lsof", "-p", pid)
+		native := runNativeCLI(t, env, "", "lsof", "-p", pid)
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("lsof -p exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+		}
+		_, goboxRows := lsofHeaderAndRows(gobox.Stdout)
+		goboxRow := lsofFindRow(goboxRows, sockPath)
+		if goboxRow == "" {
+			t.Fatalf("gobox lsof missing unix socket path row for %s\n%s", sockPath, gobox.Stdout)
+		}
+		if !strings.Contains(goboxRow, "unix") {
+			t.Fatalf("gobox lsof unix socket row missing TYPE=unix: %q", goboxRow)
+		}
+		_, nativeRows := lsofHeaderAndRows(native.Stdout)
+		nativeRow := lsofFindRow(nativeRows, sockPath)
+		if nativeRow == "" {
+			t.Skip("native lsof did not report the bound unix socket path in this environment; cannot cross-validate, but gobox's own resolution was verified above")
+		}
+		if !strings.Contains(nativeRow, "unix") {
+			t.Fatalf("native lsof unix socket row missing TYPE=unix: %q", nativeRow)
+		}
+	})
 }
 
 func TestParity_FreeCases(t *testing.T) {

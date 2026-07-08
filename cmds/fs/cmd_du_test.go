@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"gobox/cmds/utils"
@@ -230,5 +231,61 @@ func TestDuMaxDepthLongOption(t *testing.T) {
 	}
 	if !strings.Contains(out, "\t"+sub+"\n") || strings.Contains(out, "\t"+nested+"\n") {
 		t.Fatalf("unexpected --max-depth output %q", out)
+	}
+}
+
+// TestDuOneFilesystemSkipsChildOnDifferentDevice is a regression test for
+// -x/--one-file-system. Constructing a real cross-filesystem fixture isn't
+// possible in this sandbox (see tests/parity DU-007), so this drives walkDu
+// directly with a rootDev that deliberately doesn't match the real device of
+// the tree being walked, exercising the same comparison collectDiskUsage
+// performs when a subtree actually lives on a different filesystem.
+func TestDuOneFilesystemSkipsChildOnDifferentDevice(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "file.txt"), []byte("abc"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Skip("syscall.Stat_t not available on this platform")
+	}
+	realRootDev := uint64(st.Dev)
+	fakeRootDev := realRootDev + 1
+
+	// Same-device baseline: -x must not exclude anything when rootDev matches
+	// reality, so the subtree's contribution is included.
+	var sameFsRows []duRow
+	sameFsTotal, err := walkDu(dir, info, 0, dir, realRootDev, duOptions{oneFS: true, apparentSize: true}, &sameFsRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var rows []duRow
+	total, err := walkDu(dir, info, 0, dir, fakeRootDev, duOptions{oneFS: true, apparentSize: true}, &rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootOnly := duFileSize(info, true)
+	if total != rootOnly {
+		t.Fatalf("expected sub tree on a different device to contribute nothing (root-only size %d), got %d", rootOnly, total)
+	}
+	if total >= sameFsTotal {
+		t.Fatalf("expected -x total (%d) to be smaller than the same-filesystem total (%d)", total, sameFsTotal)
+	}
+	for _, row := range rows {
+		if row.path == sub || strings.HasPrefix(row.path, sub+string(filepath.Separator)) {
+			t.Fatalf("expected -x to skip %s entirely, but it appeared in rows: %#v", sub, rows)
+		}
+	}
+	if len(rows) != 1 || rows[0].path != dir {
+		t.Fatalf("expected only the root dir row, got %#v", rows)
 	}
 }

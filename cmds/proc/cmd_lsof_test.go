@@ -378,6 +378,93 @@ func TestLsofCmdProtoFilterMatchesNodeColumn(t *testing.T) {
 	}
 }
 
+// TestLsofCmdResolvesUnixDomainSocketPath is a regression test for unix
+// domain socket fds always falling back to a bare "socket:[inode]"
+// placeholder with TYPE "sock". Native lsof resolves them to TYPE "unix"
+// with the bound filesystem path as NAME (from /proc/net/unix), which
+// collectProcNetSockets now provides via a "UNIX <path>" detail string.
+func TestLsofCmdResolvesUnixDomainSocketPath(t *testing.T) {
+	setupFakeLsofProc(t, []fakeLsofProcess{
+		{pid: "1234", comm: "demo", fdTargets: map[string]string{
+			"5": "socket:[999005]",
+		}},
+	}, map[string]string{"999005": "UNIX /run/demo.sock"})
+	out, err := captureProcCmd(t, func() error { return LsofCmd(nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected header and one data row, got %q", out)
+	}
+	fields := strings.Fields(lines[1])
+	// COMMAND PID USER FD TYPE SIZE/OFF NODE NAME (DEVICE is blank for unix
+	// sockets, gobox doesn't have the kernel socket address; a blank field
+	// doesn't produce its own token under strings.Fields).
+	if len(fields) < 8 {
+		t.Fatalf("unexpected row shape %v", fields)
+	}
+	if fields[4] != "unix" {
+		t.Fatalf("expected TYPE column \"unix\", got %q in %v", fields[4], fields)
+	}
+	if fields[6] != "999005" {
+		t.Fatalf("expected NODE column to be the socket inode, got %q in %v", fields[6], fields)
+	}
+	if fields[7] != "/run/demo.sock" {
+		t.Fatalf("expected NAME column to be the resolved unix socket path, got %q in %v", fields[7], fields)
+	}
+}
+
+// TestLsofCmdNetworkFilterExcludesUnixSockets is a regression test for -i
+// treating any resolved (non-empty detail) socket as an internet socket.
+// Unix domain sockets now resolve to a non-empty "UNIX ..." detail too, so
+// -i must keep excluding them specifically, matching native lsof -i.
+func TestLsofCmdNetworkFilterExcludesUnixSockets(t *testing.T) {
+	setupFakeLsofProc(t, []fakeLsofProcess{
+		{pid: "1234", comm: "demo", fdTargets: map[string]string{
+			"5": "socket:[999006]", // unix domain socket, now resolved
+			"6": "socket:[999007]", // resolved TCP socket
+		}},
+	}, map[string]string{
+		"999006": "UNIX /run/demo.sock",
+		"999007": "TCP 127.0.0.1:80->0.0.0.0:0",
+	})
+	out, err := captureProcCmd(t, func() error { return LsofCmd([]string{"-i"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "999006") {
+		t.Fatalf("expected unix domain socket excluded from -i output, got %q", out)
+	}
+	if !strings.Contains(out, "999007") {
+		t.Fatalf("expected resolved TCP socket included in -i output, got %q", out)
+	}
+}
+
+// TestReadProcNetUnix is a unit test for the /proc/net/unix line parser
+// backing unix domain socket resolution: it must extract the inode (column
+// 7) and the bound path (column 8, only present for filesystem-bound
+// sockets) into a "UNIX <path>" detail string, and tolerate paths with
+// spaces or a missing path column (anonymous/unbound sockets).
+func TestReadProcNetUnix(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "unix")
+	content := "Num       RefCount Protocol Flags    Type St Inode Path\n" +
+		"0000000000000000: 00000002 00000000 00010000 0001 01 14173 /run/systemd/userdb/io.systemd.DynamicUser\n" +
+		"0000000000000000: 00000003 00000000 00000000 0001 03 22663\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	readProcNetUnix(out, path)
+	if got := out["14173"]; got != "UNIX /run/systemd/userdb/io.systemd.DynamicUser" {
+		t.Fatalf("unexpected detail for bound socket: %q", got)
+	}
+	if got := out["22663"]; got != "UNIX" {
+		t.Fatalf("unexpected detail for anonymous socket: %q", got)
+	}
+}
+
 type fakeLsofProcess struct {
 	pid       string
 	comm      string

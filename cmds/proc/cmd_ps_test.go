@@ -261,24 +261,82 @@ func TestPsCmdNameFilterMatchesPgrepStyleRegex(t *testing.T) {
 
 func TestPsCmdLongFormatShowsLongColumns(t *testing.T) {
 	output, err := captureProcOutput(t, func() error {
-		return PsCmd([]string{"--long", "-n", "3", "-i", "1"})
+		return PsCmd([]string{"--long", "-p", strconv.Itoa(os.Getpid())})
 	})
 	if err != nil {
 		t.Fatalf("PsCmd failed: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("expected header and at least one process line, got %q", output)
+	if len(lines) != 2 {
+		t.Fatalf("expected header and exactly one process line, got %q", output)
 	}
-	// Native ps -l uses the single-letter "S" state header (not the BSD-style
-	// "STAT" used by e.g. ps aux), and also includes UID.
-	for _, want := range []string{"S", "UID", "PID", "PPID", "TTY", "TIME", "CMD"} {
-		if !strings.Contains(lines[0], want) {
-			t.Fatalf("expected long-format header with %s, got %q", want, lines[0])
+	// Native ps -l's full column set is "F S UID PID PPID C PRI NI ADDR SZ
+	// WCHAN TTY TIME CMD"; it uses the single-letter "S" state header (not
+	// the BSD-style "STAT" used by e.g. ps aux).
+	header := strings.Fields(lines[0])
+	wantHeaders := []string{"F", "S", "UID", "PID", "PPID", "C", "PRI", "NI", "ADDR", "SZ", "WCHAN", "TTY", "TIME", "CMD"}
+	if len(header) != len(wantHeaders) {
+		t.Fatalf("expected headers %v, got %v", wantHeaders, header)
+	}
+	for i, want := range wantHeaders {
+		if header[i] != want {
+			t.Fatalf("expected header[%d] = %q, got %q (full header %v)", i, want, header[i], header)
 		}
 	}
-	if strings.Contains(lines[0], "STAT") {
-		t.Fatalf("expected single-letter S header, not STAT, got %q", lines[0])
+	fields := strings.Fields(lines[1])
+	if len(fields) < len(wantHeaders) {
+		t.Fatalf("expected at least %d data fields, got %v", len(wantHeaders), fields)
+	}
+	// ADDR is always "-" (modern kernels don't expose scheduler addresses).
+	if fields[8] != "-" {
+		t.Fatalf("expected ADDR column to be \"-\", got %q in %v", fields[8], fields)
+	}
+	// PID/PPID/SZ must be the real numeric values, not placeholders.
+	if fields[3] != strconv.Itoa(os.Getpid()) {
+		t.Fatalf("expected PID column %d, got %q in %v", os.Getpid(), fields[3], fields)
+	}
+	if _, err := strconv.Atoi(fields[9]); err != nil {
+		t.Fatalf("expected numeric SZ column, got %q in %v: %v", fields[9], fields, err)
+	}
+}
+
+// TestPsCmdExtraFullFormatShowsNativeColumns is a regression test for -F
+// ("extra full format") previously reusing a gobox-only field set (pcpu,
+// pmem, stat...) that didn't resemble native ps -F's real column set at
+// all. Native ps -F's columns are "UID PID PPID C SZ RSS PSR STIME TTY TIME
+// CMD".
+func TestPsCmdExtraFullFormatShowsNativeColumns(t *testing.T) {
+	output, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"-F", "-p", strconv.Itoa(os.Getpid())})
+	})
+	if err != nil {
+		t.Fatalf("PsCmd failed: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected header and exactly one process line, got %q", output)
+	}
+	wantHeaders := []string{"UID", "PID", "PPID", "C", "SZ", "RSS", "PSR", "STIME", "TTY", "TIME", "CMD"}
+	header := strings.Fields(lines[0])
+	if len(header) != len(wantHeaders) {
+		t.Fatalf("expected headers %v, got %v", wantHeaders, header)
+	}
+	for i, want := range wantHeaders {
+		if header[i] != want {
+			t.Fatalf("expected header[%d] = %q, got %q (full header %v)", i, want, header[i], header)
+		}
+	}
+	fields := strings.Fields(lines[1])
+	if len(fields) < len(wantHeaders) {
+		t.Fatalf("expected at least %d data fields, got %v", len(wantHeaders), fields)
+	}
+	if fields[1] != strconv.Itoa(os.Getpid()) {
+		t.Fatalf("expected PID column %d, got %q in %v", os.Getpid(), fields[1], fields)
+	}
+	for _, i := range []int{4, 5} { // SZ, RSS
+		if _, err := strconv.Atoi(fields[i]); err != nil {
+			t.Fatalf("expected numeric field at index %d, got %q in %v: %v", i, fields[i], fields, err)
+		}
 	}
 }
 

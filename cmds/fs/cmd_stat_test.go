@@ -331,6 +331,44 @@ func TestStatCmdOptionsFilesystemDefaultOutput(t *testing.T) {
 	}
 }
 
+// TestStatCmdOptionsFilesystemInodesLine is a regression test for the
+// default (non -c, non -t) `stat -f` output missing the "Inodes: Total/Free"
+// line and "Fundamental block size" that GNU coreutils' stat -f prints.
+func TestStatCmdOptionsFilesystemInodesLine(t *testing.T) {
+	dir := t.TempDir()
+
+	out, err := captureFsCmd(t, func() error {
+		return StatCmd([]string{"-f", dir})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Fundamental block size:") {
+		t.Fatalf("expected Fundamental block size field in output, got %q", out)
+	}
+	var inodesLine string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "Inodes:") {
+			inodesLine = line
+			break
+		}
+	}
+	if inodesLine == "" {
+		t.Fatalf("expected an Inodes: line in output, got %q", out)
+	}
+	fields := strings.Fields(inodesLine)
+	// fields: "Inodes:" "Total:" "<n>" "Free:" "<n>"
+	if len(fields) != 5 || fields[0] != "Inodes:" || fields[1] != "Total:" || fields[3] != "Free:" {
+		t.Fatalf("unexpected Inodes line %q", inodesLine)
+	}
+	if _, err := strconv.ParseUint(fields[2], 10, 64); err != nil {
+		t.Fatalf("expected numeric Inodes total, got %q: %v", fields[2], err)
+	}
+	if _, err := strconv.ParseUint(fields[4], 10, 64); err != nil {
+		t.Fatalf("expected numeric Inodes free, got %q: %v", fields[4], err)
+	}
+}
+
 func TestStatFSTypeName(t *testing.T) {
 	if got := statFSTypeName(0x58465342); got != "xfs" {
 		t.Fatalf("expected xfs magic to map to xfs, got %q", got)

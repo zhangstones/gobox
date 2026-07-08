@@ -75,7 +75,7 @@
 | `gobox du -c` | `du -c` | ✅ 一致 | 输出 total 汇总行 |
 | `gobox du -d N, --max-depth N` | `du -d N` | ✅ 一致 | 限制目录输出深度 |
 | `gobox du --exclude PATTERN` | `du --exclude` | ✅ 常用一致 | 按 shell-style 模式排除路径：不含 `/` 按 basename 匹配（任意深度），含 `/` 按相对 root 路径匹配；非法模式报错 |
-| `gobox du -x` | `du -x` | ⚠️ 部分一致 | 不跨文件系统遍历 |
+| `gobox du -x` | `du -x` | ✅ 一致 | 不跨文件系统遍历 |
 | `gobox du --apparent-size` | `du --apparent-size` | ✅ 一致 | 使用文件表观大小而非已分配块数 |
 
 ### df
@@ -116,9 +116,9 @@
 |------------|---------------|------------|----------|
 | `gobox stat FILE...` | `stat FILE...` | ✅ 常用一致 | 默认多行输出（File/Size/Device/Inode/Access/Uid/Gid/Modify/Change）与原生排版一致；不输出 `Birth:` 行（文件系统出生时间支持不普遍） |
 | `gobox stat -L, --dereference FILE...` | `stat -L` | ✅ 常用一致 | 跟随符号链接，显示目标文件信息，排版同默认输出 |
-| `gobox stat -f, --file-system FILE...` | `stat -f` | ⚠️ 部分一致 | 输出文件系统信息 |
+| `gobox stat -f, --file-system FILE...` | `stat -f` | ✅ 常用一致 | 输出文件系统信息，字段与排版对齐原生 |
 | `gobox stat -c, --format FORMAT FILE...` | `stat -c` | ✅ 常用一致 | 支持常用格式指令：`%n/%s/%f/%F/%u/%g/%U/%G/%a/%A/%X/%Y/%Z/%x/%y/%z/%i/%h/%d/%D/%o/%b` |
-| `gobox stat -t, --terse FILE...` | `stat -t` | ⚠️ 部分一致 | 使用简洁单行格式输出 |
+| `gobox stat -t, --terse FILE...` | `stat -t` | ✅ 常用一致 | 简洁单行格式，字段顺序与原生一致；birthtime 固定为 0（同默认输出限制） |
 
 ### truncate
 
@@ -256,7 +256,7 @@
 |------------|---------------|------------|----------|
 | `gobox seq LAST` | `seq LAST` | ✅ 常用一致 | 输出 `1..LAST` 的递增序列；`LAST` 为负数时输出为空，与原生一致（不再误判为未知选项） |
 | `gobox seq FIRST LAST` | `seq FIRST LAST` | ✅ 常用一致 | 输出 `FIRST..LAST`，步长默认为 `1`；支持负数 `FIRST`/`LAST` |
-| `gobox seq FIRST INC LAST` | `seq FIRST INC LAST` | ✅ 常用一致 | 输出指定起点、步长和终点的序列，支持负步长、浮点数和负数操作数；小数位数取三个操作数中最长的一个并统一应用（含整数值），按 `first+n*inc` 逐项计算，不会因连续浮点加法累积误差 |
+| `gobox seq FIRST INC LAST` | `seq FIRST INC LAST` | ✅ 常用一致 | 输出指定起点、步长和终点的序列，支持负步长、浮点数和负数操作数；小数位数取三个操作数中最长的一个，不会因浮点累加产生误差 |
 | `gobox seq -f FORMAT ...` | `seq -f` | ✅ 常用一致 | 使用 printf 风格格式化每个数字 |
 | `gobox seq -s SEP ...` | `seq -s` | ✅ 一致 | 使用自定义分隔符替代换行 |
 | `gobox seq -w ...` | `seq -w` | ✅ 常用一致 | 按最大位宽左侧补零（仅补整数部分，小数位不变），支持负数与浮点操作数组合 |
@@ -385,15 +385,15 @@
 | `gobox netstat -u, --udp` | `netstat -u` | ✅ 一致 | 仅显示 UDP socket |
 | `gobox netstat -x, --unix` | `netstat -x` | ✅ 一致 | 仅显示 Unix domain socket |
 | `gobox netstat -l, --listening` | `netstat -l` | ✅ 一致 | 仅显示监听 socket |
-| `gobox netstat -n, --numeric` | `netstat -n` | ⚠️ 部分一致 | gobox 当前默认即输出数字地址/端口；该参数保留兼容入口并显式声明 numeric 语义 |
+| `gobox netstat -n, --numeric` | `netstat -n` | ✅ 一致 | gobox 默认已是数字地址/端口，`-n` 与默认输出等效 |
 | `gobox netstat -p, --programs` | `netstat -p` | ✅ 常用一致 | 显示 PID/Program；常用关联语义对齐，权限受限时结果集合仍以当前 `/proc` 可见性为准 |
 | `gobox netstat -4` | `netstat -4` | ✅ 一致 | 仅显示 IPv4 socket |
 | `gobox netstat -6` | `netstat -6` | ✅ 一致 | 仅显示 IPv6 socket |
 | `gobox netstat -e, --extend` | `netstat -e` | ✅ 常用一致 | 显示扩展列（User/Inode）；列存在性与常用字段语义对齐 |
 | `gobox netstat -o, --timers` | `netstat -o` | ✅ 常用一致 | 显示 timer 信息；字段覆盖常用排障视角 |
-| `gobox netstat -W, --wide` | `netstat -W` | ⚠️ 部分一致 | gobox 默认已不截断地址；该参数作为兼容入口接受并与默认输出等效 |
+| `gobox netstat -W, --wide` | `netstat -W` | ✅ 一致 | gobox 默认已不截断地址，`-W` 与默认输出等效 |
 | `gobox netstat -r` | `netstat -r` | ⚠️ 部分一致 | 显示 IPv4/IPv6 路由表；默认路由目的地显示为 `default`，表头/列对齐原生 `MSS Window irtt`；网关不做主机名反解析（始终显示 IP） |
-| `gobox netstat -i` | `netstat -i` | ⚠️ 部分一致 | 显示网络接口统计，含 `Kernel Interface table` 标题、按接口名排序、`RX-OVR`/`TX-OVR` 列，`Flg` 列使用原生的字母代码（如 `BMRU`）而非 Go 原始 flags 字符串 |
+| `gobox netstat -i` | `netstat -i` | ⚠️ 部分一致 | 显示网络接口统计，含 `Kernel Interface table` 标题、按接口名排序、`RX-OVR`/`TX-OVR` 列，`Flg` 列使用原生字母代码而非 Go 原始 flags 字符串 |
 | `gobox netstat -s` | `netstat -s` | ⚠️ 部分一致 | 显示协议统计 |
 | `gobox netstat -c` | `netstat -c` | ⚠️ 部分一致 | 持续刷新输出 |
 | `gobox netstat -tnlp` | `netstat -tnlp` | ✅ 常用一致 | 支持常见短参数合并 |
@@ -444,12 +444,12 @@
 
 | gobox 参数 | 对应原生命令参数/参考基线 | 实现一致性 | 功能说明 |
 |------------|---------------|------------|----------|
-| `gobox ip addr` / `gobox ip a` | `ip addr` | ⚠️ 部分一致 | 显示接口地址、作用域（含 `brd`/`scope`/`valid_lft` 行）和基于 `operstate` 的真实运行状态，只实现只读排障子集；不显示 `qdisc`/`group`/`qlen`/`altname`/`noprefixroute`（无 netlink，sysfs 不暴露） |
+| `gobox ip addr` / `gobox ip a` | `ip addr` | ⚠️ 部分一致 | 显示接口地址、作用域和运行状态，只读排障子集；不显示 netlink-only 字段（sysfs 不暴露） |
 | `gobox ip -o addr` | `ip -o addr` | ⚠️ 部分一致 | 单行显示接口地址（含 `\` 续行标记与 `brd`/`valid_lft`），便于脚本处理；同上不显示 netlink-only 字段 |
-| `gobox ip link` / `gobox ip l` | `ip link` | ⚠️ 部分一致 | 显示接口 flags（对齐原生 `BROADCAST,MULTICAST,UP,LOWER_UP` 等命名/顺序）、MTU、基于 `operstate` 的状态和 MAC/`brd` |
+| `gobox ip link` / `gobox ip l` | `ip link` | ⚠️ 部分一致 | 显示接口 flags（对齐原生命名/顺序）、MTU、基于 `operstate` 的状态和 MAC/`brd` |
 | `gobox ip -s link` | `ip -s link` | ⚠️ 部分一致 | 显示接口收发包统计，含 `missed`/`mcast`/`carrier`/`collsns` 列；不保证与原生逐字节对齐的列宽 |
 | `gobox ip route` / `gobox ip r` | `ip route` | ⚠️ 部分一致 | 显示 IPv4 路由表，含 `proto`/`scope`/`src`/`metric`/`linkdown`（proto/scope 为启发式推断，非直接来自 netlink） |
-| `gobox ip neigh` / `gobox ip n` | `ip neigh` | ⚠️ 部分一致 | 显示邻居/ARP 表，状态从 `/proc/net/arp` 的 HW flags 映射为 REACHABLE/PERMANENT/INCOMPLETE；无法区分 STALE/DELAY/PROBE（需要 netlink 邻居缓存，`/proc/net/arp` 不提供） |
+| `gobox ip neigh` / `gobox ip n` | `ip neigh` | ⚠️ 部分一致 | 显示邻居/ARP 表；状态映射较粗，无法区分部分细分状态（需 netlink，`/proc/net/arp` 不提供） |
 
 ### np/netping
 
@@ -483,11 +483,11 @@
 | `gobox ps -e` | `ps -e` | ✅ 一致 | 显示所有进程；默认 `CMD` 列按原生命令习惯优先显示 `comm`/可执行名 |
 | `gobox ps -A` | `ps -A` | ✅ 一致 | 显示所有进程；默认 `CMD` 列按原生命令习惯优先显示 `comm`/可执行名 |
 | `gobox ps -f` | `ps -f` | ✅ 一致 | 切换到 full-format，增加 `UID`/`PPID`/`STIME`/`TTY`/`TIME`/`CMD` 等列，并显示完整命令行参数 |
-| `gobox ps -F` | `ps -F` | ⚠️ 部分一致 | extra full 格式输出，展示 `UID/PID/PPID/%CPU/%MEM/VSZ/RSS/TTY/STAT/START/TIME/CMD`；不含原生的 `C`/`SZ`/`PSR` 列（语义不同或缺少采集，不强行改名） |
+| `gobox ps -F` | `ps -F` | ✅ 常用一致 | extra full 格式输出，列集合与顺序对齐原生 `UID/PID/PPID/C/SZ/RSS/PSR/STIME/TTY/TIME/CMD`；`C` 为 `%CPU` 取整近似值，非原生内核调度计数器 |
 | `gobox ps -u USER` | `ps -u` | ✅ 常用一致 | 按用户或 UID 过滤 |
 | `gobox ps -p PID` | `ps -p` | ✅ 常用一致 | 按 PID 过滤 |
 | `gobox ps -C NAME` | `ps -C` | ✅ 常用一致 | 按命令名过滤 |
-| `gobox ps --long` | `ps -l` | ⚠️ 部分一致 | long 格式输出，展示 `S/UID/PID/PPID/TTY/TIME/CMD`，状态列用原生的单字母 `S`（非 BSD 风格 `STAT`），按原生相对顺序排列；不含 `F`/`C`/`PRI`/`NI`/`ADDR`/`SZ`/`WCHAN`（需要新增 `/proc/PID/stat` 采集，本轮不做） |
+| `gobox ps --long` | `ps -l` | ⚠️ 部分一致 | long 格式输出，列集合与顺序对齐原生 `F/S/UID/PID/PPID/C/PRI/NI/ADDR/SZ/WCHAN/TTY/TIME/CMD`；`ADDR` 固定为 `-`；`PRI` 为内核原始值，与原生内部映射刻度不同 |
 | `gobox ps --comm string` | `pgrep -x` | ✅ 一致 | 按进程名精确匹配 |
 | `gobox ps --full string` | `pgrep -f` | ✅ 一致 | 按完整命令行正则匹配；输出默认也保留完整命令行，便于核对命中过滤结果 |
 | `gobox ps -o FIELDS` | `ps -o` | ✅ 常用一致 | 自定义输出字段支持高频字段：`pid/ppid/uid/user/comm/cmd/args/pcpu/pmem/rss/vsz/vms/tty/stat/start/etime/time`；不支持字段稳定报错 |
@@ -512,13 +512,13 @@
 | `gobox top -p PID` | `top -p` | ✅ 常用一致 | 只显示指定 PID |
 | `gobox top -u USER` | `top -u` | ✅ 常用一致 | 按用户过滤 |
 | `gobox top -H` | `top -H` | ✅ Linux 常用一致 | Linux 下显示线程视图：`PID` 列输出 TID，`-p PID` 按所属进程过滤线程；非 Linux 路径保留降级实现 |
-| `gobox top -i` | `top -i` | ⚠️ 部分一致 | 隐藏采样 CPU 为 0 的进程 |
+| `gobox top -i` | `top -i` | ✅ 常用一致 | 隐藏采样 CPU 为 0 的进程 |
 | `gobox top -c` | `top -c` | ✅ 常用一致 | 显示完整命令行 |
 | `gobox top -o FIELD` | `top -o` | ⚠️ 部分一致 | 按字段排序 |
 | `gobox top -r` | reverse sort (gobox-only) | 🆕 gobox扩展 | 反向排序开关；不复用原生 `top -r` 的语义 |
 | `gobox top --sort string` | `top -o` (排序键) | 🆕 gobox扩展 | 排序字段：pid\|cpu\|rss\|vms\|cmd |
 
-> 注意：gobox top 是 top 命令的简化实现，使用独立的实时采样与渲染路径，不再复用 `ps` 的输出。汇总区 `Tasks:`/`MiB Mem`/`MiB Swap` 行的数值列宽、进程表 `TIME+` 列（分:秒.厘秒，无小时位）和状态列表头 `S`（单字母，非 `STATE`）已对齐原生排版；不显示 `N users,`、`PR`/`NI`/`SHR` 列（需要新增 `/proc/PID/stat` 采集，本轮不做）。
+> 注意：gobox top 是 top 命令的简化实现，不复用 `ps` 的输出。`TIME+`、状态列 `S` 等排版已对齐原生；不显示 `N users,`、`PR`/`NI`/`SHR` 列（需新增 `/proc/PID/stat` 采集，本轮不做）。
 
 ### free
 
@@ -556,7 +556,7 @@
 | `gobox kill -l, --list [SIGNAL]` | `kill -l` | ✅ 常用一致 | 列出完整 64 个 Linux 信号（含实时信号），5 列编号表格与 GNU kill -l 输出一致 |
 | `gobox kill -s SIGNAL PID...` | `kill -s` | ✅ 一致 | 指定要发送的信号 |
 | `gobox kill -SIGNAL PID...` | `kill -SIGNAL` | ✅ 一致 | 使用短格式指定信号 |
-| `gobox kill -f PATTERN` | `pkill -f` | ⚠️ 部分一致 | 按完整命令行匹配进程；匹配范围和权限边界为精简实现 |
+| `gobox kill -f PATTERN` | `pkill -f` | ⚠️ 部分一致 | 按完整命令行匹配进程；单个匹配失败时跳过继续处理（对齐 `pkill`），匹配范围仍为精简实现 |
 | `gobox kill -x PATTERN` | `pkill -x` | ⚠️ 部分一致 | 按进程名精确匹配 |
 | `gobox kill -P PPID` | `pkill -P` | ⚠️ 部分一致 | 匹配指定父进程下的子进程 |
 | `gobox kill -n [-f\|-x] PATTERN` | `pkill -n` | ⚠️ 部分一致 | 只匹配最新启动的进程 |
@@ -567,7 +567,7 @@
 
 | gobox 参数 | 对应原生命令参数/参考基线 | 实现一致性 | 功能说明 |
 |------------|---------------|------------|----------|
-| `gobox lsof` | `lsof` | ⚠️ 部分一致 | 列出当前可见的打开文件，基于 `/proc` 的精简输出；列结构对齐原生 `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME`，只覆盖普通文件/目录/字符设备和已解析的 TCP/UDP socket，不覆盖 `cwd`/`txt`/`mem`/unix socket 等 fd 类型 |
+| `gobox lsof` | `lsof` | ⚠️ 部分一致 | 列出当前可见的打开文件，基于 `/proc` 的精简输出；列结构对齐原生 `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME`，覆盖普通文件/目录/字符设备、TCP/UDP 和 unix domain socket；不覆盖 `cwd`/`txt`/`mem` |
 | `gobox lsof -p PID` | `lsof -p` | ⚠️ 部分一致 | 按进程 ID 过滤 |
 | `gobox lsof -c NAME` | `lsof -c` | ⚠️ 部分一致 | 按命令名前缀过滤 |
 | `gobox lsof -i` | `lsof -i` | ⚠️ 部分一致 | 仅列出已解析为 TCP/UDP 的网络 socket，不包含无法解析的 unix domain socket |
@@ -606,8 +606,8 @@
 
 | gobox 参数 | 对应原生命令参数/参考基线 | 实现一致性 | 功能说明 |
 |------------|---------------|------------|----------|
-| `gobox iostat -i sec` | `iostat interval` | ⚠️ 部分一致 | 采样间隔秒数 |
-| `gobox iostat -n count` | `iostat count` | ⚠️ 部分一致 | 采样次数 |
+| `gobox iostat -i sec` | `iostat interval` | ✅ 常用一致 | 采样间隔秒数，与位置参数形式等价 |
+| `gobox iostat -n count` | `iostat count` | ✅ 常用一致 | 采样次数，与位置参数形式等价 |
 | `gobox iostat interval [count]` | `iostat interval [count]` | ✅ 常用一致 | 支持位置参数形式的采样间隔与次数 |
 | `gobox iostat -H` | `iostat -h` | ✅ 常用一致 | 人类可读格式 |
 | `gobox iostat -z` | `iostat -z` | ✅ 常用一致 | 跳过零活动设备 |

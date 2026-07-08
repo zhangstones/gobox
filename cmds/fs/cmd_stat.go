@@ -80,7 +80,7 @@ func StatCmd(args []string) error {
 		if *format != "" {
 			fmt.Println(formatStat(*format, file, info))
 		} else if *terse {
-			fmt.Printf("%s %d %o %s\n", file, info.Size(), info.Mode().Perm(), info.ModTime().Format(time.RFC3339))
+			printStatTerse(file, info)
 		} else {
 			printStatDefault(file, info)
 		}
@@ -113,6 +113,44 @@ func printStatDefault(file string, info os.FileInfo) {
 	fmt.Printf("Access: %s\n", statTimeString(atim))
 	fmt.Printf("Modify: %s\n", statTimeString(mtim))
 	fmt.Printf("Change: %s\n", statTimeString(ctim))
+}
+
+// printStatTerse prints file metadata the way GNU coreutils' `stat -t` does:
+// a single space-separated line of raw field values in the fixed order
+// "name size blocks rawmode(hex) uid gid device(hex) inode links
+// major(hex) minor(hex) atime mtime ctime birthtime blksize" (no field
+// labels, no formatted dates). Birthtime is not tracked (see
+// printStatDefault) so it is always reported as 0, matching an unsupported
+// birth time on native stat.
+func printStatTerse(file string, info os.FileInfo) {
+	st, _ := info.Sys().(*syscall.Stat_t)
+	var dev, ino, nlink, rdev uint64
+	var uid, gid, rawMode uint32
+	var blocks, blksize int64 = 0, 4096
+	var atim, mtim, ctim syscall.Timespec
+	if st != nil {
+		dev, ino, nlink = st.Dev, st.Ino, st.Nlink
+		uid, gid = st.Uid, st.Gid
+		blocks, blksize = st.Blocks, st.Blksize
+		atim, mtim, ctim = st.Atim, st.Mtim, st.Ctim
+		rawMode = st.Mode
+		rdev = uint64(st.Rdev)
+	}
+	major, minor := gnuDevMajor(rdev), gnuDevMinor(rdev)
+	fmt.Printf("%s %d %d %x %d %d %x %d %d %x %x %d %d %d %d %d\n",
+		file, info.Size(), blocks, rawMode, uid, gid, dev, ino, nlink,
+		major, minor, atim.Sec, mtim.Sec, ctim.Sec, 0, blksize)
+}
+
+// gnuDevMajor and gnuDevMinor extract the major/minor device numbers from a
+// raw dev_t the same way glibc's gnu_dev_major/gnu_dev_minor (used by GNU
+// coreutils' stat -t) do; for regular files rdev is 0 so both are 0.
+func gnuDevMajor(dev uint64) uint64 {
+	return ((dev >> 8) & 0xfff) | ((dev >> 32) &^ 0xfff)
+}
+
+func gnuDevMinor(dev uint64) uint64 {
+	return (dev & 0xff) | ((dev >> 12) &^ 0xff)
 }
 
 // permString builds the 10-character permission string GNU stat/ls show,
@@ -316,9 +354,11 @@ func printStatFS(path, format string, terse bool) error {
 	if terse {
 		fmt.Printf("%s %d %d %d\n", path, st.Bsize, st.Blocks, st.Bfree)
 	} else {
-		fmt.Printf("  File: %s\n", path)
-		fmt.Printf("    ID: %s Namelen: %d Type: %s\n", formatFsid(st.Fsid), st.Namelen, statFSTypeName(st.Type))
-		fmt.Printf("Block size: %d Blocks: %d Free: %d Available: %d\n", st.Bsize, st.Blocks, st.Bfree, st.Bavail)
+		fmt.Printf("  File: %q\n", path)
+		fmt.Printf("    ID: %-8s Namelen: %-7d Type: %s\n", formatFsid(st.Fsid), st.Namelen, statFSTypeName(st.Type))
+		fmt.Printf("Block size: %-10d Fundamental block size: %d\n", st.Bsize, st.Bsize)
+		fmt.Printf("Blocks: Total: %-10d Free: %-10d Available: %d\n", st.Blocks, st.Bfree, st.Bavail)
+		fmt.Printf("Inodes: Total: %-10d Free: %d\n", st.Files, st.Ffree)
 	}
 	return nil
 }

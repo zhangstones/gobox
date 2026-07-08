@@ -17,6 +17,11 @@ type signalSpec struct {
 	sig  syscall.Signal
 }
 
+// killSignal sends a signal to a pid; overridable in tests so batch-kill
+// error handling (e.g. skipping EPERM/ESRCH) can be exercised without
+// needing an actual unprivileged target process.
+var killSignal = syscall.Kill
+
 // supportedSignals covers the full set of Linux signals recognized by GNU
 // kill -l: standard signals 1-31 (32/33 are unused/reserved and omitted,
 // matching native kill -l), plus real-time signals 34-64 named relative to
@@ -194,13 +199,23 @@ func KillCmd(args []string) error {
 	if *oldest && len(matches) > 1 {
 		matches = matches[:1]
 	}
+	return signalMatches(matches, signal, *dryRun)
+}
+
+// signalMatches sends signal to each matched process for pattern-based kill
+// (-f/-x/-P/-n/-o). It mirrors pkill's per-process fault tolerance: a
+// process that exited between the /proc scan and the kill (ESRCH) or one we
+// lack permission to signal (EPERM, e.g. a different UID) is skipped so the
+// rest of the batch still gets signaled, instead of aborting the whole
+// match set on the first failure.
+func signalMatches(matches []procMatch, signal syscall.Signal, dryRun bool) error {
 	for _, p := range matches {
-		if *dryRun {
+		if dryRun {
 			fmt.Printf("%d %s\n", p.pid, p.cmd)
 			continue
 		}
-		if err := syscall.Kill(p.pid, signal); err != nil {
-			if err == syscall.ESRCH {
+		if err := killSignal(p.pid, signal); err != nil {
+			if err == syscall.ESRCH || err == syscall.EPERM {
 				continue
 			}
 			return err

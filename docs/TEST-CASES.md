@@ -94,7 +94,7 @@
 | DU-004 | `-c` | structured | `du -c` | multiple paths | 输出 total 汇总行 |
 | DU-005 | `-d`, `--max-depth` | structured | `du -d` | nested tree | 最大深度限制生效 |
 | DU-006 | `--exclude` | structured | `du --exclude` | mixed file names | 不含 `/` 的模式按 basename 匹配（任意深度），含 `/` 的模式按相对 root 路径匹配；非法模式报错 |
-| DU-007 | `-x` | contract | `du -x` | local tree | 参数可解析并保持单文件系统遍历语义 |
+| DU-007 | `-x` | structured | `du -x` | local tree + mounted tmpfs subtree | 真实挂载 tmpfs 构造跨文件系统夹具，验证 `-x` 排除跨设备子树、行集合与 native 一致（无 `CAP_SYS_ADMIN` 时 skip；单元测试兜底覆盖同一排除逻辑） |
 | DU-008 | `--apparent-size` | structured | `du --apparent-size` | sparse/small files | 使用表观大小统计 |
 
 ### df
@@ -133,9 +133,9 @@
 |---|---|---|---|---|---|
 | STAT-001 | default file metadata | exact | `stat` | temp file | 默认多行输出与原生逐行一致（`Birth:` 行除外） |
 | STAT-002 | `-L, --dereference` | structured | `stat -L` | symlink file | 显示目标文件而非 symlink 本身，Access 模式字段一致 |
-| STAT-003 | `-f, --file-system` | structured | `stat -f` | temp dir | 文件系统字段语义一致 |
+| STAT-003 | `-f, --file-system` | structured | `stat -f` | temp dir | 文件系统字段语义一致，含 `Fundamental block size`/`Inodes: Total` 行存在性，且为真实数值 |
 | STAT-004 | `-c, --format` | exact | `stat -c` | temp file | 指定格式输出完全一致，覆盖 `%f/%u/%g/%U/%G/%A/%i/%h/%d/%D/%o/%b/%X/%Y/%Z/%x/%z` 等常用指令 |
-| STAT-005 | `-t, --terse` | structured | `stat -t` | temp file | 简洁字段数量与关键字段一致 |
+| STAT-005 | `-t, --terse` | structured | `stat -t` | temp file | 16 个字段与原生逐字段相等，仅 birthtime（gobox 固定为 0）不参与比较 |
 
 ### truncate
 
@@ -259,7 +259,7 @@
 |---|---|---|---|---|---|
 | SEQ-001 | `LAST` | exact | `seq LAST` | integer operand | 默认从 `1` 递增到 `LAST`，输出与退出码一致 |
 | SEQ-002 | `FIRST LAST` | exact | `seq FIRST LAST` | integer operands | 默认步长 `1` 的双参数区间输出一致，含负数操作数 |
-| SEQ-003 | `FIRST INC LAST` | exact | `seq FIRST INC LAST` | integer/float operands | 显式步长路径生效，递增/递减、浮点步长、负数操作数输出一致；小数位数按最长操作数统一，不出现浮点累积误差（如 `0.1+0.1+0.1` 不应显示为 `0.30000000000000004`） |
+| SEQ-003 | `FIRST INC LAST` | exact | `seq FIRST INC LAST` | integer/float operands | 显式步长路径生效，递增/递减、浮点步长、负数操作数输出一致；小数位数按最长操作数统一，不出现浮点累积误差 |
 | SEQ-004 | `-f FORMAT, --format=FORMAT` | behavior | `seq -f` | integer/float operands | 指定格式必须相对默认输出改变每项文本表示，且数值序列不变 |
 | SEQ-005 | `-s SEP, --separator=SEP` | exact | `seq -s` | integer operands | 分隔符替换换行的输出一致 |
 | SEQ-006 | `-w, --equal-width` | exact | `seq -w` | mixed-width integer/float/negative operands | 输出项按最大位宽补零对齐（仅补整数部分），且与原生逐字节一致 |
@@ -384,7 +384,7 @@
 | NETSTAT-002 | `--sort string` | structured | gobox-only | local listeners | 排序字段语义正确 |
 | NETSTAT-003 | `--state string` | structured | `netstat` | local listener + state filter | 状态列表过滤正确 |
 | NETSTAT-004 | `-l, --listening` | structured | `netstat -l` | local listener | 仅输出监听 socket |
-| NETSTAT-005 | `-n, --numeric` | contract | gobox-only | local sockets | gobox 当前默认已是数字地址/端口，`-n` 应保持与默认输出一致 |
+| NETSTAT-005 | `-n, --numeric` | structured | `netstat -n` | bound local listener | 受控监听 socket 上验证 `-n` 与默认输出逐字节相同（no-op 契约），且目标行仍以数字形式渲染 |
 | NETSTAT-006 | `-a, --all` | contract | gobox-only | local sockets | gobox 当前默认 socket 选择已覆盖 `-a` 兼容语义，输出应与默认一致 |
 | NETSTAT-007 | `-t, --tcp` | structured | `netstat -t` | local TCP listener | 仅输出 TCP socket |
 | NETSTAT-008 | `-u, --udp` | structured | `netstat -u` | local UDP socket | 仅输出 UDP socket |
@@ -394,7 +394,7 @@
 | NETSTAT-012 | `-6` | structured | `netstat -6` | local IPv6 socket | 仅输出 IPv6 socket |
 | NETSTAT-013 | `-e, --extend` | behavior | `netstat -e` | local sockets | `-e` 必须在保留目标 socket 的同时增加扩展列 |
 | NETSTAT-014 | `-o, --timers` | behavior | `netstat -o` | local sockets | `-o` 必须在保留目标 socket 的同时增加 Timer 列 |
-| NETSTAT-015 | `-W, --wide` | contract | gobox-only | local sockets | gobox 当前默认不截断地址，`-W` 应保持与 `-n -l` 基线一致 |
+| NETSTAT-015 | `-W, --wide` | structured | `netstat -W` | bound local listener | 受控监听 socket 上验证 `-W` 与 `-n -l` 基线逐字节相同（no-op 契约），且目标监听行仍被保留 |
 | NETSTAT-016 | combined short flags, e.g. `-tnlp` | behavior | `netstat -tnlp` | local TCP listener | 合并短参数必须相对 `-t -l` 基线改变输出，并命中目标 listener |
 | NETSTAT-017 | `-r` | structured | `netstat -r` | local route table | 路由表必须包含接口列与默认路由语义，默认路由目的地为 `default`，表头为 `MSS Window irtt` |
 | NETSTAT-018 | `-i` | structured | `netstat -i` | local interfaces | 接口表必须包含环回接口、收发统计列、`RX-OVR`/`TX-OVR`，按接口名排序，`Flg` 用字母代码 |
@@ -488,13 +488,13 @@
 | PS-010 | `-o FIELD1,FIELD2` | structured | `ps -o` | current process | 自定义列输出正确；高频字段映射稳定，不支持字段明确报错 |
 | PS-011 | `--comm string` | structured | `pgrep -x` | current process | 进程名精确匹配符合 `pgrep -x` |
 | PS-012 | `-A` | structured | `ps -A` | current process | all-process alias 可看到当前进程 |
-| PS-013 | `-F` | behavior | `ps -F` | current process | `-F` 必须相对基础 `-p PID` 增加 full-format 列并保留目标 PID |
+| PS-013 | `-F` | structured | `ps -F` | current process | 列集合与顺序须与原生 `UID PID PPID C SZ RSS PSR STIME TTY TIME CMD` 表头逐字段相等，保留目标 PID，`SZ`/`RSS` 为真实数值 |
 | PS-014 | `-u USER` | structured | `ps -u` | current user | 用户过滤命中当前进程集合 |
 | PS-015 | `-p PID` | structured | `ps -p` | current process | PID 过滤只保留目标进程 |
 | PS-016 | `-C NAME` | structured | `ps -C` | current process name | 命令名过滤命中目标进程 |
 | PS-017 | `--sort -FIELD` | structured | `ps --sort` | current processes | GNU 风格降序排序参数生效；不支持字段明确报错 |
 | PS-018 | BSD `aux` semantics | behavior | `ps aux` | current process | BSD 风格 `a/x/u` 组合语义与 user-oriented 列布局保持常见 native 预期 |
-| PS-019 | `--long` | structured | `ps -l` | current process | long 格式输出必须包含 `S/UID/PID/PPID/TTY/TIME/CMD`，状态列用单字母 `S` 而非 `STAT` |
+| PS-019 | `--long` | structured | `ps -l` | current process | 列集合与顺序须与原生 `F S UID PID PPID C PRI NI ADDR SZ WCHAN TTY TIME CMD` 表头逐字段相等，保留目标 PID，`ADDR`/`SZ` 值正确；`PRI` 取值不参与比较（见 CMD-SPECS.md） |
 | PS-020 | `--hide-idle` | contract | gobox-only | idle process | 过滤掉采样 CPU 为 0 的进程 |
 
 ### top
@@ -509,7 +509,7 @@
 | TOP-006 | `-p PID` | structured | `top -p` | current process | PID 过滤命中当前进程 |
 | TOP-007 | `-u USER` | structured | `top -u` | current user | 用户过滤可执行并输出进程表 |
 | TOP-008 | `-H` | contract | `top -H` | single iteration | Linux 下显示线程视图，`PID` 列输出 TID，`-p PID` 仍按所属进程过滤 |
-| TOP-009 | `-i` | contract | `top -i` | single iteration | idle 过滤参数被接受 |
+| TOP-009 | `-i` | behavior | `top -i` | idle child process + `-p` filter | 受控 idle 子进程上验证 `-i` 相对 `-p` 基线过滤掉零 CPU 采样的目标行（行数减少），证明过滤真的生效而非仅被接受 |
 | TOP-010 | `-c` | contract | `top -c` | single iteration | 完整命令行模式被接受 |
 | TOP-011 | `-o FIELD` | contract | `top -o` | single iteration | 排序字段参数被接受 |
 
@@ -551,6 +551,7 @@
 | KILL-008 | `-n` | behavior | `pkill -n` | multiple controlled processes | 最新进程选择一致 |
 | KILL-009 | `-o` | behavior | `pkill -o` | multiple controlled processes | 最早进程选择一致 |
 | KILL-010 | `--dry-run` | contract | gobox-only | controlled named process | 输出将匹配进程且不发送信号 |
+| KILL-011 | `-f/-x/-P/-n/-o` 批量匹配遇 `EPERM` 继续处理 | contract | `pkill` | injected `killSignal` fault | 单个匹配对象失败时须跳过继续处理，不整批中断（对齐 `pkill`）；沙箱无法构造真实 `EPERM`，以单元测试提供强证据 |
 
 ### lsof
 
@@ -559,7 +560,7 @@
 | LSOF-001 | default open files | structured | `lsof` | current process | 输出包含 `USER`/`TYPE`/`DEVICE`/`SIZE/OFF`/`NODE` 表头和当前进程可见打开文件 |
 | LSOF-002 | `-p PID` | structured | `lsof -p` | current process | 结果行只能属于指定 PID |
 | LSOF-003 | `-c NAME` | structured | `lsof -c` | controlled named process | 命令名过滤只保留目标进程集合 |
-| LSOF-004 | `-i` | behavior | `lsof -i` | local socket | `-i` 必须相对默认 `lsof` 缩小为已解析 TCP/UDP 的网络 socket 结果集，排除无法解析的 socket（如 unix domain） |
+| LSOF-004 | `-i` | behavior | `lsof -i` | local socket | `-i` 必须相对默认 `lsof` 缩小为仅 TCP/UDP 结果集，排除包括 unix domain socket 在内的非 internet socket |
 | LSOF-005 | `-iTCP` | structured | `lsof -iTCP` | local TCP socket | TCP 协议过滤集合一致 |
 | LSOF-006 | `-iUDP` | structured | `lsof -iUDP` | local UDP socket | UDP 协议过滤集合一致 |
 | LSOF-007 | `-i :PORT` | behavior | `lsof -i :PORT` | local listener | 端口过滤必须相对 bare `-i` 缩小结果集并保留目标 socket |
@@ -567,6 +568,7 @@
 | LSOF-009 | `-P` | contract | gobox-only | local socket | gobox 当前默认已是数字端口表示，`-P` 应保持与 `-i :PORT` 基线一致 |
 | LSOF-010 | `-t` | exact | `lsof -t` | controlled process | 仅输出 PID 列表 |
 | LSOF-011 | `FILE...` | structured | `lsof FILE...` | opened temp file | 能定位打开指定文件的进程 |
+| LSOF-012 | unix domain socket resolution | structured | `lsof` | bound unix socket | 默认输出须将 unix domain socket fd 解析为 `TYPE=unix` 并显示绑定路径，不再退化为 `socket:[inode]` 占位符；native 未汇报该路径时 skip |
 
 ### watch
 

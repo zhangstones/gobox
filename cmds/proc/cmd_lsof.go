@@ -221,7 +221,7 @@ func collectLsofRows(pidFilter int, cmdFilter string, netOnly bool, files []stri
 			inode := socketInode(target)
 			// -i means "internet sockets" specifically: native lsof -i
 			// never lists unix domain sockets, only resolved TCP/UDP ones.
-			if netOnly && (inode == "" || sockets[inode] == "") {
+			if netOnly && (inode == "" || !isInternetSocketDetail(sockets[inode])) {
 				continue
 			}
 			row := lsofRow{command: comm, pid: pid, user: user, fd: fd.Name()}
@@ -247,8 +247,8 @@ func collectLsofRows(pidFilter int, cmdFilter string, netOnly bool, files []stri
 
 // fillLsofSocketColumns populates TYPE/DEVICE/SIZE-OFF/NODE/NAME for a
 // socket fd. detail is the "PROTO local->remote" string collectProcNetSockets
-// produces for TCP/UDP sockets (empty for socket types gobox doesn't
-// resolve, e.g. unix domain sockets).
+// produces for TCP/UDP sockets, or "UNIX path" for unix domain sockets
+// (empty for socket types gobox still can't resolve at all).
 func fillLsofSocketColumns(row *lsofRow, inode, detail string) {
 	row.sizeOff = "0t0"
 	if detail == "" {
@@ -263,6 +263,17 @@ func fillLsofSocketColumns(row *lsofRow, inode, detail string) {
 	if len(parts) > 1 {
 		rest = parts[1]
 	}
+	if proto == "UNIX" {
+		row.typ = "unix"
+		row.node = inode
+		if rest == "" {
+			// Matches native lsof's placeholder for unbound/anonymous unix
+			// sockets, which have no filesystem path in /proc/net/unix.
+			rest = "socket"
+		}
+		row.name = rest
+		return
+	}
 	row.typ = "IPv4"
 	if strings.Contains(rest, "[") {
 		row.typ = "IPv6"
@@ -270,6 +281,14 @@ func fillLsofSocketColumns(row *lsofRow, inode, detail string) {
 	row.device = inode
 	row.node = proto
 	row.name = rest
+}
+
+// isInternetSocketDetail reports whether a collectProcNetSockets detail
+// string describes a resolved TCP/UDP socket, as opposed to a unix domain
+// socket ("UNIX ...") or an unresolved one (""). Used to keep -i scoped to
+// internet sockets only, matching native lsof -i.
+func isInternetSocketDetail(detail string) bool {
+	return strings.HasPrefix(detail, "TCP") || strings.HasPrefix(detail, "UDP")
 }
 
 // fillLsofFileColumns populates TYPE/DEVICE/SIZE-OFF/NODE for a regular
@@ -333,7 +352,38 @@ func collectProcNetSockets() map[string]string {
 	readProcNet(out, "/proc/net/tcp6", "TCP")
 	readProcNet(out, "/proc/net/udp", "UDP")
 	readProcNet(out, "/proc/net/udp6", "UDP")
+	readProcNetUnix(out, "/proc/net/unix")
 	return out
+}
+
+// readProcNetUnix adds unix domain socket inode->detail entries ("UNIX
+// path") from /proc/net/unix, so lsof can resolve NAME for unix socket fds
+// instead of falling back to a bare "socket:[inode]" placeholder. Columns
+// per `man 5 proc`: Num RefCount Protocol Flags Type St Inode Path.
+func readProcNetUnix(out map[string]string, path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	first := true
+	for scanner.Scan() {
+		if first {
+			first = false
+			continue
+		}
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 7 {
+			continue
+		}
+		inode := fields[6]
+		name := ""
+		if len(fields) >= 8 {
+			name = strings.Join(fields[7:], " ")
+		}
+		out[inode] = strings.TrimSpace("UNIX " + name)
+	}
 }
 
 func readProcNet(out map[string]string, path, proto string) {

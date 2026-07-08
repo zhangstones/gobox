@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -262,6 +263,73 @@ func TestKillCmdOptionsExactCommPartialMismatch(t *testing.T) {
 		t.Fatalf("expected partial comm mismatch, got %q", out)
 	}
 
+}
+
+// TestSignalMatchesSkipsEPERMAndContinuesBatch is a regression test for
+// pattern-matched kill (-f/-x/-P/-n/-o) aborting the whole batch on the
+// first permission error. Native pkill skips a process it can't signal
+// (EPERM) and keeps going; gobox previously returned immediately, leaving
+// every later match in the batch un-signaled.
+func TestSignalMatchesSkipsEPERMAndContinuesBatch(t *testing.T) {
+	origKill := killSignal
+	defer func() { killSignal = origKill }()
+
+	var signaled []int
+	killSignal = func(pid int, sig syscall.Signal) error {
+		if pid == 111 {
+			return syscall.EPERM
+		}
+		signaled = append(signaled, pid)
+		return nil
+	}
+
+	matches := []procMatch{{pid: 111, cmd: "owned-by-someone-else"}, {pid: 222, cmd: "our-process"}}
+	if err := signalMatches(matches, syscall.SIGTERM, false); err != nil {
+		t.Fatalf("expected batch signal to succeed despite one EPERM match, got %v", err)
+	}
+	if len(signaled) != 1 || signaled[0] != 222 {
+		t.Fatalf("expected only the non-EPERM match (pid 222) to be signaled, got %v", signaled)
+	}
+}
+
+// TestSignalMatchesSkipsESRCHAndContinuesBatch mirrors the EPERM case for a
+// process that exited between the /proc scan and the kill.
+func TestSignalMatchesSkipsESRCHAndContinuesBatch(t *testing.T) {
+	origKill := killSignal
+	defer func() { killSignal = origKill }()
+
+	var signaled []int
+	killSignal = func(pid int, sig syscall.Signal) error {
+		if pid == 111 {
+			return syscall.ESRCH
+		}
+		signaled = append(signaled, pid)
+		return nil
+	}
+
+	matches := []procMatch{{pid: 111, cmd: "already-exited"}, {pid: 222, cmd: "our-process"}}
+	if err := signalMatches(matches, syscall.SIGTERM, false); err != nil {
+		t.Fatalf("expected batch signal to succeed despite one ESRCH match, got %v", err)
+	}
+	if len(signaled) != 1 || signaled[0] != 222 {
+		t.Fatalf("expected only the non-ESRCH match (pid 222) to be signaled, got %v", signaled)
+	}
+}
+
+// TestSignalMatchesPropagatesOtherErrors ensures non-ESRCH/EPERM failures
+// still abort the batch and surface to the caller.
+func TestSignalMatchesPropagatesOtherErrors(t *testing.T) {
+	origKill := killSignal
+	defer func() { killSignal = origKill }()
+
+	killSignal = func(pid int, sig syscall.Signal) error {
+		return syscall.EINVAL
+	}
+
+	matches := []procMatch{{pid: 111, cmd: "x"}}
+	if err := signalMatches(matches, syscall.SIGTERM, false); err != syscall.EINVAL {
+		t.Fatalf("expected EINVAL to propagate, got %v", err)
+	}
 }
 
 func TestKillCmdOptionsNewestAndOldestSelectOneProcess(t *testing.T) {

@@ -1750,6 +1750,19 @@ func TestParity_StatCases(t *testing.T) {
 				if statLineWithPrefix(gobox.Stdout, "Block size:") == "" || statLineWithPrefix(native.Stdout, "Block size:") == "" {
 					t.Fatalf("stat -f missing block size line\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 				}
+				if !strings.Contains(gobox.Stdout, "Fundamental block size:") || !strings.Contains(native.Stdout, "Fundamental block size:") {
+					t.Fatalf("stat -f missing Fundamental block size field\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+				}
+				goboxInodes := statLineWithPrefix(gobox.Stdout, "Inodes:")
+				nativeInodes := statLineWithPrefix(native.Stdout, "Inodes:")
+				if goboxInodes == "" || nativeInodes == "" {
+					t.Fatalf("stat -f missing Inodes line\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+				}
+				if got := statFieldValue(goboxInodes, "Total:"); got == "" {
+					t.Fatalf("stat -f Inodes Total should be a real value, got empty in %q", goboxInodes)
+				} else if _, err := strconv.ParseUint(got, 10, 64); err != nil {
+					t.Fatalf("stat -f Inodes Total should be numeric, got %q: %v", got, err)
+				}
 			},
 		},
 		{
@@ -1797,34 +1810,26 @@ func TestParity_StatCases(t *testing.T) {
 				if gobox.ExitCode != native.ExitCode {
 					t.Fatalf("stat -t exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
 				}
-				// Both outputs should have the filename as field 0 and file size as field 1.
-				// (gobox terse format: "name size octal_perm timestamp"; native has more fields.)
+				// gobox's terse format now mirrors GNU coreutils' full field
+				// layout: name size blocks rawmode(hex) uid gid device(hex)
+				// inode links major(hex) minor(hex) atime mtime ctime
+				// birthtime blksize (CMD-SPECS.md "stat -t"). Every field
+				// should match native exactly except birthtime (index 14),
+				// which gobox always reports as 0 (birth time isn't tracked)
+				// while native's value depends on filesystem support.
 				gFields := strings.Fields(normalizeText(gobox.Stdout))
 				nFields := strings.Fields(normalizeText(native.Stdout))
-				if len(gFields) < 2 {
-					t.Fatalf("stat -t gobox output too short: %q", gobox.Stdout)
+				if len(gFields) != len(nFields) {
+					t.Fatalf("stat -t field count mismatch gobox=%d native=%d\ngobox:  %q\nnative: %q", len(gFields), len(nFields), gobox.Stdout, native.Stdout)
 				}
-				if len(nFields) < 2 {
-					t.Fatalf("stat -t native output too short: %q", native.Stdout)
-				}
-				// Field 0: filename.
-				if gFields[0] != nFields[0] {
-					t.Fatalf("stat -t filename mismatch gobox=%q native=%q", gFields[0], nFields[0])
-				}
-				// Field 1: file size in bytes.
-				if gFields[1] != nFields[1] {
-					t.Fatalf("stat -t file size mismatch gobox=%q native=%q", gFields[1], nFields[1])
-				}
-				// gobox's terse mode is a documented subset of native's
-				// (CMD-SPECS.md marks stat -t "⚠️ 部分一致": "简洁单行格式",
-				// not full field parity), so field *counts* are not expected
-				// to match native's much larger terse schema. What must
-				// hold is gobox's own terse contract: exactly 4 space-
-				// separated fields (name, size, octal perm, RFC3339
-				// timestamp) -- verifying this catches a regression that
-				// drops or duplicates a field while keeping name/size intact.
-				if len(gFields) != 4 {
-					t.Fatalf("stat -t gobox terse output should have exactly 4 fields (name size mode time), got %d: %q", len(gFields), gobox.Stdout)
+				const birthtimeIdx = 14
+				for i := range gFields {
+					if i == birthtimeIdx {
+						continue
+					}
+					if gFields[i] != nFields[i] {
+						t.Fatalf("stat -t field %d mismatch gobox=%q native=%q\ngobox:  %q\nnative: %q", i, gFields[i], nFields[i], gobox.Stdout, native.Stdout)
+					}
 				}
 			},
 		},
