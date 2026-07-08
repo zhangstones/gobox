@@ -270,10 +270,15 @@ func TestPsCmdLongFormatShowsLongColumns(t *testing.T) {
 	if len(lines) < 2 {
 		t.Fatalf("expected header and at least one process line, got %q", output)
 	}
-	for _, want := range []string{"PID", "PPID", "STAT", "TTY", "TIME", "CMD"} {
+	// Native ps -l uses the single-letter "S" state header (not the BSD-style
+	// "STAT" used by e.g. ps aux), and also includes UID.
+	for _, want := range []string{"S", "UID", "PID", "PPID", "TTY", "TIME", "CMD"} {
 		if !strings.Contains(lines[0], want) {
 			t.Fatalf("expected long-format header with %s, got %q", want, lines[0])
 		}
+	}
+	if strings.Contains(lines[0], "STAT") {
+		t.Fatalf("expected single-letter S header, not STAT, got %q", lines[0])
 	}
 }
 

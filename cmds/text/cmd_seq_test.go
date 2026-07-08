@@ -130,42 +130,46 @@ func TestSeqCmdIncrementOne(t *testing.T) {
 
 // ============== EDGE CASES TESTS ==============
 
+// TestSeqCmdNegativeLast is a regression test: "seq -5" is the
+// single-operand form (LAST=-5, implicit FIRST=1, INC=1); since -5 < 1 with
+// a positive increment, native seq exits 0 with empty output, not an error
+// — this used to be misinterpreted as an unknown "-5" option.
 func TestSeqCmdNegativeLast(t *testing.T) {
-	// Negative numbers as operands not supported - treated as options
 	output, err := runSeqCmd([]string{"-5"})
-	if err == nil {
-		t.Errorf("Expected error for negative operand (treated as unknown option)")
-	} else if err.Error() != "unknown option: -5" {
-		t.Fatalf("unexpected error: %v", err)
+	if err != nil {
+		t.Fatalf("seq command failed: %v", err)
 	}
-	if output != "" {
-		t.Fatalf("expected no output, got %q", output)
+	if strings.TrimSpace(output) != "" {
+		t.Fatalf("expected empty output for descending single-operand form, got %q", output)
 	}
 }
 
+// TestSeqCmdNegativeRange is a regression test: negative FIRST/LAST
+// operands must be accepted; "seq -3 -1" ascends from -3 to -1.
 func TestSeqCmdNegativeRange(t *testing.T) {
-	// Negative numbers as operands not supported - treated as options
 	output, err := runSeqCmd([]string{"-3", "-1"})
-	if err == nil {
-		t.Errorf("Expected error for negative operands (treated as unknown options)")
-	} else if err.Error() != "unknown option: -3" {
-		t.Fatalf("unexpected error: %v", err)
+	if err != nil {
+		t.Fatalf("seq command failed: %v", err)
 	}
-	if output != "" {
-		t.Fatalf("expected no output, got %q", output)
+	result := strings.TrimSpace(output)
+	expected := "-3\n-2\n-1"
+	if result != expected {
+		t.Errorf("Expected:\n%s\nGot:\n%s", expected, result)
 	}
 }
 
 func TestSeqCmdNegativeWithIncrement(t *testing.T) {
-	// Negative numbers as operands not supported - treated as options
+	// Regression test: negative FIRST/LAST operands must be accepted (e.g.
+	// "seq -10 2 -2" ascends from -10 to -2 in steps of 2), matching native
+	// seq; this used to be misinterpreted as an unknown "-10" option.
 	output, err := runSeqCmd([]string{"-10", "2", "-2"})
-	if err == nil {
-		t.Errorf("Expected error for negative operands (treated as unknown options)")
-	} else if err.Error() != "unknown option: -10" {
-		t.Fatalf("unexpected error: %v", err)
+	if err != nil {
+		t.Fatalf("seq command failed: %v", err)
 	}
-	if output != "" {
-		t.Fatalf("expected no output, got %q", output)
+	result := strings.TrimSpace(output)
+	expected := "-10\n-8\n-6\n-4\n-2"
+	if result != expected {
+		t.Errorf("Expected:\n%s\nGot:\n%s", expected, result)
 	}
 }
 
@@ -198,19 +202,28 @@ func TestSeqCmdEqualWidthTwoDigits(t *testing.T) {
 	}
 }
 
+// TestSeqCmdEqualWidthNegative is a regression test: "seq -w -9" is the
+// single-operand form (LAST=-9, implicit FIRST=1, INC=1), so since -9 < 1
+// with a positive increment the sequence is empty. Native seq exits 0 with
+// no output here (not an error) — this used to be misinterpreted as an
+// unknown "-9" option.
 func TestSeqCmdEqualWidthNegative(t *testing.T) {
-	// Negative numbers as operands not supported - treated as options
-	_, err := runSeqCmd([]string{"-w", "-9"})
-	if err == nil {
-		t.Errorf("Expected error for negative operand (treated as unknown option)")
+	output, err := runSeqCmd([]string{"-w", "-9"})
+	if err != nil {
+		t.Fatalf("seq command failed: %v", err)
+	}
+	if strings.TrimSpace(output) != "" {
+		t.Errorf("expected empty output for descending single-operand form, got %q", output)
 	}
 }
 
 func TestSeqCmdEqualWidthNegativeSingle(t *testing.T) {
-	// Negative numbers as operands not supported - treated as options
-	_, err := runSeqCmd([]string{"-w", "-5"})
-	if err == nil {
-		t.Errorf("Expected error for negative operand (treated as unknown option)")
+	output, err := runSeqCmd([]string{"-w", "-5"})
+	if err != nil {
+		t.Fatalf("seq command failed: %v", err)
+	}
+	if strings.TrimSpace(output) != "" {
+		t.Errorf("expected empty output for descending single-operand form, got %q", output)
 	}
 }
 
@@ -381,6 +394,10 @@ func TestSeqCmdDecimalIncrement(t *testing.T) {
 	}
 }
 
+// TestSeqCmdDecimalLast is a regression test: native seq derives the output
+// decimal precision from the widest-precision operand (here INC=0.5 and
+// LAST=2.5, both 1 decimal place) and applies it to every value, including
+// otherwise-whole numbers ("1.0", "2.0"), not "1"/"2".
 func TestSeqCmdDecimalLast(t *testing.T) {
 	output, err := runSeqCmd([]string{"1", "0.5", "2.5"})
 	if err != nil {
@@ -388,7 +405,7 @@ func TestSeqCmdDecimalLast(t *testing.T) {
 	}
 
 	result := strings.TrimSpace(output)
-	expected := "1\n1.5\n2\n2.5"
+	expected := "1.0\n1.5\n2.0\n2.5"
 	if result != expected {
 		t.Errorf("Expected:\n%s\nGot:\n%s", expected, result)
 	}
@@ -738,6 +755,39 @@ func TestSeqCmdOutputToFile(t *testing.T) {
 
 	result := strings.TrimSpace(string(data))
 	expected := "1\n2\n3\n4\n5"
+	if result != expected {
+		t.Errorf("Expected:\n%s\nGot:\n%s", expected, result)
+	}
+}
+
+// TestSeqCmdFloatingPointAccumulationDoesNotDrift is a regression test for a
+// bug where repeatedly adding a fractional INC (0.1 three times) produced a
+// floating-point artifact like "0.30000000000000004" instead of "0.3",
+// because values were computed via a running total (cur += inc) rather than
+// first + n*inc, and printed with %g instead of a precision derived from
+// the operands.
+func TestSeqCmdFloatingPointAccumulationDoesNotDrift(t *testing.T) {
+	output, err := runSeqCmd([]string{"0.1", "0.1", "0.5"})
+	if err != nil {
+		t.Fatalf("seq command failed: %v", err)
+	}
+	result := strings.TrimSpace(output)
+	expected := "0.1\n0.2\n0.3\n0.4\n0.5"
+	if result != expected {
+		t.Errorf("Expected:\n%s\nGot:\n%s", expected, result)
+	}
+}
+
+// TestSeqCmdEqualWidthWithDecimals is a regression test for -w combined
+// with fractional operands: native seq pads the integer part with leading
+// zeros while keeping the shared decimal precision, e.g. "0.00".."1.00".
+func TestSeqCmdEqualWidthWithDecimals(t *testing.T) {
+	output, err := runSeqCmd([]string{"-w", "0", "0.25", "1"})
+	if err != nil {
+		t.Fatalf("seq command failed: %v", err)
+	}
+	result := strings.TrimSpace(output)
+	expected := "0.00\n0.25\n0.50\n0.75\n1.00"
 	if result != expected {
 		t.Errorf("Expected:\n%s\nGot:\n%s", expected, result)
 	}

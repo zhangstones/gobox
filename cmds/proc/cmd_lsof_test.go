@@ -277,6 +277,107 @@ func TestLsofLongCommandAndFDAreAligned(t *testing.T) {
 	}
 }
 
+// TestLsofCmdIncludesUserTypeDeviceSizeNodeColumns is a regression test for
+// gobox lsof previously only showing COMMAND/PID/FD/NAME; native lsof also
+// shows USER/TYPE/DEVICE/SIZE-OFF/NODE.
+func TestLsofCmdIncludesUserTypeDeviceSizeNodeColumns(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "open-file")
+	if err := os.WriteFile(target, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setupFakeLsofProc(t, []fakeLsofProcess{
+		{pid: "1234", comm: "demo", fdTargets: map[string]string{"3": target}},
+	}, nil)
+	out, err := captureProcCmd(t, func() error { return LsofCmd(nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"USER", "TYPE", "DEVICE", "SIZE/OFF", "NODE"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected header column %q in %q", want, out)
+		}
+	}
+	if !strings.Contains(out, "REG") {
+		t.Fatalf("expected REG file type in %q", out)
+	}
+	if !strings.Contains(out, "5") { // file size in bytes ("hello" = 5 bytes)
+		t.Fatalf("expected file size 5 in %q", out)
+	}
+}
+
+// TestLsofCmdCharDeviceUsesRdevForDevice is a regression test for a bug
+// where a character device's DEVICE column used the filesystem device
+// (st_dev, e.g. the root filesystem's major:minor) instead of the device's
+// own major:minor (st_rdev), which for /dev/null is always "1,3".
+func TestLsofCmdCharDeviceUsesRdevForDevice(t *testing.T) {
+	if _, err := os.Stat("/dev/null"); err != nil {
+		t.Skip("/dev/null not available in this sandbox")
+	}
+	setupFakeLsofProc(t, []fakeLsofProcess{
+		{pid: "1234", comm: "demo", fdTargets: map[string]string{"0": "/dev/null"}},
+	}, nil)
+	out, err := captureProcCmd(t, func() error { return LsofCmd(nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "CHR") {
+		t.Fatalf("expected CHR type for /dev/null, got %q", out)
+	}
+	if !strings.Contains(out, "1,3") {
+		t.Fatalf("expected device 1,3 (st_rdev) for /dev/null, got %q", out)
+	}
+}
+
+// TestLsofCmdNetworkFilterExcludesUnresolvedSockets is a regression test for
+// a bug where -i included every socket fd (matching only the "socket:"
+// readlink prefix), leaking unix domain sockets into the output. Native
+// lsof -i only lists sockets it can resolve to a real internet (TCP/UDP)
+// address.
+func TestLsofCmdNetworkFilterExcludesUnresolvedSockets(t *testing.T) {
+	setupFakeLsofProc(t, []fakeLsofProcess{
+		{pid: "1234", comm: "demo", fdTargets: map[string]string{
+			"5": "socket:[999001]", // unresolved (e.g. unix domain socket)
+			"6": "socket:[999002]", // resolved TCP socket
+		}},
+	}, map[string]string{"999002": "TCP 127.0.0.1:80->0.0.0.0:0"})
+	out, err := captureProcCmd(t, func() error { return LsofCmd([]string{"-i"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "999001") {
+		t.Fatalf("expected unresolved socket excluded from -i output, got %q", out)
+	}
+	if !strings.Contains(out, "999002") {
+		t.Fatalf("expected resolved TCP socket included in -i output, got %q", out)
+	}
+}
+
+// TestLsofCmdProtoFilterMatchesNodeColumn is a regression test: the proto
+// name (TCP/UDP) moved from the NAME column into the new NODE column, so
+// the -iTCP/-iUDP proto filter (which previously matched against NAME) had
+// to be updated to match NODE instead.
+func TestLsofCmdProtoFilterMatchesNodeColumn(t *testing.T) {
+	setupFakeLsofProc(t, []fakeLsofProcess{
+		{pid: "1234", comm: "demo", fdTargets: map[string]string{
+			"5": "socket:[999003]", // TCP
+			"6": "socket:[999004]", // UDP
+		}},
+	}, map[string]string{
+		"999003": "TCP 127.0.0.1:80->0.0.0.0:0",
+		"999004": "UDP 127.0.0.1:53->0.0.0.0:0",
+	})
+	out, err := captureProcCmd(t, func() error { return LsofCmd([]string{"-iTCP"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "999003") {
+		t.Fatalf("expected TCP socket in -iTCP output, got %q", out)
+	}
+	if strings.Contains(out, "999004") {
+		t.Fatalf("expected UDP socket excluded from -iTCP output, got %q", out)
+	}
+}
+
 type fakeLsofProcess struct {
 	pid       string
 	comm      string

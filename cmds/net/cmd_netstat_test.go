@@ -374,11 +374,11 @@ func TestPrintNetstatInterfacesAlignsLongNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("expected header and row, got %q", out)
+	if len(lines) != 3 {
+		t.Fatalf("expected title, header and row, got %q", out)
 	}
-	headerFlg := strings.Index(lines[0], "Flg")
-	rowFlg := strings.Index(lines[1], "up")
+	headerFlg := strings.Index(lines[1], "Flg")
+	rowFlg := strings.Index(lines[2], "up")
 	if headerFlg == -1 || rowFlg != headerFlg {
 		t.Fatalf("expected interface column alignment, got %q", out)
 	}
@@ -408,6 +408,48 @@ func TestParseProcNetRoute(t *testing.T) {
 	}
 }
 
+// TestParseProcNetRouteDefaultRouteUsesLiteralWord is a regression test for
+// a bug where the default route's destination printed as "0.0.0.0" instead
+// of native netstat -r's literal word "default".
+func TestParseProcNetRouteDefaultRouteUsesLiteralWord(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "route")
+	content := "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
+		"eth0\t00000000\t010012AC\t0003\t0\t0\t100\t00000000\t0\t0\t0\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write route: %v", err)
+	}
+	routes, err := parseProcNetRoute(path)
+	if err != nil {
+		t.Fatalf("parseProcNetRoute: %v", err)
+	}
+	if len(routes) != 1 || routes[0].Destination != "default" {
+		t.Fatalf("expected default route destination \"default\", got %+v", routes)
+	}
+}
+
+// TestParseProcNetRoutePopulatesMSSWindowIRTT is a regression test for a bug
+// where the route table's header/columns showed "Metric" (from
+// /proc/net/route's Metric field) instead of native netstat -r's "MSS
+// Window irtt" columns (/proc/net/route's own MTU/Window/IRTT fields,
+// previously never read).
+func TestParseProcNetRoutePopulatesMSSWindowIRTT(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "route")
+	content := "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
+		"eth0\t000012AC\t00000000\t0001\t0\t0\t100\t0000FFFF\t1500\t2\t3\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write route: %v", err)
+	}
+	routes, err := parseProcNetRoute(path)
+	if err != nil {
+		t.Fatalf("parseProcNetRoute: %v", err)
+	}
+	if len(routes) != 1 || routes[0].MSS != "1500" || routes[0].Window != "2" || routes[0].IRTT != "3" {
+		t.Fatalf("expected MSS=1500 Window=2 IRTT=3, got %+v", routes)
+	}
+}
+
 func TestParseProcNetDev(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "dev")
@@ -426,6 +468,92 @@ func TestParseProcNetDev(t *testing.T) {
 	}
 	if ifaces[0].Name != "test0" || ifaces[0].RXOK != 10 || ifaces[0].TXDrop != 4 {
 		t.Fatalf("unexpected interface stats: %+v", ifaces[0])
+	}
+}
+
+// TestParseProcNetDevPopulatesOverrunCounters is a regression test for
+// netstat -i previously not reading /proc/net/dev's "fifo" columns at all;
+// native netstat -i shows these as RX-OVR/TX-OVR.
+func TestParseProcNetDevPopulatesOverrunCounters(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dev")
+	content := "Inter-|   Receive                                                |  Transmit\n" +
+		" face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n" +
+		"  test0: 1000 10 1 2 5 0 0 0 2000 20 3 4 6 0 0 0\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write dev: %v", err)
+	}
+	ifaces, err := parseProcNetDev(path)
+	if err != nil {
+		t.Fatalf("parseProcNetDev: %v", err)
+	}
+	if len(ifaces) != 1 || ifaces[0].RXOvr != 5 || ifaces[0].TXOvr != 6 {
+		t.Fatalf("expected RXOvr=5 TXOvr=6, got %+v", ifaces)
+	}
+}
+
+// TestParseProcNetDevSortsInterfacesAlphabetically is a regression test:
+// netstat -i previously listed interfaces in /proc/net/dev file order
+// (roughly interface-creation order); native netstat -i sorts by name.
+func TestParseProcNetDevSortsInterfacesAlphabetically(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dev")
+	content := "Inter-|   Receive                                                |  Transmit\n" +
+		" face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n" +
+		"  zeta: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n" +
+		"  alpha: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n" +
+		"  mid: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write dev: %v", err)
+	}
+	ifaces, err := parseProcNetDev(path)
+	if err != nil {
+		t.Fatalf("parseProcNetDev: %v", err)
+	}
+	if len(ifaces) != 3 || ifaces[0].Name != "alpha" || ifaces[1].Name != "mid" || ifaces[2].Name != "zeta" {
+		names := make([]string, len(ifaces))
+		for i, ifc := range ifaces {
+			names[i] = ifc.Name
+		}
+		t.Fatalf("expected alphabetically sorted [alpha mid zeta], got %v", names)
+	}
+}
+
+// TestNetstatFlagsStringMatchesNetToolsConvention is a regression test for
+// netstat -i's Flg column previously showing Go's raw net.Flags.String()
+// (e.g. "up|broadcast|multicast|running") instead of net-tools' compact
+// letter codes (e.g. "BMRU").
+func TestNetstatFlagsStringMatchesNetToolsConvention(t *testing.T) {
+	cases := []struct {
+		flags net.Flags
+		want  string
+	}{
+		{net.FlagUp | net.FlagBroadcast | net.FlagMulticast | net.FlagRunning, "BMRU"},
+		{net.FlagUp | net.FlagLoopback | net.FlagRunning, "LRU"},
+		{net.FlagUp | net.FlagBroadcast | net.FlagMulticast, "BMU"},
+	}
+	for _, c := range cases {
+		if got := netstatFlagsString(c.flags); got != c.want {
+			t.Fatalf("netstatFlagsString(%v): expected %q, got %q", c.flags, c.want, got)
+		}
+	}
+}
+
+// TestPrintNetstatInterfacesIncludesTitleLine is a regression test: native
+// netstat -i prints a "Kernel Interface table" title line before the
+// header, which gobox previously omitted.
+func TestPrintNetstatInterfacesIncludesTitleLine(t *testing.T) {
+	oldParse := parseProcNetDevNetstat
+	parseProcNetDevNetstat = func(string) ([]netstatInterface, error) {
+		return []netstatInterface{{Name: "eth0", MTU: 1500, Flags: "BMRU"}}, nil
+	}
+	t.Cleanup(func() { parseProcNetDevNetstat = oldParse })
+	out, err := captureNetOutput(t, func() error { return printNetstatInterfaces(false) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out, "Kernel Interface table\n") {
+		t.Fatalf("expected title line, got %q", out)
 	}
 }
 

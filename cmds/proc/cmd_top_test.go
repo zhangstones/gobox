@@ -120,6 +120,69 @@ func TestBuildTopSummaryIncludesNativeLikeSections(t *testing.T) {
 	}
 }
 
+// TestBuildTopSummaryTasksWidthMatchesTotalDigits is a regression test for
+// the Tasks: line previously having no column alignment at all (bare %d);
+// native top right-justifies all 5 counts to a shared width (the digit
+// width of the total, minimum 3).
+func TestBuildTopSummaryTasksWidthMatchesTotalDigits(t *testing.T) {
+	infos := make([]procInfo, 150)
+	for i := range infos {
+		infos[i] = procInfo{state: "S"}
+	}
+	lines := buildTopSummary(procSnapshot{}, procSnapshot{}, infos)
+	tasksLine := lines[1]
+	if !strings.Contains(tasksLine, "150 total") {
+		t.Fatalf("expected 3-digit total unpadded, got %q", tasksLine)
+	}
+	if !strings.Contains(tasksLine, "  0 running") {
+		t.Fatalf("expected zero counts right-justified to width 3, got %q", tasksLine)
+	}
+}
+
+// TestFormatTopCPUTimeUsesMinutesSecondsCentiseconds is a regression test:
+// top's TIME+ column previously reused ps's HH:MM:SS formatter
+// (formatCPUTime); native top has no hour field and shows centiseconds
+// instead, e.g. 4628 seconds is "77:08.00", not "01:17:08".
+func TestFormatTopCPUTimeUsesMinutesSecondsCentiseconds(t *testing.T) {
+	jiffies := int64(4628) * procClockTicks // 4628 seconds = 77m 8s
+	if got, want := formatTopCPUTime(jiffies), "77:08.00"; got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+	// Centisecond precision: 1.5 seconds worth of extra ticks.
+	jiffies = int64(4628)*procClockTicks + procClockTicks/2
+	if got, want := formatTopCPUTime(jiffies), "77:08.50"; got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+// TestRenderTopScreenUsesSingleLetterStateHeader is a regression test: the
+// process table previously labeled the state column "STATE" (a full word);
+// native top uses the single letter "S".
+func TestRenderTopScreenUsesSingleLetterStateHeader(t *testing.T) {
+	infos := []procInfo{{pid: 1, state: "S", user: "root"}}
+	out, err := captureProcOutput(t, func() error {
+		renderTopScreen(procSnapshot{}, procSnapshot{}, infos, false, true, 0, "pid", 0, false, false)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	headerLine := strings.Split(out, "\n")[len(strings.Split(out, "\n"))-2]
+	fields := strings.Fields(headerLine)
+	found := false
+	for _, f := range fields {
+		if f == "S" {
+			found = true
+		}
+		if f == "STATE" {
+			t.Fatalf("expected single-letter \"S\" header, got \"STATE\" in %q", headerLine)
+		}
+	}
+	if !found {
+		t.Fatalf("expected \"S\" header column, got %q", headerLine)
+	}
+}
+
 func TestTopCursorVisibilitySequences(t *testing.T) {
 	out, err := captureProcOutput(t, func() error {
 		hideTopCursor()

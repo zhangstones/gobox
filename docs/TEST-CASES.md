@@ -258,11 +258,11 @@
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
 | SEQ-001 | `LAST` | exact | `seq LAST` | integer operand | 默认从 `1` 递增到 `LAST`，输出与退出码一致 |
-| SEQ-002 | `FIRST LAST` | exact | `seq FIRST LAST` | integer operands | 默认步长 `1` 的双参数区间输出一致 |
-| SEQ-003 | `FIRST INC LAST` | exact | `seq FIRST INC LAST` | integer/float operands | 显式步长路径生效，递增/递减与浮点步长输出一致 |
+| SEQ-002 | `FIRST LAST` | exact | `seq FIRST LAST` | integer operands | 默认步长 `1` 的双参数区间输出一致，含负数操作数 |
+| SEQ-003 | `FIRST INC LAST` | exact | `seq FIRST INC LAST` | integer/float operands | 显式步长路径生效，递增/递减、浮点步长、负数操作数输出一致；小数位数按最长操作数统一，不出现浮点累积误差（如 `0.1+0.1+0.1` 不应显示为 `0.30000000000000004`） |
 | SEQ-004 | `-f FORMAT, --format=FORMAT` | behavior | `seq -f` | integer/float operands | 指定格式必须相对默认输出改变每项文本表示，且数值序列不变 |
 | SEQ-005 | `-s SEP, --separator=SEP` | exact | `seq -s` | integer operands | 分隔符替换换行的输出一致 |
-| SEQ-006 | `-w, --equal-width` | behavior | `seq -w` | mixed-width integer operands | 输出项按最大位宽补零对齐，且相对默认输出改变文本宽度 |
+| SEQ-006 | `-w, --equal-width` | exact | `seq -w` | mixed-width integer/float/negative operands | 输出项按最大位宽补零对齐（仅补整数部分），且与原生逐字节一致 |
 | SEQ-007 | `-h, --help` | contract | `seq --help` | none | 帮助输出成功并包含 `gobox seq` 用法与主要参数说明 |
 
 ### rand
@@ -396,8 +396,8 @@
 | NETSTAT-014 | `-o, --timers` | behavior | `netstat -o` | local sockets | `-o` 必须在保留目标 socket 的同时增加 Timer 列 |
 | NETSTAT-015 | `-W, --wide` | contract | gobox-only | local sockets | gobox 当前默认不截断地址，`-W` 应保持与 `-n -l` 基线一致 |
 | NETSTAT-016 | combined short flags, e.g. `-tnlp` | behavior | `netstat -tnlp` | local TCP listener | 合并短参数必须相对 `-t -l` 基线改变输出，并命中目标 listener |
-| NETSTAT-017 | `-r` | structured | `netstat -r` | local route table | 路由表必须包含接口列与默认路由语义 |
-| NETSTAT-018 | `-i` | structured | `netstat -i` | local interfaces | 接口表必须包含环回接口与收发统计列 |
+| NETSTAT-017 | `-r` | structured | `netstat -r` | local route table | 路由表必须包含接口列与默认路由语义，默认路由目的地为 `default`，表头为 `MSS Window irtt` |
+| NETSTAT-018 | `-i` | structured | `netstat -i` | local interfaces | 接口表必须包含环回接口、收发统计列、`RX-OVR`/`TX-OVR`，按接口名排序，`Flg` 用字母代码 |
 | NETSTAT-019 | `-s` | behavior | `netstat -s` | local protocol stats | 裸 `-s` 必须包含比 `-s -t` 更完整的多协议统计视图 |
 | NETSTAT-020 | `-c` | contract | `netstat -c` | bounded command execution | continuous 模式可进入刷新路径 |
 | NETSTAT-021 | short/long flag equivalence for socket table flags | structured | gobox-only | local TCP listener | `-t/-l/-p/-e/-o/-n/-W` 与 `--tcp/--listening/--programs/--extend/--timers/--numeric/--wide` 输出一致 |
@@ -440,12 +440,12 @@
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
-| IP-001 | `addr` / `a` | structured | `ip addr` | local interfaces | 接口名、地址和状态集合不弱于 native |
-| IP-002 | `-o addr` | behavior | `ip -o addr` | local interfaces | `-o` 必须相对多行 `addr` 视图切换为单行 scoped records |
-| IP-003 | `link` / `l` | structured | `ip link` | local interfaces | 接口名、MTU、MAC、flags 语义一致 |
-| IP-004 | `-s link` | behavior | `ip -s link` | local interfaces | `-s` 必须相对基础 `link` 视图增加 RX/TX 统计字段 |
-| IP-005 | `route` / `r` | structured | `ip route` | local route table | IPv4 路由和默认路由字段可解析 |
-| IP-006 | `neigh` / `n` | structured | `ip neigh` | local ARP/neigh table | 邻居 IP、设备和状态字段可解析 |
+| IP-001 | `addr` / `a` | structured | `ip addr` | local interfaces | 接口名、地址、`brd`/`scope`/`valid_lft` 和基于 `operstate` 的状态不弱于 native |
+| IP-002 | `-o addr` | behavior | `ip -o addr` | local interfaces | `-o` 必须相对多行 `addr` 视图切换为单行 scoped records（含 `\` 续行标记） |
+| IP-003 | `link` / `l` | structured | `ip link` | local interfaces | 接口名、MTU、MAC/`brd`、flags 名称/顺序与 native 语义一致 |
+| IP-004 | `-s link` | behavior | `ip -s link` | local interfaces | `-s` 必须相对基础 `link` 视图增加 RX/TX 统计字段（含 missed/mcast/carrier/collsns） |
+| IP-005 | `route` / `r` | structured | `ip route` | local route table | IPv4 路由字段可解析，含 CIDR 前缀长度、`proto`/`scope`/`src`/`metric`/`linkdown` |
+| IP-006 | `neigh` / `n` | structured | `ip neigh` | local ARP/neigh table | 邻居 IP、设备和状态字段可解析；状态基于 ARP flags 映射为 REACHABLE/PERMANENT/INCOMPLETE |
 
 ### np/netping
 
@@ -494,7 +494,7 @@
 | PS-016 | `-C NAME` | structured | `ps -C` | current process name | 命令名过滤命中目标进程 |
 | PS-017 | `--sort -FIELD` | structured | `ps --sort` | current processes | GNU 风格降序排序参数生效；不支持字段明确报错 |
 | PS-018 | BSD `aux` semantics | behavior | `ps aux` | current process | BSD 风格 `a/x/u` 组合语义与 user-oriented 列布局保持常见 native 预期 |
-| PS-019 | `--long` | structured | `ps -l` | current process | long 格式输出必须包含 `PID/PPID/STAT/TTY/TIME/CMD` 等核心列 |
+| PS-019 | `--long` | structured | `ps -l` | current process | long 格式输出必须包含 `S/UID/PID/PPID/TTY/TIME/CMD`，状态列用单字母 `S` 而非 `STAT` |
 | PS-020 | `--hide-idle` | contract | gobox-only | idle process | 过滤掉采样 CPU 为 0 的进程 |
 
 ### top
@@ -505,7 +505,7 @@
 | TOP-002 | `-n int` | behavior | `top -n` | single iteration | 指定迭代次数后退出 |
 | TOP-003 | `-r` | structured | `top -r` | single iteration | 排序方向切换且关键排序方向符合预期 |
 | TOP-004 | `--sort string` | contract | gobox-only | single iteration | 排序字段生效 |
-| TOP-005 | `-b` | contract | `top -b` | single iteration | batch 模式不输出清屏控制符 |
+| TOP-005 | `-b` | contract | `top -b` | single iteration | batch 模式不输出清屏控制符；`Tasks:`/`MiB Mem`/`MiB Swap` 数值列宽、`TIME+` 分:秒.厘秒格式、状态列 `S` 单字母表头与原生对齐 |
 | TOP-006 | `-p PID` | structured | `top -p` | current process | PID 过滤命中当前进程 |
 | TOP-007 | `-u USER` | structured | `top -u` | current user | 用户过滤可执行并输出进程表 |
 | TOP-008 | `-H` | contract | `top -H` | single iteration | Linux 下显示线程视图，`PID` 列输出 TID，`-p PID` 仍按所属进程过滤 |
@@ -556,10 +556,10 @@
 
 | Case ID | Arg/Feature | Mode | Native Baseline | Fixture | Core Assertion |
 |---|---|---|---|---|---|
-| LSOF-001 | default open files | structured | `lsof` | current process | 输出包含表头和当前进程可见打开文件 |
+| LSOF-001 | default open files | structured | `lsof` | current process | 输出包含 `USER`/`TYPE`/`DEVICE`/`SIZE/OFF`/`NODE` 表头和当前进程可见打开文件 |
 | LSOF-002 | `-p PID` | structured | `lsof -p` | current process | 结果行只能属于指定 PID |
 | LSOF-003 | `-c NAME` | structured | `lsof -c` | controlled named process | 命令名过滤只保留目标进程集合 |
-| LSOF-004 | `-i` | behavior | `lsof -i` | local socket | `-i` 必须相对默认 `lsof` 缩小为网络文件结果集 |
+| LSOF-004 | `-i` | behavior | `lsof -i` | local socket | `-i` 必须相对默认 `lsof` 缩小为已解析 TCP/UDP 的网络 socket 结果集，排除无法解析的 socket（如 unix domain） |
 | LSOF-005 | `-iTCP` | structured | `lsof -iTCP` | local TCP socket | TCP 协议过滤集合一致 |
 | LSOF-006 | `-iUDP` | structured | `lsof -iUDP` | local UDP socket | UDP 协议过滤集合一致 |
 | LSOF-007 | `-i :PORT` | behavior | `lsof -i :PORT` | local listener | 端口过滤必须相对 bare `-i` 缩小结果集并保留目标 socket |

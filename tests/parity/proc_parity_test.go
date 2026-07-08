@@ -1216,20 +1216,25 @@ func TestParity_PsCases(t *testing.T) {
 		if len(goboxLines) < 2 || len(nativeLines) < 2 {
 			t.Fatalf("ps --long expected header plus rows\n--- gobox ---\n%s\n--- native ---\n%s", res.Stdout, native.Stdout)
 		}
-		for _, want := range []string{"PID", "PPID", "TTY", "TIME", "CMD"} {
+		for _, want := range []string{"UID", "PID", "PPID", "TTY", "TIME", "CMD"} {
 			if !strings.Contains(goboxLines[0], want) {
 				t.Fatalf("gobox ps --long header missing %q: %q", want, goboxLines[0])
 			}
 		}
-		hasStat := false
+		// Native ps -l uses the single-letter "S" state header, not the
+		// BSD-style "STAT" gobox uses elsewhere (e.g. ps aux).
+		hasS := false
 		for _, f := range strings.Fields(goboxLines[0]) {
-			if f == "STAT" {
-				hasStat = true
+			if f == "S" {
+				hasS = true
 				break
 			}
 		}
-		if !hasStat {
-			t.Fatalf("gobox ps --long header missing STAT field: %q", goboxLines[0])
+		if !hasS {
+			t.Fatalf("gobox ps --long header missing single-letter S field: %q", goboxLines[0])
+		}
+		if strings.Contains(goboxLines[0], "STAT") {
+			t.Fatalf("gobox ps --long header should use S, not STAT: %q", goboxLines[0])
 		}
 		if !strings.Contains(nativeLines[0], "PID") || !strings.Contains(nativeLines[0], "PPID") {
 			t.Fatalf("native ps -l baseline missing expected long columns: %q", nativeLines[0])

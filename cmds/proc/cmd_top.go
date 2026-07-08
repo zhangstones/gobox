@@ -336,11 +336,13 @@ func renderTopScreen(prev, curr procSnapshot, infos []procInfo, fullCmd, batch b
 			topRenderState(pi),
 			fmt.Sprintf("%.1f", pi.cpu),
 			renderTopPMem(pi, memTotal),
-			formatCPUTime(pi.utime + pi.stime),
+			formatTopCPUTime(pi.utime + pi.stime),
 			renderTopCommand(pi, fullCmd),
 		})
 	}
-	headers := []string{"PID", "USER", "VIRT", "RES", "STATE", "%CPU", "%MEM", "TIME+", "COMMAND"}
+	// Native top labels this column "S" (single-letter state code), not the
+	// full word "STATE"; pi.state is already a single-char code (R/S/T/Z...).
+	headers := []string{"PID", "USER", "VIRT", "RES", "S", "%CPU", "%MEM", "TIME+", "COMMAND"}
 	headers = highlightTopSortHeader(headers, sortField, sortIndex)
 	out.WriteString(renderTopTable(headers, rows, ttyWidth, interactive))
 	frame := out.String()
@@ -355,6 +357,17 @@ func renderTopCommand(pi procInfo, fullCmd bool) string {
 		return renderPSCommand(pi.cmdline, pi.exe, 0)
 	}
 	return renderPSCommand(pi.exe, pi.cmdline, 0)
+}
+
+// formatTopCPUTime renders the TIME+ column the way native top does:
+// MINUTES:SECONDS.CENTISECONDS with no hour field (minutes grow unbounded),
+// unlike ps's TIME column (formatCPUTime) which uses HH:MM:SS.
+func formatTopCPUTime(jiffies int64) string {
+	centis := (jiffies * 100 / procClockTicks) % 100
+	secs := jiffies / procClockTicks
+	mins := secs / 60
+	secs %= 60
+	return fmt.Sprintf("%d:%02d.%02d", mins, secs, centis)
 }
 
 func sortTopInfos(infos []procInfo, sortField string, reverse bool, memTotal int64) {
@@ -562,12 +575,20 @@ func buildTopSummary(prev, curr procSnapshot, infos []procInfo) []string {
 	total, running, sleeping, stopped, zombie := summarizeTopTasks(infos)
 	cpu := summarizeTopCPU(prev.cpuTimes, curr.cpuTimes)
 
+	// Native top right-justifies the 5 Tasks: counts to a shared width
+	// (the digit width of the total count, minimum 3).
+	taskWidth := len(strconv.Itoa(total))
+	if taskWidth < 3 {
+		taskWidth = 3
+	}
+
 	return []string{
 		fmt.Sprintf("top - %s up %s, load average: %.2f, %.2f, %.2f", now, uptime, load1, load5, load15),
-		fmt.Sprintf("Tasks: %d total, %d running, %d sleeping, %d stopped, %d zombie", total, running, sleeping, stopped, zombie),
+		fmt.Sprintf("Tasks: %*d total, %*d running, %*d sleeping, %*d stopped, %*d zombie",
+			taskWidth, total, taskWidth, running, taskWidth, sleeping, taskWidth, stopped, taskWidth, zombie),
 		fmt.Sprintf("%%Cpu(s): %4.1f us, %4.1f sy, %4.1f ni, %4.1f id, %4.1f wa, %4.1f hi, %4.1f si, %4.1f st", cpu.user, cpu.system, cpu.nice, cpu.idle, cpu.iowait, cpu.irq, cpu.softirq, cpu.steal),
-		fmt.Sprintf("MiB Mem : %7.1f total, %7.1f free, %7.1f used, %7.1f buff/cache", bytesToMiB(memTotal), bytesToMiB(memFree), bytesToMiB(memUsed), bytesToMiB(buffCache)),
-		fmt.Sprintf("MiB Swap: %7.1f total, %7.1f free, %7.1f used. %7.1f avail Mem", bytesToMiB(swapTotal), bytesToMiB(swapFree), bytesToMiB(swapUsed), bytesToMiB(memAvail)),
+		fmt.Sprintf("MiB Mem : %8.1f total, %8.1f free, %8.1f used, %8.1f buff/cache", bytesToMiB(memTotal), bytesToMiB(memFree), bytesToMiB(memUsed), bytesToMiB(buffCache)),
+		fmt.Sprintf("MiB Swap: %8.1f total, %8.1f free, %8.1f used. %8.1f avail Mem", bytesToMiB(swapTotal), bytesToMiB(swapFree), bytesToMiB(swapUsed), bytesToMiB(memAvail)),
 	}
 }
 

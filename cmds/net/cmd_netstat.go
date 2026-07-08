@@ -475,6 +475,9 @@ type netstatIPv4Route struct {
 	Genmask     string
 	Flags       string
 	Metric      string
+	MSS         string
+	Window      string
+	IRTT        string
 }
 
 type netstatIPv6Route struct {
@@ -494,10 +497,12 @@ type netstatInterface struct {
 	RXOK    uint64
 	RXErr   uint64
 	RXDrop  uint64
+	RXOvr   uint64
 	TXBytes uint64
 	TXOK    uint64
 	TXErr   uint64
 	TXDrop  uint64
+	TXOvr   uint64
 }
 
 type netstatStatSection struct {
@@ -513,9 +518,9 @@ func printNetstatRoutes() error {
 		return err4
 	}
 	fmt.Println("Kernel IP routing table")
-	fmt.Printf("%-15s %-15s %-15s %-6s %-6s %s\n", "Destination", "Gateway", "Genmask", "Flags", "Metric", "Iface")
+	fmt.Printf("%-15s %-15s %-15s %-7s %3s %-6s %5s %s\n", "Destination", "Gateway", "Genmask", "Flags", "MSS", "Window", "irtt", "Iface")
 	for _, r := range ipv4 {
-		fmt.Printf("%-15s %-15s %-15s %-6s %-6s %s\n", r.Destination, r.Gateway, r.Genmask, r.Flags, r.Metric, r.Iface)
+		fmt.Printf("%-15s %-15s %-15s %-7s %3s %-6s %5s %s\n", r.Destination, r.Gateway, r.Genmask, r.Flags, r.MSS, r.Window, r.IRTT, r.Iface)
 	}
 	if len(ipv6) > 0 {
 		fmt.Println()
@@ -546,14 +551,31 @@ func parseProcNetRoute(path string) ([]netstatIPv4Route, error) {
 		if len(fields) < 8 {
 			continue
 		}
-		routes = append(routes, netstatIPv4Route{
+		dest := parseIPv4RouteHex(fields[1])
+		if fields[1] == "00000000" {
+			// Native netstat prints the default route's destination as the
+			// literal word "default", not "0.0.0.0".
+			dest = "default"
+		}
+		route := netstatIPv4Route{
 			Iface:       fields[0],
-			Destination: parseIPv4RouteHex(fields[1]),
+			Destination: dest,
 			Gateway:     parseIPv4RouteHex(fields[2]),
 			Flags:       routeFlagsName(fields[3]),
 			Metric:      fields[6],
 			Genmask:     parseIPv4RouteHex(fields[7]),
-		})
+			MSS:         "0",
+			Window:      "0",
+			IRTT:        "0",
+		}
+		// /proc/net/route's own MTU/Window/IRTT columns (indices 8-10),
+		// matching native netstat -r's "MSS Window irtt" columns.
+		if len(fields) >= 11 {
+			route.MSS = fields[8]
+			route.Window = fields[9]
+			route.IRTT = fields[10]
+		}
+		routes = append(routes, route)
 	}
 	return routes, scanner.Err()
 }
@@ -655,18 +677,46 @@ func printNetstatInterfaces(extended bool) error {
 			hwAddrWidth = len(iface.HWAddr)
 		}
 	}
+	fmt.Println("Kernel Interface table")
 	if extended {
-		fmt.Printf("%-*s %6s %12s %10s %7s %7s %12s %10s %7s %7s %-*s %s\n", nameWidth, "Iface", "MTU", "RX-Bytes", "RX-OK", "RX-ERR", "RX-DRP", "TX-Bytes", "TX-OK", "TX-ERR", "TX-DRP", hwAddrWidth, "HWaddr", "Flg")
+		fmt.Printf("%-*s %6s %12s %10s %7s %7s %7s %12s %10s %7s %7s %7s %-*s %s\n", nameWidth, "Iface", "MTU", "RX-Bytes", "RX-OK", "RX-ERR", "RX-DRP", "RX-OVR", "TX-Bytes", "TX-OK", "TX-ERR", "TX-DRP", "TX-OVR", hwAddrWidth, "HWaddr", "Flg")
 		for _, iface := range ifaces {
-			fmt.Printf("%-*s %6d %12d %10d %7d %7d %12d %10d %7d %7d %-*s %s\n", nameWidth, iface.Name, iface.MTU, iface.RXBytes, iface.RXOK, iface.RXErr, iface.RXDrop, iface.TXBytes, iface.TXOK, iface.TXErr, iface.TXDrop, hwAddrWidth, iface.HWAddr, iface.Flags)
+			fmt.Printf("%-*s %6d %12d %10d %7d %7d %7d %12d %10d %7d %7d %7d %-*s %s\n", nameWidth, iface.Name, iface.MTU, iface.RXBytes, iface.RXOK, iface.RXErr, iface.RXDrop, iface.RXOvr, iface.TXBytes, iface.TXOK, iface.TXErr, iface.TXDrop, iface.TXOvr, hwAddrWidth, iface.HWAddr, iface.Flags)
 		}
 		return nil
 	}
-	fmt.Printf("%-*s %6s %10s %7s %7s %10s %7s %7s %s\n", nameWidth, "Iface", "MTU", "RX-OK", "RX-ERR", "RX-DRP", "TX-OK", "TX-ERR", "TX-DRP", "Flg")
+	fmt.Printf("%-*s %6s %10s %7s %7s %7s %10s %7s %7s %7s %s\n", nameWidth, "Iface", "MTU", "RX-OK", "RX-ERR", "RX-DRP", "RX-OVR", "TX-OK", "TX-ERR", "TX-DRP", "TX-OVR", "Flg")
 	for _, iface := range ifaces {
-		fmt.Printf("%-*s %6d %10d %7d %7d %10d %7d %7d %s\n", nameWidth, iface.Name, iface.MTU, iface.RXOK, iface.RXErr, iface.RXDrop, iface.TXOK, iface.TXErr, iface.TXDrop, iface.Flags)
+		fmt.Printf("%-*s %6d %10d %7d %7d %7d %10d %7d %7d %7d %s\n", nameWidth, iface.Name, iface.MTU, iface.RXOK, iface.RXErr, iface.RXDrop, iface.RXOvr, iface.TXOK, iface.TXErr, iface.TXDrop, iface.TXOvr, iface.Flags)
 	}
 	return nil
+}
+
+// netstatFlagsString renders interface flags the way net-tools' netstat -i
+// does: a single concatenated string of uppercase letter codes (no
+// separator), in the fixed order B(broadcast) L(loopback) P(point-to-point)
+// M(multicast) R(running) U(up), e.g. "BMRU", "LRU", "BMU".
+func netstatFlagsString(flags net.Flags) string {
+	var b strings.Builder
+	if flags&net.FlagBroadcast != 0 {
+		b.WriteByte('B')
+	}
+	if flags&net.FlagLoopback != 0 {
+		b.WriteByte('L')
+	}
+	if flags&net.FlagPointToPoint != 0 {
+		b.WriteByte('P')
+	}
+	if flags&net.FlagMulticast != 0 {
+		b.WriteByte('M')
+	}
+	if flags&net.FlagRunning != 0 {
+		b.WriteByte('R')
+	}
+	if flags&net.FlagUp != 0 {
+		b.WriteByte('U')
+	}
+	return b.String()
 }
 
 func parseProcNetDev(path string) ([]netstatInterface, error) {
@@ -699,18 +749,20 @@ func parseProcNetDev(path string) ([]netstatInterface, error) {
 			RXOK:    parseUintField(fields[1]),
 			RXErr:   parseUintField(fields[2]),
 			RXDrop:  parseUintField(fields[3]),
+			RXOvr:   parseUintField(fields[4]),
 			TXBytes: parseUintField(fields[8]),
 			TXOK:    parseUintField(fields[9]),
 			TXErr:   parseUintField(fields[10]),
 			TXDrop:  parseUintField(fields[11]),
+			TXOvr:   parseUintField(fields[12]),
 			MTU:     -1,
 			Flags:   "-",
 			HWAddr:  "-",
 		}
 		if ni, err := net.InterfaceByName(name); err == nil {
 			iface.MTU = ni.MTU
-			if ni.Flags.String() != "" {
-				iface.Flags = ni.Flags.String()
+			if flagStr := netstatFlagsString(ni.Flags); flagStr != "" {
+				iface.Flags = flagStr
 			}
 			if ni.HardwareAddr.String() != "" {
 				iface.HWAddr = ni.HardwareAddr.String()
@@ -718,6 +770,7 @@ func parseProcNetDev(path string) ([]netstatInterface, error) {
 		}
 		ifaces = append(ifaces, iface)
 	}
+	sort.Slice(ifaces, func(i, j int) bool { return ifaces[i].Name < ifaces[j].Name })
 	return ifaces, scanner.Err()
 }
 

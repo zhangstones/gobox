@@ -235,7 +235,7 @@ func PsCmd(args []string) error {
 			return exitErr
 		}
 		if *longFormat {
-			printCustomPS(infos, []string{"pid", "ppid", "stat", "tty", "time", "args"}, *maxCmd, memTotal, ttyWidth)
+			printPSLongFormat(infos, *maxCmd, ttyWidth)
 			return exitErr
 		}
 		if *full {
@@ -914,6 +914,34 @@ func printPSFullFormat(infos []procInfo, maxCmd int, ttyWidth int) {
 		})
 	}
 	printPSAlignedTableWithHeaders([]string{"UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"}, rows, ttyWidth)
+}
+
+// printPSLongFormat implements --long (GNU ps -l). Native ps -l's full
+// column set is "F S UID PID PPID C PRI NI ADDR SZ WCHAN TTY TIME CMD"; F
+// (process flags), C (cpu counter), PRI/NI (priority/nice), ADDR (kernel
+// scheduling address) and SZ/WCHAN (page count / wait channel) all need
+// /proc/PID/stat fields gobox doesn't currently collect, so this shows the
+// subset it can: S UID PID PPID TTY TIME CMD, in native's relative order,
+// using native's single-letter "S" state header instead of the BSD-style
+// "STAT" used elsewhere (e.g. ps aux).
+func printPSLongFormat(infos []procInfo, maxCmd int, ttyWidth int) {
+	rows := make([][]string, 0, len(infos))
+	for _, pi := range infos {
+		userName := pi.user
+		if userName == "" {
+			userName = strconv.Itoa(pi.uid)
+		}
+		rows = append(rows, []string{
+			renderPSField(pi, "stat", maxCmd, 0),
+			userName,
+			strconv.Itoa(pi.pid),
+			strconv.Itoa(pi.ppid),
+			renderPSField(pi, "tty", maxCmd, 0),
+			formatCPUTime(pi.utime + pi.stime),
+			renderPSCommand(pi.cmdline, pi.exe, maxCmd),
+		})
+	}
+	printPSAlignedTableWithHeaders([]string{"S", "UID", "PID", "PPID", "TTY", "TIME", "CMD"}, rows, ttyWidth)
 }
 
 func printPSAlignedTableWithHeaders(headers []string, rows [][]string, ttyWidth int) {

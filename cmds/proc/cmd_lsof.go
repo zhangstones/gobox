@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 var (
@@ -60,7 +61,7 @@ func LsofCmd(args []string) error {
 		return nil
 	}
 	for _, r := range rows {
-		if protoFilter != "" && !strings.Contains(strings.ToUpper(r.name), protoFilter) {
+		if protoFilter != "" && strings.ToUpper(r.node) != protoFilter {
 			continue
 		}
 		if portFilter != "" && !strings.Contains(r.name, ":"+portFilter) {
@@ -77,7 +78,12 @@ func LsofCmd(args []string) error {
 type lsofRow struct {
 	command string
 	pid     int
+	user    string
 	fd      string
+	typ     string
+	device  string
+	sizeOff string
+	node    string
 	name    string
 }
 
@@ -85,9 +91,14 @@ func printLsofTable(rows []lsofRow, protoFilter, portFilter string) {
 	filtered := make([]lsofRow, 0, len(rows))
 	commandWidth := len("COMMAND")
 	pidWidth := len("PID")
+	userWidth := len("USER")
 	fdWidth := len("FD")
+	typeWidth := len("TYPE")
+	deviceWidth := len("DEVICE")
+	sizeOffWidth := len("SIZE/OFF")
+	nodeWidth := len("NODE")
 	for _, r := range rows {
-		if protoFilter != "" && !strings.Contains(strings.ToUpper(r.name), protoFilter) {
+		if protoFilter != "" && strings.ToUpper(r.node) != protoFilter {
 			continue
 		}
 		if portFilter != "" && !strings.Contains(r.name, ":"+portFilter) {
@@ -100,13 +111,32 @@ func printLsofTable(rows []lsofRow, protoFilter, portFilter string) {
 		if l := len(strconv.Itoa(r.pid)); l > pidWidth {
 			pidWidth = l
 		}
+		if len(r.user) > userWidth {
+			userWidth = len(r.user)
+		}
 		if len(r.fd) > fdWidth {
 			fdWidth = len(r.fd)
 		}
+		if len(r.typ) > typeWidth {
+			typeWidth = len(r.typ)
+		}
+		if len(r.device) > deviceWidth {
+			deviceWidth = len(r.device)
+		}
+		if len(r.sizeOff) > sizeOffWidth {
+			sizeOffWidth = len(r.sizeOff)
+		}
+		if len(r.node) > nodeWidth {
+			nodeWidth = len(r.node)
+		}
 	}
-	fmt.Printf("%-*s %*s %-*s %s\n", commandWidth, "COMMAND", pidWidth, "PID", fdWidth, "FD", "NAME")
+	fmt.Printf("%-*s %*s %-*s %-*s %-*s %*s %*s %*s %s\n",
+		commandWidth, "COMMAND", pidWidth, "PID", userWidth, "USER", fdWidth, "FD",
+		typeWidth, "TYPE", deviceWidth, "DEVICE", sizeOffWidth, "SIZE/OFF", nodeWidth, "NODE", "NAME")
 	for _, r := range filtered {
-		fmt.Printf("%-*s %*d %-*s %s\n", commandWidth, r.command, pidWidth, r.pid, fdWidth, r.fd, r.name)
+		fmt.Printf("%-*s %*d %-*s %-*s %-*s %*s %*s %*s %s\n",
+			commandWidth, r.command, pidWidth, r.pid, userWidth, r.user, fdWidth, r.fd,
+			typeWidth, r.typ, deviceWidth, r.device, sizeOffWidth, r.sizeOff, nodeWidth, r.node, r.name)
 	}
 }
 
@@ -171,21 +201,34 @@ func collectLsofRows(pidFilter int, cmdFilter string, netOnly bool, files []stri
 		if cmdFilter != "" && !strings.HasPrefix(comm, cmdFilter) {
 			continue
 		}
+		user := ""
+		if info, err := os.Stat(filepath.Join(lsofProcRoot, e.Name())); err == nil {
+			if st, ok := info.Sys().(*syscall.Stat_t); ok {
+				user = lookupUsername(int(st.Uid))
+			}
+		}
 		fdDir := filepath.Join(lsofProcRoot, e.Name(), "fd")
 		fds, err := os.ReadDir(fdDir)
 		if err != nil {
 			continue
 		}
 		for _, fd := range fds {
-			target, err := os.Readlink(filepath.Join(fdDir, fd.Name()))
+			fdPath := filepath.Join(fdDir, fd.Name())
+			target, err := os.Readlink(fdPath)
 			if err != nil {
 				continue
 			}
-			if netOnly && !strings.HasPrefix(target, "socket:") {
+			inode := socketInode(target)
+			// -i means "internet sockets" specifically: native lsof -i
+			// never lists unix domain sockets, only resolved TCP/UDP ones.
+			if netOnly && (inode == "" || sockets[inode] == "") {
 				continue
 			}
-			if detail, ok := sockets[socketInode(target)]; ok {
-				target = detail
+			row := lsofRow{command: comm, pid: pid, user: user, fd: fd.Name()}
+			if inode != "" {
+				fillLsofSocketColumns(&row, inode, sockets[inode])
+			} else {
+				fillLsofFileColumns(&row, fdPath, target)
 			}
 			if len(fileTargets) > 0 {
 				abs := target
@@ -196,10 +239,85 @@ func collectLsofRows(pidFilter int, cmdFilter string, netOnly bool, files []stri
 					continue
 				}
 			}
-			rows = append(rows, lsofRow{command: comm, pid: pid, fd: fd.Name(), name: target})
+			rows = append(rows, row)
 		}
 	}
 	return rows, nil
+}
+
+// fillLsofSocketColumns populates TYPE/DEVICE/SIZE-OFF/NODE/NAME for a
+// socket fd. detail is the "PROTO local->remote" string collectProcNetSockets
+// produces for TCP/UDP sockets (empty for socket types gobox doesn't
+// resolve, e.g. unix domain sockets).
+func fillLsofSocketColumns(row *lsofRow, inode, detail string) {
+	row.sizeOff = "0t0"
+	if detail == "" {
+		row.typ = "sock"
+		row.node = inode
+		row.name = "socket:[" + inode + "]"
+		return
+	}
+	parts := strings.SplitN(detail, " ", 2)
+	proto := parts[0]
+	rest := ""
+	if len(parts) > 1 {
+		rest = parts[1]
+	}
+	row.typ = "IPv4"
+	if strings.Contains(rest, "[") {
+		row.typ = "IPv6"
+	}
+	row.device = inode
+	row.node = proto
+	row.name = rest
+}
+
+// fillLsofFileColumns populates TYPE/DEVICE/SIZE-OFF/NODE for a regular
+// file/directory fd by stat-ing the fd symlink (which follows it to
+// whatever is currently open), matching native lsof's REG/DIR + "MAJ,MIN"
+// device + byte size + inode columns.
+func fillLsofFileColumns(row *lsofRow, fdPath, target string) {
+	row.name = target
+	info, err := os.Stat(fdPath)
+	if err != nil {
+		return
+	}
+	isDevice := false
+	switch {
+	case info.IsDir():
+		row.typ = "DIR"
+	case info.Mode().IsRegular():
+		row.typ = "REG"
+	case info.Mode()&os.ModeCharDevice != 0:
+		row.typ = "CHR"
+		isDevice = true
+	case info.Mode()&os.ModeNamedPipe != 0:
+		row.typ = "FIFO"
+	default:
+		row.typ = "unk"
+	}
+	row.sizeOff = strconv.FormatInt(info.Size(), 10)
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		// For device special files, lsof's DEVICE column identifies the
+		// device itself (st_rdev, e.g. "1,3" for /dev/null), not the
+		// filesystem the directory entry lives on (st_dev).
+		dev := st.Dev
+		if isDevice {
+			dev = st.Rdev
+		}
+		row.device = fmt.Sprintf("%d,%d", devMajor(dev), devMinor(dev))
+		row.node = strconv.FormatUint(st.Ino, 10)
+	}
+}
+
+// devMajor/devMinor decode a Linux dev_t the way glibc's gnu_dev_major/minor
+// macros do, matching lsof's "MAJ,MIN" DEVICE column.
+func devMajor(dev uint64) uint64 {
+	return ((dev >> 8) & 0xfff) | ((dev >> 32) &^ 0xfff)
+}
+
+func devMinor(dev uint64) uint64 {
+	return (dev & 0xff) | ((dev >> 12) &^ 0xff)
 }
 
 func socketInode(target string) string {
