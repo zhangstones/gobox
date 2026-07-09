@@ -159,6 +159,7 @@
 | HEAD-002 | `-c NUM` | exact | `head -c` | 固定文本/字节流 | 前 N 字节一致 |
 | HEAD-003 | `-q` | exact | `head -q` | 多文件 | 文件名标题隐藏一致 |
 | HEAD-004 | `-h` | contract | `head --help` | none | 帮助输出成功 |
+| HEAD-005 | 无文件参数（stdin） | exact | `head -n`（stdin） | stdin 文本 | stdin 输入前 N 行一致 |
 
 ### tail
 
@@ -193,6 +194,8 @@
 | GREP-015 | `--exclude-dir=DIR` | exact | `grep --exclude-dir` | 目录树 | 指定目录被排除 |
 | GREP-016 | `-l` | exact | `grep -l` | 多文件 | 仅输出有匹配文件名 |
 | GREP-017 | `-L` | exact | `grep -L` | 多文件 | 仅输出无匹配文件名 |
+| GREP-018 | 非法正则语法 | contract | gobox-only | 文本文件 + 非法正则 | 非零退出且 stderr 有诊断信息 |
+| GREP-019 | 无文件参数（stdin） | exact | `grep`（stdin） | stdin 文本（含空 stdin 边界） | stdin 输入匹配结果一致 |
 
 ### sed
 
@@ -214,6 +217,10 @@
 | SED-014 | 替换标志 `i` | exact | `sed s///i` | mixed-case 文本 | 忽略大小写替换一致 |
 | SED-015 | 替换标志 `p` | exact | `sed s///p` | 文本 | 替换后打印一致 |
 | SED-016 | 替换标志 `N` | exact | `sed s///N` | 多匹配文本 | 第 N 次替换一致 |
+| SED-017 | 行区间地址 `N,Md` | exact | `sed N,Md` | 多行文本 | 行区间删除一致 |
+| SED-018 | 末行地址 `$d` | exact | `sed '$d'` | 多行文本 | 末行删除一致 |
+| SED-019 | 正则地址 `/pattern/d` | exact | `sed /pattern/d` | 含匹配行的文本 | 正则地址删除一致 |
+| SED-020 | 无文件参数（stdin） | exact | `sed s///`（stdin） | stdin 文本（含空 stdin 边界） | stdin 输入替换结果一致 |
 
 ### sort
 
@@ -242,6 +249,8 @@
 | UNIQ-004 | `-i` | exact | `uniq -i` | mixed-case 文本 | 忽略大小写一致 |
 | UNIQ-005 | `-w N` | exact | `uniq -w` | 前缀相同文本 | 比较前 N 字符一致 |
 | UNIQ-006 | `-f N` | exact | `uniq -f` | 多列文本 | 跳过字段一致 |
+| UNIQ-007 | 默认去重（无参数） | exact | `uniq` | 含相邻重复行的文本 | 默认去重一致 |
+| UNIQ-008 | `-c -d` 组合 | exact | `uniq -c -d` | 含相邻重复行的文本 | 计数+仅重复行组合输出一致 |
 
 ### wc
 
@@ -252,6 +261,9 @@
 | WC-003 | `-c` | exact | `wc -c` | UTF-8 文本 | 字节数一致 |
 | WC-004 | `-m` | exact | `wc -m` | UTF-8 文本 | 字符数一致 |
 | WC-005 | `-L` | exact | `wc -L` | 不同长度行 | 最长行长度一致 |
+| WC-006 | 多文件 `-l` | exact | `wc -l`（多文件） | 两个文件 | 多文件行数及总计一致 |
+| WC-007 | 默认组合输出（无参数） | exact | `wc` | 多行文本 | 默认行数+词数+字节数组合一致 |
+| WC-008 | `-lw` 组合短选项 | exact | `wc -lw` | 多行文本 | 组合短选项输出一致 |
 
 ### seq
 
@@ -311,6 +323,8 @@
 | STRINGS-003 | `-f` | exact | `strings -f` | multiple files | 文件名前缀输出一致 |
 | STRINGS-004 | `-t o|d|x` | exact | `strings -t` | binary fixture | 偏移进制与位置一致 |
 | STRINGS-005 | `-a` | exact | `strings -a` | binary fixture | 全文件扫描行为一致 |
+| STRINGS-006 | `-t o`（八进制偏移） | exact | `strings -t o` | binary fixture | 八进制偏移一致 |
+| STRINGS-007 | `-t d`（十进制偏移） | exact | `strings -t d` | binary fixture | 十进制偏移一致 |
 
 ### diff
 
@@ -325,6 +339,7 @@
 | DIFF-007 | stdin side `-` | behavior | `diff FILE -` | file + stdin | stdin 输入比较结果一致 |
 | DIFF-008 | binary files | behavior | `diff` | binary files | 仅报告二进制差异，不转储内容 |
 | DIFF-009 | equal files | exact | `diff` | equal files | 无输出且退出码为 0 |
+| DIFF-010 | 不相邻的多处修改 | exact | `diff -u` | 25 行文件，第 1 行与第 20 行修改 | 非相邻修改的 hunk 数量与 native 一致 |
 
 ---
 
@@ -356,6 +371,10 @@
 | CURL-020 | `-n, --requests=N` | behavior | gobox-only | local bench server | `-n` 必须相对基线请求数改变 bench 汇总输出 |
 | CURL-021 | `--warmup=N` | behavior | gobox-only | local bench server | `--warmup` 必须相对 no-warmup 基线改变 bench 输出并显示预热阶段 |
 | CURL-022 | `-t, --timeout=SEC` | behavior | `curl -m` | local slow HTTP server | 请求超时语义与 `curl -m` 对齐 |
+| CURL-023 | 多个 `-H` | behavior | `curl -H -H` | local multi-header HTTP server | 两个自定义头都到达服务端 |
+| CURL-024 | 缺少 URL 参数 | contract | gobox-only | none | 缺少 URL 时非零退出并提示 |
+| CURL-025 | 连接被拒绝（connection refused） | behavior | `curl` | closed 本地 TCP 端口 | 连接拒绝报错，不误判为 timeout |
+| CURL-026 | `-H/-X/-d/-s/-L/-I/-k/-f` 短长等价 | structured | gobox-only | local HTTP/TLS/redirect/fail 测试服务器 | 各对短长选项执行结果一致 |
 
 ### nc/netcat
 
@@ -375,6 +394,8 @@
 | NC-012 | `-s, --size=N` | behavior | gobox-only | local bench pair | 数据块大小必须相对默认 bench 基线改变输出 |
 | NC-013 | `-t, --time=SEC` | behavior | gobox-only | local bench pair | 持续时间参数必须相对默认 bench 基线改变输出 |
 | NC-014 | `-i, --interval=SEC` | behavior | gobox-only | local bench pair | 报告间隔参数必须相对默认 bench 基线改变输出 |
+| NC-015 | `-l`/`--listen` 短长等价 | structured | gobox-only | none | 帮助输出一致 |
+| NC-018 | `-z/-v/-w` 短长等价 | structured | gobox-only | local TCP echo server | 各对短长选项执行结果一致 |
 
 ### netstat
 
@@ -404,6 +425,7 @@
 | NETSTAT-022 | short/long flag equivalence for view flags | structured | gobox-only | local route table | `-r` 与 `--route` 输出一致 |
 | NETSTAT-023 | `--help` grouped help output | contract | gobox-only | none | 帮助输出按功能分组，短长参数合并为单行展示 |
 | NETSTAT-024 | `-s` with protocol filters, e.g. `-s -t` | behavior | `netstat -s -t` | local protocol stats | 组合后只保留目标协议统计，不能退化成裸 `-s` |
+| NETSTAT-025 | `--sort` 传入不支持的排序键 | contract | gobox-only | none | 非法排序键非零退出 |
 
 ### tw
 
@@ -423,6 +445,8 @@
 | DNS-003 | `+short` | behavior | `dig +short` | controlled domain | 简短输出语义一致 |
 | DNS-004 | `+noall +answer` | behavior | `dig +noall +answer` | controlled domain | answer-only 语义一致 |
 | DNS-005 | `+tcp` | behavior | `dig +tcp` | controlled DNS endpoint / skip if unavailable | TCP 查询路径生效 |
+| DNS-006 | `-t TXT`（非 A 记录类型） | behavior | `dig -t TXT +short` | controlled domain / skip if unavailable | TXT 查询返回记录，无网络时跳过 |
+| DNS-007 | NXDOMAIN 响应处理 | contract | gobox-only | local NXDOMAIN-returning DNS server | 非零退出或输出含 `NXDOMAIN` |
 
 ### ifstat
 
@@ -446,6 +470,8 @@
 | IP-004 | `-s link` | behavior | `ip -s link` | local interfaces | `-s` 必须相对基础 `link` 视图增加 RX/TX 统计字段（含 missed/mcast/carrier/collsns） |
 | IP-005 | `route` / `r` | structured | `ip route` | local route table | IPv4 路由字段可解析，含 CIDR 前缀长度、`proto`/`scope`/`src`/`metric`/`linkdown` |
 | IP-006 | `neigh` / `n` | structured | `ip neigh` | local ARP/neigh table | 邻居 IP、设备和状态字段可解析；状态基于 ARP flags 映射为 REACHABLE/PERMANENT/INCOMPLETE |
+| IP-007 | `help` | contract | gobox-only | none | 帮助输出成功 |
+| IP-008 | 不支持的 object | contract | gobox-only | none | 非零退出并报错 |
 
 ### np/netping
 
@@ -496,6 +522,9 @@
 | PS-018 | BSD `aux` semantics | behavior | `ps aux` | current process | BSD 风格 `a/x/u` 组合语义与 user-oriented 列布局保持常见 native 预期 |
 | PS-019 | `--long` | structured | `ps -l` | current process | 列集合与顺序须与原生 `F S UID PID PPID C PRI NI ADDR SZ WCHAN TTY TIME CMD` 表头逐字段相等，保留目标 PID，`ADDR`/`SZ` 值正确；`PRI` 取值不参与比较（见 CMD-SPECS.md） |
 | PS-020 | `--hide-idle` | contract | gobox-only | idle process | 过滤掉采样 CPU 为 0 的进程 |
+| PS-021 | `--full` 与 `--comm` 冲突 | contract | gobox-only | none | 互斥参数冲突时非零退出 |
+| PS-022 | `-p` 查无此进程 | structured | `ps -p` | 不存在的 PID | 仅表头，退出码与 native 一致 |
+| PS-023 | `-C` 查无此进程名 | structured | `ps -C` | 不存在的 comm 名称（仅 Linux） | 仅表头，退出码与 native 一致 |
 
 ### top
 
@@ -536,6 +565,7 @@
 | XARGS-005 | `-P int` | behavior | `xargs -P` | 多 token stdin | 并发行为稳定 |
 | XARGS-006 | `-r` | exact | `xargs -r` | 空 stdin | 无输入时不执行 |
 | XARGS-007 | `-t` | exact | `xargs -t` | stdin tokens | 执行前打印命令一致 |
+| XARGS-008 | `-v`（`-t` 的别名） | exact | `xargs -t` | stdin tokens | `-v` 与 `-t` 输出一致 |
 
 ### kill
 
@@ -604,6 +634,10 @@
 | IOSTAT-005 | `--cgroup` | behavior | gobox-only | local Linux host with cgroup io stats | 可切换到基于 cgroup 的旧输出路径 |
 | IOSTAT-006 | `interval [count]` | structured | `iostat 1 1` | local Linux host | 位置参数形式的采样间隔与次数可执行 |
 | IOSTAT-007 | `--help` enriched help output | contract | gobox-only | none | 帮助输出包含位置参数、列说明和示例 |
+| IOSTAT-008 | `-n 0` | contract | gobox-only | none | 非零退出 |
+| IOSTAT-009 | 非数字位置参数 | contract | gobox-only | none | 非零退出 |
+| IOSTAT-010 | 位置参数超过两个 | contract | gobox-only | none | 非零退出 |
+| IOSTAT-011 | `-n 2` 多次采样输出 | structured | `iostat -n 2 1` | local Linux host | 产生两个采样输出块 |
 
 ### ioperf
 
@@ -625,6 +659,8 @@
 | IOPERF-014 | `--size string` | behavior | `fio --size` | temp file | 数据量参数生效 |
 | IOPERF-015 | `--sync string` | behavior | `fio --sync` | temp file | sync 模式进入执行路径 |
 | IOPERF-016 | `--time_based` | behavior | `fio --time_based` | temp file | 时间模式生效 |
+| IOPERF-017 | `--rw=randwrite` | behavior | `fio --rw=randwrite` | temp file + strace 系统调用捕获 | 写入偏移随机，非顺序 |
+| IOPERF-018 | `--rw=randread` | behavior | `fio --rw=randread` | 预写临时文件 + strace 系统调用捕获 | 读取偏移随机，非顺序 |
 
 ### md5sum
 
@@ -635,6 +671,8 @@
 | MD5-003 | `-q, --quiet` | exact | `md5sum --quiet` | checksum file | 安静模式一致 |
 | MD5-004 | `-s, --status` | exact | `md5sum --status` | checksum file | 仅退出码一致 |
 | MD5-005 | `-w, --warn` | exact | `md5sum --warn` | malformed checksum file | 警告行为一致 |
+| MD5-006 | `--quiet`（非 `--check` 模式） | exact | `md5sum --quiet` | 单文件（非 --check） | compute 模式下输出不受影响，与 native 一致 |
+| MD5-007 | `--check` 引用完全不存在的文件 | exact | `md5sum --check` | 校验文件引用一个不存在的文件 | 引用文件缺失报 `FAILED open or read`，与 native 一致 |
 
 ### sha256sum
 
@@ -646,6 +684,7 @@
 | SHA256-004 | `-q, --quiet` | exact | `sha256sum --quiet` | checksum file | 安静模式一致 |
 | SHA256-005 | `-s, --status` | exact | `sha256sum --status` | checksum file | 仅退出码一致 |
 | SHA256-006 | `-w, --warn` | exact | `sha256sum --warn` | malformed checksum file | 警告行为一致 |
+| SHA256-007 | `--check` 引用完全不存在的文件 | exact | `sha256sum --check` | 校验文件引用一个不存在的文件 | 引用文件缺失报 `FAILED open or read`，与 native 一致 |
 
 ---
 
