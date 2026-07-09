@@ -287,7 +287,7 @@
 | `gobox hex --dump -n LEN FILE...` | `hexdump -n` | ⚠️ 部分一致 | 只读取前 LEN 字节 |
 | `gobox hex --dump -s OFFSET FILE...` | `hexdump -s` | ⚠️ 部分一致 | 从指定偏移开始读取 |
 | `gobox hex --dump -v FILE...` | `hexdump -v` | ⚠️ 部分一致 | 不折叠重复输出行 |
-| `gobox hex --dump -e FORMAT FILE...` | `hexdump -e` | ⚠️ 部分一致 | 自定义 dump 输出格式，先支持常用格式子集 |
+| `gobox hex --dump -e FORMAT FILE...` | `hexdump -e` | ⚠️ 部分一致 | 仅识别 FORMAT 中是否含有 `%02x`/`%02X`（十六进制，无分隔）或 `%u`/`%d`（十进制，空格分隔）子串；不解析 `hexdump -e` 的重复计数/分隔符语法 |
 | `gobox hex --encode FILE...` | `xxd -p` / `od -An -tx1` | 🆕 gobox扩展 | 将输入编码为连续 lowercase hex 文本 |
 | `gobox hex --decode FILE...` | `xxd -r -p` | 🆕 gobox扩展 | 将 hex 文本解码为原始字节 |
 | `gobox hex --decode -o FILE INPUT` | `xxd -r -p > FILE` | 🆕 gobox扩展 | 将解码结果写入指定文件 |

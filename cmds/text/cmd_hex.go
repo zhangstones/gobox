@@ -36,7 +36,7 @@ func HexCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -n LEN              read at most LEN bytes")
 		fmt.Fprintln(os.Stderr, "  -s OFFSET           skip OFFSET bytes")
 		fmt.Fprintln(os.Stderr, "  -v                  do not fold repeated lines")
-		fmt.Fprintln(os.Stderr, "  -e FORMAT           format string subset for dump mode")
+		fmt.Fprintf(os.Stderr, "%s\n", "  -e FORMAT           dump byte format, one of: %02x %02X %u %d")
 		fmt.Fprintln(os.Stderr, "  -o FILE             write output to file")
 	}
 	if err := fsFlags.Parse(args); err != nil {
