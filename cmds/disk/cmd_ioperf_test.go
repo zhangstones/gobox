@@ -2,6 +2,7 @@ package disk
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -178,12 +179,13 @@ func TestIoperfCmdReadwriteMode(t *testing.T) {
 	tmpDir := t.TempDir()
 	filename := filepath.Join(tmpDir, "testfile_readwrite")
 
-	// Pre-create the file with some data
+	// Pre-create the file with some data, large enough for ~256 4k ops so
+	// the probabilistic read/write split has a statistically stable ratio.
 	tmpFile, err := os.Create(filename)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
-	data := make([]byte, 128*1024) // 128KB
+	data := make([]byte, 1024*1024) // 1MB
 	tmpFile.Write(data)
 	tmpFile.Close()
 
@@ -191,7 +193,7 @@ func TestIoperfCmdReadwriteMode(t *testing.T) {
 		"--rw=readwrite",
 		"--rwmixread=70",
 		"--filename=" + filename,
-		"--size=64k",
+		"--size=1M",
 		"--bs=4k",
 		"--numjobs=1",
 	}
@@ -202,13 +204,49 @@ func TestIoperfCmdReadwriteMode(t *testing.T) {
 	}
 
 	result := string(output)
-	// readwrite mode should show both READ and WRITE
-	if !strings.Contains(result, "READ:") {
-		t.Errorf("Expected READ: in output, got: %s", result)
+	readIOPS := parseIOPSFromOutput(t, result, "READ:")
+	writeIOPS := parseIOPSFromOutput(t, result, "WRITE:")
+	if readIOPS <= 0 || writeIOPS <= 0 {
+		t.Fatalf("expected both nonzero READ and WRITE IOPS in readwrite mode, got read=%v write=%v: %s", readIOPS, writeIOPS, result)
 	}
-	if !strings.Contains(result, "WRITE:") {
-		t.Errorf("Expected WRITE: in output, got: %s", result)
+	// IOPS is ops/duration over the same window for both lines, so the ratio
+	// of IOPS equals the ratio of op counts regardless of duration. With
+	// ~256 ops split by a 70% Bernoulli draw the sample ratio should land
+	// close to 0.70; a hardcoded 50/50 split (ignoring --rwmixread) or a
+	// silently-dropped flag would fall well outside this band.
+	ratio := readIOPS / (readIOPS + writeIOPS)
+	if ratio < 0.55 || ratio > 0.85 {
+		t.Fatalf("expected --rwmixread=70 to produce a read ratio near 0.70, got %.2f (readIOPS=%.0f writeIOPS=%.0f): %s", ratio, readIOPS, writeIOPS, result)
 	}
+}
+
+// parseIOPSFromOutput extracts the IOPS=<value> figure following the given
+// prefix (e.g. "WRITE:") from ioperf's textual output.
+func parseIOPSFromOutput(t *testing.T, output, prefix string) float64 {
+	t.Helper()
+	idx := strings.Index(output, prefix)
+	if idx < 0 {
+		t.Fatalf("prefix %q not found in output: %s", prefix, output)
+	}
+	line := output[idx:]
+	if nl := strings.IndexByte(line, '\n'); nl >= 0 {
+		line = line[:nl]
+	}
+	iopsIdx := strings.Index(line, "IOPS=")
+	if iopsIdx < 0 {
+		t.Fatalf("IOPS= not found in line: %s", line)
+	}
+	rest := line[iopsIdx+len("IOPS="):]
+	commaIdx := strings.Index(rest, ",")
+	if commaIdx < 0 {
+		t.Fatalf("comma after IOPS value not found in line: %s", line)
+	}
+	valueStr := rest[:commaIdx]
+	value, err := strconv.ParseFloat(valueStr, 64)
+	if err != nil {
+		t.Fatalf("failed to parse IOPS value %q: %v", valueStr, err)
+	}
+	return value
 }
 
 // ============== EDGE CASES ==============
@@ -312,21 +350,17 @@ func TestIoperfCmdZeroIoDepth(t *testing.T) {
 }
 
 func TestIoperfCmdMultipleJobs(t *testing.T) {
+	// With --numjobs=N>1, each job writes its own filename.<jobID> and
+	// independently performs the full --size worth of I/O (workload is not
+	// divided across jobs). Use write mode so we can deterministically prove
+	// two jobs actually ran by checking both per-job files were created at
+	// the full requested size, rather than inferring it from timing/IOPS.
 	tmpDir := t.TempDir()
 	filename := filepath.Join(tmpDir, "testfile_multi")
-
-	// Pre-create files for each job (job 0 and job 1)
-	for i := 0; i < 2; i++ {
-		tmpFile, err := os.Create(filename)
-		if err != nil {
-			t.Fatalf("Failed to create temp file: %v", err)
-		}
-		tmpFile.Write(make([]byte, 256*1024)) // 256KB
-		tmpFile.Close()
-	}
+	const sizeBytes = 128 * 1024
 
 	args := []string{
-		"--rw=read",
+		"--rw=write",
 		"--filename=" + filename,
 		"--size=128k",
 		"--bs=4k",
@@ -339,9 +373,50 @@ func TestIoperfCmdMultipleJobs(t *testing.T) {
 	}
 
 	result := string(output)
-	// With multiple jobs, we should still see results
-	if !strings.Contains(result, "READ:") {
-		t.Errorf("Expected READ: in output, got: %s", result)
+	if !strings.Contains(result, "WRITE:") {
+		t.Fatalf("Expected WRITE: in output, got: %s", result)
+	}
+	for _, jobID := range []int{0, 1} {
+		jobFile := fmt.Sprintf("%s.%d", filename, jobID)
+		info, err := os.Stat(jobFile)
+		if err != nil {
+			t.Fatalf("expected --numjobs=2 to create per-job file %s, got: %v", jobFile, err)
+		}
+		if info.Size() != sizeBytes {
+			t.Errorf("expected %s to contain the full requested %d bytes (job did not silently skip work), got %d", jobFile, sizeBytes, info.Size())
+		}
+	}
+}
+
+func TestIoperfCmdGroupReportingAggregatesJobs(t *testing.T) {
+	run := func(t *testing.T, extraArgs ...string) string {
+		tmpDir := t.TempDir()
+		filename := filepath.Join(tmpDir, "testfile_group")
+		args := append([]string{
+			"--rw=write",
+			"--filename=" + filename,
+			"--size=64k",
+			"--bs=4k",
+			"--numjobs=2",
+		}, extraArgs...)
+		output, err := runIoperfCmd(args)
+		if err != nil {
+			t.Fatalf("ioperf failed: %v\nOutput: %s", err, output)
+		}
+		return output
+	}
+
+	perJob := run(t)
+	if got := strings.Count(perJob, "job "); got != 2 {
+		t.Fatalf("expected 2 per-job report headers without --group_reporting, got %d: %s", got, perJob)
+	}
+
+	aggregated := run(t, "--group_reporting")
+	if strings.Contains(aggregated, "job ") {
+		t.Fatalf("expected --group_reporting to aggregate away per-job headers, got: %s", aggregated)
+	}
+	if got := strings.Count(aggregated, "WRITE:"); got != 1 {
+		t.Fatalf("expected exactly one aggregated WRITE: line with --group_reporting, got %d: %s", got, aggregated)
 	}
 }
 
@@ -398,14 +473,12 @@ func TestIoperfCmdInvalidRwMode(t *testing.T) {
 		"--bs=1k",
 	}
 
-	output, err := runIoperfCmd(args)
+	_, err := runIoperfCmd(args)
 	if err == nil {
 		t.Fatalf("Expected error for invalid rw mode, got none")
 	}
-
-	result := string(output)
-	if !strings.Contains(result, "invalid rw mode") && !strings.Contains(result, "valid:") {
-		t.Logf("Note: error message: %s", result)
+	if !strings.Contains(err.Error(), "invalid rw mode") {
+		t.Errorf("expected error to mention \"invalid rw mode\", got: %v", err)
 	}
 }
 
@@ -506,14 +579,12 @@ func TestIoperfCmdRwmixreadInvalidRange(t *testing.T) {
 		"--bs=1k",
 	}
 
-	output, err := runIoperfCmd(args)
+	_, err := runIoperfCmd(args)
 	if err == nil {
 		t.Fatalf("Expected error for rwmixread > 100, got none")
 	}
-
-	result := string(output)
-	if !strings.Contains(result, "rwmixread") {
-		t.Logf("Note: error message: %s", result)
+	if !strings.Contains(err.Error(), "rwmixread") {
+		t.Errorf("expected error to mention \"rwmixread\", got: %v", err)
 	}
 }
 
@@ -531,14 +602,12 @@ func TestIoperfCmdRwmixreadOnlyForReadwrite(t *testing.T) {
 		"--bs=1k",
 	}
 
-	output, err := runIoperfCmd(args)
+	_, err := runIoperfCmd(args)
 	if err == nil {
 		t.Fatalf("Expected error when using rwmixread with read mode, got none")
 	}
-
-	result := string(output)
-	if !strings.Contains(result, "rwmixread") {
-		t.Logf("Note: error message: %s", result)
+	if !strings.Contains(err.Error(), "rwmixread") {
+		t.Errorf("expected error to mention \"rwmixread\", got: %v", err)
 	}
 }
 
@@ -697,10 +766,91 @@ func TestIoperfCmdLatencyWithPercentile(t *testing.T) {
 	}
 
 	result := string(output)
-	// Should show p95 in the output
-	if !strings.Contains(result, "p95=") && !strings.Contains(result, "95") {
-		t.Logf("Note: percentile format may vary, output: %s", result)
+	if !strings.Contains(result, "p95=") {
+		t.Fatalf("expected %q in ioperf output, got: %s", "p95=", result)
 	}
+}
+
+// TestIoperfCmdLatencyPercentileListMultiValue covers the documented
+// "95:99" multi-value syntax, which TestIoperfCmdLatencyWithPercentile does
+// not exercise (it only ever passes a single percentile).
+func TestIoperfCmdLatencyPercentileListMultiValue(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "testfile_latency_multi")
+	tmpFile, err := os.Create(filename)
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tmpFile.Write(make([]byte, 256*1024))
+	tmpFile.Close()
+
+	output, err := runIoperfCmd([]string{
+		"--rw=read",
+		"--filename=" + filename,
+		"--size=128k",
+		"--bs=4k",
+		"--percentile_list=95:99",
+	})
+	if err != nil {
+		t.Fatalf("ioperf multi-value percentile_list failed: %v\nOutput: %s", err, output)
+	}
+
+	result := string(output)
+	p95 := extractPercentileLatency(t, result, "p95=")
+	p99 := extractPercentileLatency(t, result, "p99=")
+	// p99 latency is the tail of the same distribution p95 is drawn from, so
+	// it must be >= p95, not just "some other number present somewhere".
+	if p99 < p95 {
+		t.Fatalf("expected p99 latency (%.2f) >= p95 latency (%.2f), got reversed order: %s", p99, p95, result)
+	}
+}
+
+// TestIoperfCmdLegacyPercentileAlias verifies --percentile=N (the
+// documented legacy alias) is equivalent to --percentile_list=N, rather
+// than being silently ignored.
+func TestIoperfCmdLegacyPercentileAlias(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "testfile_latency_legacy")
+	tmpFile, err := os.Create(filename)
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tmpFile.Write(make([]byte, 256*1024))
+	tmpFile.Close()
+
+	output, err := runIoperfCmd([]string{
+		"--rw=read",
+		"--filename=" + filename,
+		"--size=128k",
+		"--bs=4k",
+		"--percentile=99",
+	})
+	if err != nil {
+		t.Fatalf("ioperf legacy --percentile alias failed: %v\nOutput: %s", err, output)
+	}
+	if !strings.Contains(string(output), "p99=") {
+		t.Fatalf("expected --percentile=99 (legacy alias for --percentile_list=99) to report p99=, got: %s", output)
+	}
+}
+
+// extractPercentileLatency parses the "pXX=YY.YYus" figure with the given
+// label prefix (e.g. "p95=") out of ioperf's latency output.
+func extractPercentileLatency(t *testing.T, output, label string) float64 {
+	t.Helper()
+	idx := strings.Index(output, label)
+	if idx < 0 {
+		t.Fatalf("expected %q in ioperf output, got: %s", label, output)
+	}
+	rest := output[idx+len(label):]
+	usIdx := strings.Index(rest, "us")
+	if usIdx < 0 {
+		t.Fatalf("expected %q to be followed by a %q value, got: %s", label, "us", output)
+	}
+	value, err := strconv.ParseFloat(rest[:usIdx], 64)
+	if err != nil {
+		t.Fatalf("failed to parse latency value after %q: %v", label, err)
+	}
+	return value
 }
 
 // ============== HELP FLAG TEST ==============
@@ -841,10 +991,14 @@ func TestIoperfCmdVariousSizes(t *testing.T) {
 // ============== RATE LIMIT TESTS ==============
 
 func TestIoperfCmdRateLimit(t *testing.T) {
+	// Regression coverage for the read-mode side of the rate limiter: the
+	// write-mode throttle is proven by TestIoperfCmdRateLimitThrottlesThroughput,
+	// but the read path has its own bandwidth accounting and could have its
+	// own bug (or never call into the limiter at all) without that test
+	// noticing.
 	tmpDir := t.TempDir()
 	filename := filepath.Join(tmpDir, "testfile_rate")
 
-	// Create the file first
 	tmpFile, err := os.Create(filename)
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
@@ -852,12 +1006,13 @@ func TestIoperfCmdRateLimit(t *testing.T) {
 	tmpFile.Write(make([]byte, 256*1024)) // 256KB
 	tmpFile.Close()
 
+	const rateBytesPerSec = 64 * 1024 // 64KB/s
 	args := []string{
 		"--rw=read",
 		"--filename=" + filename,
-		"--size=128k",
+		"--size=96k",
 		"--bs=4k",
-		"--rate=1M",
+		"--rate=64k",
 	}
 
 	output, err := runIoperfCmd(args)
@@ -867,7 +1022,13 @@ func TestIoperfCmdRateLimit(t *testing.T) {
 
 	result := string(output)
 	if !strings.Contains(result, "READ:") {
-		t.Errorf("Expected READ: in output, got: %s", result)
+		t.Fatalf("Expected READ: in output, got: %s", result)
+	}
+	bwMB := parseBWFromOutput(t, result, "READ:")
+	measuredBps := bwMB * 1024 * 1024
+	maxAllowed := float64(rateBytesPerSec) * 3
+	if measuredBps > maxAllowed {
+		t.Fatalf("measured read bandwidth %.0f B/s exceeds tolerance %.0f B/s for --rate=64k", measuredBps, maxAllowed)
 	}
 }
 

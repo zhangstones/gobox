@@ -824,6 +824,56 @@ func TestSortOutputRequiresArgument(t *testing.T) {
 	}
 }
 
+// Regression test: --output=FILE (the long-option form of -o) previously
+// only matched the bare "--output=" (no value) and never a real path,
+// so it always fell through to "unknown option".
+func TestSortOutputFileLongForm(t *testing.T) {
+	content := "banana\napple\ncherry\n"
+	tmpDir := t.TempDir()
+	inputFile := filepath.Join(tmpDir, "test_sort_out_input_long.txt")
+	outputFile := filepath.Join(tmpDir, "test_sort_output_long.txt")
+	os.WriteFile(inputFile, []byte(content), 0644)
+	defer os.Remove(inputFile)
+	defer os.Remove(outputFile)
+
+	err := SortCmd([]string{"--output=" + outputFile, inputFile})
+	if err != nil {
+		t.Fatalf("sort --output=FILE failed: %v", err)
+	}
+
+	data, err := os.ReadFile(outputFile)
+	if err != nil {
+		t.Fatalf("Cannot read output file: %v", err)
+	}
+
+	result := string(data)
+	expected := "apple\nbanana\ncherry\n"
+	if result != expected {
+		t.Errorf("Expected:\n%s\nGot:\n%s", expected, result)
+	}
+}
+
+func TestSortOutputEqualsRequiresArgument(t *testing.T) {
+	_, err := runSortCmd([]string{"--output="})
+	if err == nil {
+		t.Errorf("Expected error when --output= has no value")
+	}
+}
+
+// Regression coverage for the --key= long-option form of -k (only -k/-kN
+// were previously exercised).
+func TestSortKeyLongForm(t *testing.T) {
+	content := "3 c\n1 a\n2 b\n"
+	result, err := runSortCmdWithStdin([]string{"--key=1", "-n"}, content)
+	if err != nil {
+		t.Fatalf("sort --key=1 failed: %v", err)
+	}
+	expected := "1 a\n2 b\n3 c\n"
+	if result != expected {
+		t.Errorf("Expected:\n%s\nGot:\n%s", expected, result)
+	}
+}
+
 // ============== ZERO TERMINATED TESTS ==============
 
 func TestSortZeroTerminated(t *testing.T) {

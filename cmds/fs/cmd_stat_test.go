@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,10 +27,14 @@ func TestStatCmdOptionsFormatTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, file+":5:regular file:") {
-		t.Fatalf("unexpected format output %q", out)
+	info, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
 	}
-
+	expected := fmt.Sprintf("%s:5:regular file:%o\n", file, info.Mode().Perm())
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
 }
 
 // TestStatCmdOptionsExpandedFormatDirectives is a regression test for the
@@ -218,11 +223,21 @@ func TestStatCmdOptionsTerse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fields := strings.Fields(out)
-	if len(fields) < 4 || fields[0] != file || fields[1] != "5" {
-		t.Fatalf("unexpected terse output %q", out)
+	info, err := os.Lstat(file)
+	if err != nil {
+		t.Fatal(err)
 	}
-
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatal("expected *syscall.Stat_t")
+	}
+	major, minor := gnuDevMajor(uint64(st.Rdev)), gnuDevMinor(uint64(st.Rdev))
+	expected := fmt.Sprintf("%s %d %d %x %d %d %x %d %d %x %x %d %d %d %d %d\n",
+		file, info.Size(), st.Blocks, st.Mode, st.Uid, st.Gid, st.Dev, st.Ino, st.Nlink,
+		major, minor, st.Atim.Sec, st.Mtim.Sec, st.Ctim.Sec, 0, st.Blksize)
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
 }
 
 func TestStatCmdOptionsTerseFilenameWithSpaces(t *testing.T) {
@@ -252,6 +267,46 @@ func TestStatCmdOptionsTerseFilenameWithSpaces(t *testing.T) {
 
 }
 
+// gnuDevMakedev mirrors glibc's gnu_dev_makedev, the encode-side inverse of
+// gnuDevMajor/gnuDevMinor, so this test can construct a real raw dev_t for a
+// chosen (major, minor) pair to exercise the decode formulas on a device
+// file the kernel actually created, rather than only ever observing rdev=0
+// (regular files) as every other stat test does.
+func gnuDevMakedev(major, minor uint64) uint64 {
+	return (minor & 0xff) | ((major & 0xfff) << 8) | ((minor &^ 0xff) << 12) | ((major &^ 0xfff) << 32)
+}
+
+func TestGnuDevMajorMinorOnRealDeviceNode(t *testing.T) {
+	// Use minor/major values that exercise both the low 8/12-bit fields and
+	// the extended (>4095 major / >255 minor) fields of the encoding.
+	const wantMajor, wantMinor = 259, 300
+	dev := gnuDevMakedev(wantMajor, wantMinor)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "devnode")
+	if err := syscall.Mknod(path, syscall.S_IFCHR|0600, int(dev)); err != nil {
+		t.Skipf("mknod not permitted in this sandbox (%v); cannot exercise a real non-zero rdev", err)
+	}
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatal("expected *syscall.Stat_t")
+	}
+	if uint64(st.Rdev) != dev {
+		t.Fatalf("kernel rdev %#x does not match the dev_t we requested %#x; gnuDevMakedev in this test no longer matches the real encoding", uint64(st.Rdev), dev)
+	}
+	if got := gnuDevMajor(uint64(st.Rdev)); got != wantMajor {
+		t.Errorf("gnuDevMajor(%#x) = %d, want %d", st.Rdev, got, wantMajor)
+	}
+	if got := gnuDevMinor(uint64(st.Rdev)); got != wantMinor {
+		t.Errorf("gnuDevMinor(%#x) = %d, want %d", st.Rdev, got, wantMinor)
+	}
+}
+
 func TestStatCmdOptionsFilesystemFormat(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "file")
@@ -260,6 +315,11 @@ func TestStatCmdOptionsFilesystemFormat(t *testing.T) {
 	}
 	link := filepath.Join(dir, "link")
 	if err := os.Symlink("file", link); err != nil {
+		t.Fatal(err)
+	}
+
+	var want syscall.Statfs_t
+	if err := syscall.Statfs(dir, &want); err != nil {
 		t.Fatal(err)
 	}
 
@@ -273,12 +333,25 @@ func TestStatCmdOptionsFilesystemFormat(t *testing.T) {
 	if len(fields) != 4 || fields[0] != dir {
 		t.Fatalf("unexpected statfs output %q", out)
 	}
-	for _, field := range fields[1:] {
-		if _, err := strconv.ParseUint(field, 10, 64); err != nil {
-			t.Fatalf("expected numeric statfs field %q: %v", field, err)
-		}
+	// %s must map to Bsize and %b to Blocks specifically (not to each other
+	// or to Bfree) -- both are effectively constant between our own syscall
+	// and gobox's, so they can be compared for exact equality.
+	if got, _ := strconv.ParseUint(fields[1], 10, 64); got != uint64(want.Bsize) {
+		t.Fatalf("expected %%s (Bsize) = %d, got %q", want.Bsize, fields[1])
 	}
-
+	if got, _ := strconv.ParseUint(fields[2], 10, 64); got != uint64(want.Blocks) {
+		t.Fatalf("expected %%b (Blocks) = %d, got %q", want.Blocks, fields[2])
+	}
+	// %f (Bfree) fluctuates with live filesystem activity between our
+	// syscall and gobox's, so only bound it: it must be a real free-block
+	// count, not (say) a copy of Bsize or Blocks.
+	bfree, err := strconv.ParseUint(fields[3], 10, 64)
+	if err != nil {
+		t.Fatalf("expected numeric %%f field, got %q: %v", fields[3], err)
+	}
+	if bfree > uint64(want.Blocks) {
+		t.Fatalf("expected %%f (Bfree)=%d to be <= Blocks=%d", bfree, want.Blocks)
+	}
 }
 
 // TestFormatFsid is a regression test for a bug where `stat -f`'s default

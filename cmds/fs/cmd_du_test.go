@@ -61,8 +61,26 @@ func TestDuCmdBundledShortFlags(t *testing.T) {
 	if len(fields) != 2 {
 		t.Fatalf("expected two fields in output, got %q", lines[0])
 	}
-	if _, err := strconv.ParseFloat(strings.TrimRight(fields[0], "BKMGT"), 64); err != nil {
-		t.Fatalf("expected -h to produce a human-readable size, got %q", fields[0])
+
+	// Without --apparent-size, du reports real disk-block usage (st.Blocks*512),
+	// summed over the directory's own allocation plus its child file's --
+	// compute the expected value the same way and compare exactly, rather than
+	// just checking that the printed size parses as a number.
+	expectedBlockSize := func(path string) int64 {
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatalf("lstat %s: %v", path, err)
+		}
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			t.Fatal("expected *syscall.Stat_t")
+		}
+		return st.Blocks * 512
+	}
+	wantTotal := expectedBlockSize(dir) + expectedBlockSize(filepath.Join(dir, "a.txt"))
+	wantHuman := utils.HumanSize(wantTotal)
+	if fields[0] != wantHuman {
+		t.Fatalf("expected disk-block size %s, got %q (full line: %q)", wantHuman, fields[0], lines[0])
 	}
 }
 
@@ -92,13 +110,57 @@ func TestDuApparentAllSummaryTotalAndExclude(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"\t" + filepath.Join(dir, "keep.txt"), "\t" + dir, "\ttotal"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("expected %q in du output %q", want, out)
-		}
-	}
 	if strings.Contains(out, "skip.tmp") {
 		t.Fatalf("excluded file appeared in output %q", out)
+	}
+
+	// Parse each "BLOCKS\tPATH" row and verify the totals are real sums, not
+	// just present-somewhere-in-the-output. With --apparent-size, size is
+	// exact byte count (info.Size()), so we can compute the expected 1K-block
+	// count for each row the same way printDuRow does and compare exactly.
+	blocksFor := func(t *testing.T, path string) int64 {
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatalf("lstat %s: %v", path, err)
+		}
+		return (info.Size() + 1023) / 1024
+	}
+	rowBlocks := map[string]int64{}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			t.Fatalf("unexpected du row %q", line)
+		}
+		n, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			t.Fatalf("expected numeric block count in row %q: %v", line, err)
+		}
+		rowBlocks[parts[1]] = n
+	}
+
+	keep := filepath.Join(dir, "keep.txt")
+	wantKeepBlocks := blocksFor(t, keep)
+	if got, ok := rowBlocks[keep]; !ok || got != wantKeepBlocks {
+		t.Fatalf("expected %s row = %d blocks, got %v (present=%v)", keep, wantKeepBlocks, got, ok)
+	}
+
+	wantDirBytes := int64(0)
+	if info, err := os.Lstat(dir); err == nil {
+		wantDirBytes = info.Size()
+	} else {
+		t.Fatalf("lstat %s: %v", dir, err)
+	}
+	if info, err := os.Lstat(keep); err == nil {
+		wantDirBytes += info.Size()
+	} else {
+		t.Fatalf("lstat %s: %v", keep, err)
+	}
+	wantDirBlocks := (wantDirBytes + 1023) / 1024
+	if got, ok := rowBlocks[dir]; !ok || got != wantDirBlocks {
+		t.Fatalf("expected %s row (dir total, excluding skip.tmp) = %d blocks, got %v (present=%v)", dir, wantDirBlocks, got, ok)
+	}
+	if got, ok := rowBlocks["total"]; !ok || got != wantDirBlocks {
+		t.Fatalf("expected grand total row = %d blocks (same as the single root dir), got %v (present=%v)", wantDirBlocks, got, ok)
 	}
 }
 

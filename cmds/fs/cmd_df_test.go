@@ -350,9 +350,32 @@ func TestDfTotalAndPosix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"1024-blocks", "total"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("expected %q in df output %q", want, out)
+	if !strings.Contains(out, "1024-blocks") {
+		t.Fatalf("expected %q in df output %q", "1024-blocks", out)
+	}
+
+	// Both mounts are mocked with identical Bsize=1024, Blocks=10, Bfree=4,
+	// Bavail=4, so the total row must be exactly their sum in 1024-blocks:
+	// Blocks=20, Used=(Blocks-Bfree)=12, Available=8, Capacity=60% -- not
+	// just "the word total appears somewhere in the output".
+	var totalFields []string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == "total" {
+			totalFields = fields
+			break
+		}
+	}
+	if totalFields == nil {
+		t.Fatalf("expected a row starting with %q, got %q", "total", out)
+	}
+	wantFields := []string{"total", "20", "12", "8", "60%", "total"}
+	if len(totalFields) != len(wantFields) {
+		t.Fatalf("expected total row %v, got %v", wantFields, totalFields)
+	}
+	for i, want := range wantFields {
+		if totalFields[i] != want {
+			t.Fatalf("expected total row %v, got %v (field %d mismatch)", wantFields, totalFields, i)
 		}
 	}
 }

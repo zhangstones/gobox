@@ -62,6 +62,27 @@ func TestWatchCmdOptionsTitleShownByDefault(t *testing.T) {
 
 }
 
+// TestWatchCmdOptionsTitleHiddenWithDashT is the negative mirror of
+// TestWatchCmdOptionsTitleShownByDefault. Every other -t test in this file
+// only checks the command's own output, never that the title is actually
+// absent, so a -t that silently did nothing would still pass them all.
+func TestWatchCmdOptionsTitleHiddenWithDashT(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	out, err := captureProcCmd(t, func() error {
+		return WatchCmdWithContext(ctx, []string{"-n", "0.05", "-t", "echo", "ok"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "Every") {
+		t.Fatalf("expected -t to hide the title line, got %q", out)
+	}
+	if strings.Count(out, "ok") < 1 {
+		t.Fatalf("expected the command's own output to still be present, got %q", out)
+	}
+}
+
 func TestWatchCmdOptionsMissingCommand(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -285,7 +285,7 @@
 
 | gobox 参数 | 对应原生命令参数/参考基线 | 实现一致性 | 功能说明 |
 |------------|---------------|------------|----------|
-| `gobox hex --dump -C FILE...` | `hexdump -C` | ⚠️ 部分一致 | canonical 十六进制与 ASCII 对照输出；默认折叠重复行为 `*`，排版细节不承诺完全同形 |
+| `gobox hex --dump -C FILE...` | `hexdump -C` | ⚠️ 部分一致 | canonical 十六进制与 ASCII 对照输出；默认折叠重复行为 `*`，排版细节不承诺完全同形；`--dump` 恒为 canonical 格式，`-C` 只是兼容写法 |
 | `gobox hex --dump -n LEN FILE...` | `hexdump -n` | ⚠️ 部分一致 | 只读取前 LEN 字节 |
 | `gobox hex --dump -s OFFSET FILE...` | `hexdump -s` | ⚠️ 部分一致 | 从指定偏移开始读取 |
 | `gobox hex --dump -v FILE...` | `hexdump -v` | ⚠️ 部分一致 | 不折叠重复输出行 |

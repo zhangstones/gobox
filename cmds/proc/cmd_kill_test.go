@@ -1,6 +1,7 @@
 package proc
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"regexp"
@@ -380,6 +381,22 @@ func TestKillCmdOptionsInvalidPid(t *testing.T) {
 		t.Fatal("expected invalid pid error")
 	}
 
+}
+
+// TestKillCmdOptionsNonexistentPidReturnsESRCH covers the direct
+// syscall.Kill branch with a numerically-valid but nonexistent pid --
+// previously only a non-numeric argument (which never reaches syscall.Kill
+// at all) was tested, so a regression that swallowed the ESRCH error
+// instead of propagating it would not have been caught.
+func TestKillCmdOptionsNonexistentPidReturnsESRCH(t *testing.T) {
+	pid := findUnusedPID(t)
+	err := KillCmd([]string{strconv.Itoa(pid)})
+	if err == nil {
+		t.Fatalf("expected an error killing nonexistent pid %d, got success", pid)
+	}
+	if !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("expected ESRCH for nonexistent pid %d, got: %v", pid, err)
+	}
 }
 
 func TestKillCmdOptionsMissingOperand(t *testing.T) {

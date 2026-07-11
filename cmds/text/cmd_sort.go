@@ -124,7 +124,9 @@ func SortCmd(args []string) error {
 			i++
 			cfg.output = args[i]
 		case arg == "--output=":
-			cfg.output = arg[9:]
+			return fmt.Errorf("--output= requires an argument")
+		case strings.HasPrefix(arg, "--output="):
+			cfg.output = arg[len("--output="):]
 		case arg == "--help":
 			printSortUsage(os.Stdout)
 			return nil

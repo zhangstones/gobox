@@ -149,10 +149,9 @@ func TestWcCombinedFlagsLW(t *testing.T) {
 		t.Fatalf("wc -lw command failed: %v", err)
 	}
 
-	result := string(output)
-	// Should show lines (2) and words (2 due to bug)
-	if !strings.Contains(result, "2") {
-		t.Errorf("Expected 2 lines in output, got: %s", result)
+	fields := strings.Fields(string(output))
+	if len(fields) < 2 || fields[0] != "2" || fields[1] != "4" {
+		t.Errorf("expected 2 lines and 4 words, got: %v (full output: %q)", fields, string(output))
 	}
 }
 
@@ -190,16 +189,9 @@ func TestWcCombinedFlagsLWM(t *testing.T) {
 		t.Fatalf("wc -lwm command failed: %v", err)
 	}
 
-	result := string(output)
-	// Should show lines (2), words (2 due to bug), and chars (20)
-	if !strings.Contains(result, "2") {
-		t.Errorf("Expected 2 lines in output, got: %s", result)
-	}
-	if !strings.Contains(result, "2") {
-		t.Errorf("Expected 2 words in output, got: %s", result)
-	}
-	if !strings.Contains(result, "20") {
-		t.Errorf("Expected 20 chars in output, got: %s", result)
+	fields := strings.Fields(string(output))
+	if len(fields) < 3 || fields[0] != "2" || fields[1] != "4" || fields[2] != "20" {
+		t.Errorf("expected 2 lines, 4 words, 20 chars, got: %v (full output: %q)", fields, string(output))
 	}
 }
 
@@ -215,13 +207,9 @@ func TestWcCombinedFlagsAll(t *testing.T) {
 		t.Fatalf("wc -lwm -c command failed: %v", err)
 	}
 
-	result := string(output)
-	// Should show all counts: lines (2), words (2 due to bug), bytes (20), chars (20)
-	if !strings.Contains(result, "2") {
-		t.Errorf("Expected 2 lines in output, got: %s", result)
-	}
-	if !strings.Contains(result, "20") {
-		t.Errorf("Expected 20 bytes in output, got: %s", result)
+	fields := strings.Fields(string(output))
+	if len(fields) < 4 || fields[0] != "2" || fields[1] != "4" || fields[2] != "20" || fields[3] != "20" {
+		t.Errorf("expected 2 lines, 4 words, 20 chars, 20 bytes, got: %v (full output: %q)", fields, string(output))
 	}
 }
 
@@ -295,13 +283,9 @@ func TestWcStdin(t *testing.T) {
 		t.Fatalf("wc stdin command failed: %v", err)
 	}
 
-	result := string(output)
-	// 2 lines, 2 words (bug), 20 bytes
-	if !strings.Contains(result, "2") {
-		t.Errorf("Expected 2 lines in output, got: %s", result)
-	}
-	if !strings.Contains(result, "2") {
-		t.Errorf("Expected 2 words in output, got: %s", result)
+	fields := strings.Fields(string(output))
+	if len(fields) < 3 || fields[0] != "2" || fields[1] != "4" || fields[2] != "20" {
+		t.Errorf("expected 2 lines, 4 words, 20 bytes, got: %v (full output: %q)", fields, string(output))
 	}
 }
 

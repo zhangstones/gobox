@@ -71,6 +71,37 @@ func TestSortTopInfosKeepsPidTieBreakersStable(t *testing.T) {
 	}
 }
 
+// TestSortTopInfosOrdersByEachField complements
+// TestSortTopInfosKeepsPidTieBreakersStable (which only ever uses cpu=0 for
+// every entry, so it can only observe the pid tie-breaker). This gives each
+// field a distinct nonzero value and verifies the real per-field comparator,
+// not just the fallback.
+func TestSortTopInfosOrdersByEachField(t *testing.T) {
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	makeInfos := func() []procInfo {
+		return []procInfo{
+			{pid: 30, ppid: 3, cpuTicks: 300, cpu: 30, rss: 300, vsize: 3000, exe: "ccc", cmdline: "ccc arg", uid: 3, user: "carol", start: base.Add(30 * time.Minute), elapsed: 30 * time.Second, utime: 3, stime: 3},
+			{pid: 10, ppid: 1, cpuTicks: 100, cpu: 10, rss: 100, vsize: 1000, exe: "aaa", cmdline: "aaa arg", uid: 1, user: "alice", start: base.Add(10 * time.Minute), elapsed: 10 * time.Second, utime: 1, stime: 1},
+			{pid: 20, ppid: 2, cpuTicks: 200, cpu: 20, rss: 200, vsize: 2000, exe: "bbb", cmdline: "bbb arg", uid: 2, user: "bob", start: base.Add(20 * time.Minute), elapsed: 20 * time.Second, utime: 2, stime: 2},
+		}
+	}
+	want := []int{10, 20, 30}
+
+	for _, field := range []string{"cpu", "pcpu", "pmem", "rss", "vms", "vsize", "vsz", "comm", "cmd", "args", "command", "user", "uid", "ppid", "start", "etime", "time"} {
+		t.Run(field, func(t *testing.T) {
+			infos := makeInfos()
+			sortTopInfos(infos, field, false, 1<<30)
+			var got []int
+			for _, pi := range infos {
+				got = append(got, pi.pid)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("sortTopInfos(%q, reverse=false) produced pid order %v, want ascending %v", field, got, want)
+			}
+		})
+	}
+}
+
 func TestFilterTopInfosThreadModeMatchesOwningProcess(t *testing.T) {
 	infos := []procInfo{
 		{pid: 101, tgid: 100, user: "root"},

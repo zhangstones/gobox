@@ -16,7 +16,10 @@ func HexCmd(args []string) error {
 	dump := fsFlags.Bool("dump", false, "dump bytes like hexdump")
 	encode := fsFlags.Bool("encode", false, "encode input as hex")
 	decode := fsFlags.Bool("decode", false, "decode hex input")
-	canonical := fsFlags.Bool("C", false, "canonical dump")
+	// -C is accepted for hexdump compatibility but dump output is always
+	// canonical; gobox does not implement hexdump's non-canonical default
+	// two-column word format.
+	fsFlags.Bool("C", false, "canonical dump (default; no effect)")
 	limit := fsFlags.Int64("n", -1, "read at most LEN bytes")
 	offset := fsFlags.Int64("s", 0, "skip OFFSET bytes")
 	verbose := fsFlags.Bool("v", false, "do not fold repeated lines")
@@ -32,7 +35,7 @@ func HexCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  --decode            decode hex input")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Options:")
-		fmt.Fprintln(os.Stderr, "  -C                  canonical dump")
+		fmt.Fprintln(os.Stderr, "  -C                  canonical dump (default; no effect)")
 		fmt.Fprintln(os.Stderr, "  -n LEN              read at most LEN bytes")
 		fmt.Fprintln(os.Stderr, "  -s OFFSET           skip OFFSET bytes")
 		fmt.Fprintln(os.Stderr, "  -v                  do not fold repeated lines")
@@ -99,7 +102,6 @@ func HexCmd(args []string) error {
 		if *format != "" {
 			err = dumpHexFormat(out, data, *format)
 		} else {
-			_ = canonical
 			err = dumpCanonicalHex(out, data, *offset, !*verbose)
 		}
 	}

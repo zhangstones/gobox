@@ -4,14 +4,40 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
+
+// findUnusedPID returns a PID that does not currently correspond to any
+// running process, for testing "no match" filter paths deterministically.
+func findUnusedPID(t *testing.T) int {
+	t.Helper()
+	for pid := 999000; pid < 999999; pid++ {
+		if err := syscall.Kill(pid, 0); err != nil {
+			return pid
+		}
+	}
+	t.Fatal("could not find an unused pid in the probed range")
+	return 0
+}
+
+// psDataLines returns the non-header lines of a ps table (assumes the
+// table's header is line 0).
+func psDataLines(output string) []string {
+	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+	if len(lines) <= 1 {
+		return nil
+	}
+	return lines[1:]
+}
 
 func captureProcOutput(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
@@ -205,6 +231,159 @@ func TestApplyPSExplicitSelectionsUsesUnion(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].pid != 1 || got[1].pid != 2 {
 		t.Fatalf("expected BSD user selection union pid selection, got %+v", got)
+	}
+}
+
+// TestSortProcInfosOrdersByEachField directly verifies sortProcInfos for
+// every field it supports. Previously every --sort test went through
+// PsCmd with -n 1 or a single-pid filter, so the real system never had more
+// than one row to observe an order in -- a broken comparator for any field
+// other than the pid fallback could ship undetected.
+func TestSortProcInfosOrdersByEachField(t *testing.T) {
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	makeInfos := func() []procInfo {
+		return []procInfo{
+			{pid: 30, ppid: 3, rss: 300, vsize: 3000, exe: "ccc", cmdline: "ccc arg", uid: 3, user: "carol", start: base.Add(30 * time.Minute), elapsed: 30 * time.Second, utime: 3, stime: 3},
+			{pid: 10, ppid: 1, rss: 100, vsize: 1000, exe: "aaa", cmdline: "aaa arg", uid: 1, user: "alice", start: base.Add(10 * time.Minute), elapsed: 10 * time.Second, utime: 1, stime: 1},
+			{pid: 20, ppid: 2, rss: 200, vsize: 2000, exe: "bbb", cmdline: "bbb arg", uid: 2, user: "bob", start: base.Add(20 * time.Minute), elapsed: 20 * time.Second, utime: 2, stime: 2},
+		}
+	}
+	wantAscendingByPid := []int{10, 20, 30}
+
+	for _, field := range []string{"rss", "pmem", "vsize", "vms", "vsz", "comm", "args", "cmd", "user", "uid", "ppid", "start", "etime", "time", "unknown-field-falls-back-to-pid"} {
+		t.Run(field, func(t *testing.T) {
+			infos := makeInfos()
+			sortProcInfos(infos, field)
+			var gotPids []int
+			for _, pi := range infos {
+				gotPids = append(gotPids, pi.pid)
+			}
+			if len(gotPids) != 3 || gotPids[0] != wantAscendingByPid[0] || gotPids[1] != wantAscendingByPid[1] || gotPids[2] != wantAscendingByPid[2] {
+				t.Fatalf("sortProcInfos(%q) produced pid order %v, want ascending %v (every field above is constructed to correlate with pid ascending)", field, gotPids, wantAscendingByPid)
+			}
+		})
+	}
+}
+
+// TestPsCmdHideIdleExcludesZeroCpuProcess proves --hide-idle actually
+// filters, rather than just being accepted. Previously it only appeared in
+// a help-text string check.
+func TestPsCmdHideIdleExcludesZeroCpuProcess(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleep: %v", err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	pid := strconv.Itoa(cmd.Process.Pid)
+
+	baseline, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"-p", pid, "-o", "pid", "-i", "50"})
+	})
+	if err != nil {
+		t.Fatalf("PsCmd baseline failed: %v", err)
+	}
+	if len(psDataLines(baseline)) == 0 {
+		t.Fatalf("expected baseline (no --hide-idle) to include the idle sleep process, got %q", baseline)
+	}
+
+	filtered, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"-p", pid, "-o", "pid", "--hide-idle", "-i", "50"})
+	})
+	if err != nil {
+		t.Fatalf("PsCmd --hide-idle failed: %v", err)
+	}
+	if rows := psDataLines(filtered); len(rows) != 0 {
+		t.Fatalf("expected --hide-idle to exclude the idle (0%% CPU) sleep process, got rows %q", rows)
+	}
+}
+
+// TestTopCmdUserFilterExcludesOtherUsers and
+// TestTopCmdHideIdleExcludesZeroCpuProcess give top's own -u/-i filters the
+// same "every row satisfies the filter" / "before vs after" treatment as
+// the ps tests above; previously they only appeared in a combined
+// TestTopCmdBatchFiltersAndSorts smoke test that checked neither property.
+func TestTopCmdUserFilterExcludesOtherUsers(t *testing.T) {
+	me, err := user.Current()
+	if err != nil {
+		t.Skipf("cannot determine current user: %v", err)
+	}
+	output, err := captureProcOutput(t, func() error {
+		return TopCmd([]string{"-b", "-n", "1", "-d", "0", "-u", me.Username})
+	})
+	if err != nil {
+		t.Fatalf("TopCmd failed: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+	headerIdx := -1
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "PID") {
+			headerIdx = i
+			break
+		}
+	}
+	if headerIdx < 0 {
+		t.Fatalf("could not find process table header in %q", output)
+	}
+	header := strings.Fields(lines[headerIdx])
+	userCol := -1
+	for i, h := range header {
+		if h == "USER" {
+			userCol = i
+		}
+	}
+	if userCol < 0 {
+		t.Fatalf("expected a USER column in header %v", header)
+	}
+	rows := lines[headerIdx+1:]
+	if len(rows) == 0 {
+		t.Fatalf("expected at least one row for -u %s, got %q", me.Username, output)
+	}
+	for _, row := range rows {
+		fields := strings.Fields(row)
+		if len(fields) <= userCol || fields[userCol] != me.Username {
+			t.Fatalf("expected -u %s to return only that user, got row %q in %q", me.Username, row, output)
+		}
+	}
+}
+
+func TestTopCmdHideIdleExcludesZeroCpuProcess(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleep: %v", err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	pid := strconv.Itoa(cmd.Process.Pid)
+
+	baseline, err := captureProcOutput(t, func() error {
+		return TopCmd([]string{"-b", "-n", "1", "-d", "0", "-p", pid})
+	})
+	if err != nil {
+		t.Fatalf("TopCmd baseline failed: %v", err)
+	}
+	if !strings.Contains(baseline, pid) {
+		t.Fatalf("expected baseline (no -i) to include the idle sleep process %s, got %q", pid, baseline)
+	}
+
+	filtered, err := captureProcOutput(t, func() error {
+		return TopCmd([]string{"-b", "-n", "1", "-d", "0", "-p", pid, "-i"})
+	})
+	if err != nil {
+		t.Fatalf("TopCmd -i failed: %v", err)
+	}
+	if strings.Contains(filtered, pid) {
+		t.Fatalf("expected -i to exclude the idle (0%% CPU) sleep process %s, got %q", pid, filtered)
+	}
+}
+
+func TestPsCmdRejectsUnsupportedSortField(t *testing.T) {
+	_, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"--sort", "bogus-field", "-n", "1", "-i", "1"})
+	})
+	if err == nil {
+		t.Fatal("expected an error for an unsupported --sort field")
+	}
+	if !strings.Contains(err.Error(), "unsupported sort field") {
+		t.Fatalf("expected an \"unsupported sort field\" error, got: %v", err)
 	}
 }
 
@@ -459,6 +638,116 @@ func TestPsCmdBSDStyleULetterEnablesUserFormat(t *testing.T) {
 		if !strings.Contains(output, field) {
 			t.Fatalf("expected BSD u header to contain %s, got %q", field, output)
 		}
+	}
+}
+
+// The following tests exercise -p/-C/-u filters and the "no match" error
+// path end-to-end. Previously -p only had a positive-match smoke test that
+// never checked *other* processes were excluded, and -C/-u/no-match had no
+// coverage at all.
+
+func TestPsCmdPidFilterExcludesOtherProcesses(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleep: %v", err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	pid := cmd.Process.Pid
+
+	output, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"-p", strconv.Itoa(pid), "-o", "pid", "-i", "1"})
+	})
+	if err != nil {
+		t.Fatalf("PsCmd failed: %v", err)
+	}
+	rows := psDataLines(output)
+	if len(rows) == 0 {
+		t.Fatalf("expected at least one row for pid %d, got %q", pid, output)
+	}
+	for _, row := range rows {
+		if strings.TrimSpace(row) != strconv.Itoa(pid) {
+			t.Fatalf("expected -p %d to return only that pid, got other row %q in %q", pid, row, output)
+		}
+	}
+}
+
+func TestPsCmdCommandFilterExcludesOtherProcesses(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleep: %v", err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	pid := cmd.Process.Pid
+
+	output, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"-C", "sleep", "-o", "pid,comm", "-i", "1"})
+	})
+	if err != nil {
+		t.Fatalf("PsCmd failed: %v", err)
+	}
+	rows := psDataLines(output)
+	if len(rows) == 0 {
+		t.Fatalf("expected at least one row for -C sleep, got %q", output)
+	}
+	foundOurs := false
+	for _, row := range rows {
+		fields := strings.Fields(row)
+		if len(fields) < 2 || fields[1] != "sleep" {
+			t.Fatalf("expected every -C sleep row to have comm=sleep, got row %q in %q", row, output)
+		}
+		if fields[0] == strconv.Itoa(pid) {
+			foundOurs = true
+		}
+	}
+	if !foundOurs {
+		t.Fatalf("expected -C sleep to include our spawned pid %d, got %q", pid, output)
+	}
+}
+
+func TestPsCmdUserFilterExcludesOtherUsers(t *testing.T) {
+	me, err := user.Current()
+	if err != nil {
+		t.Skipf("cannot determine current user: %v", err)
+	}
+	output, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"-u", me.Username, "-o", "user", "-i", "1", "-n", "20"})
+	})
+	if err != nil {
+		t.Fatalf("PsCmd failed: %v", err)
+	}
+	rows := psDataLines(output)
+	if len(rows) == 0 {
+		t.Fatalf("expected at least one row for -u %s, got %q", me.Username, output)
+	}
+	for _, row := range rows {
+		if strings.TrimSpace(row) != me.Username {
+			t.Fatalf("expected -u %s to return only that user, got other row %q in %q", me.Username, row, output)
+		}
+	}
+}
+
+func TestPsCmdPidFilterNoMatchReturnsErrorAndHeaderOnly(t *testing.T) {
+	pid := findUnusedPID(t)
+	output, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"-p", strconv.Itoa(pid), "-o", "pid", "-i", "1"})
+	})
+	if _, ok := err.(psNoMatchError); !ok {
+		t.Fatalf("expected psNoMatchError for nonexistent pid %d, got %v", pid, err)
+	}
+	if rows := psDataLines(output); len(rows) != 0 {
+		t.Fatalf("expected header-only output for nonexistent pid %d, got data rows %q", pid, output)
+	}
+}
+
+func TestPsCmdCommandFilterNoMatchReturnsErrorAndHeaderOnly(t *testing.T) {
+	output, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"-C", "no-such-comm-xyz-unit-test", "-o", "pid", "-i", "1"})
+	})
+	if _, ok := err.(psNoMatchError); !ok {
+		t.Fatalf("expected psNoMatchError for nonexistent comm, got %v", err)
+	}
+	if rows := psDataLines(output); len(rows) != 0 {
+		t.Fatalf("expected header-only output for nonexistent comm, got data rows %q", output)
 	}
 }
 

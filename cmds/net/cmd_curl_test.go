@@ -8,9 +8,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -302,8 +304,15 @@ func TestCurlRemoteNameDefault(t *testing.T) {
 
 	_, err := runCurlCmd([]string{"-O", server.URL + "/"})
 	if err != nil {
-		// This may error since index.html doesn't exist on the server
-		t.Logf("Note: remote name with trailing slash may not work without server support")
+		t.Fatalf("curl -O against a trailing-slash URL failed: %v", err)
+	}
+
+	data, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatalf("expected -O to write default filename index.html: %v", err)
+	}
+	if string(data) != "default content" {
+		t.Errorf("expected index.html to contain %q, got %q", "default content", string(data))
 	}
 }
 
@@ -376,10 +385,11 @@ func TestCurlHeadRequest(t *testing.T) {
 	}
 
 	result := string(output)
-	// HEAD request should work and return status - just verify it doesn't fail
-	// The output format may vary between httptest and real curl
-	if result == "" {
-		t.Errorf("Expected some output from HEAD request, got empty")
+	if !strings.Contains(result, "200") {
+		t.Errorf("expected HEAD output to include the 200 status, got: %s", result)
+	}
+	if !strings.Contains(result, "X-Custom-Header: test") {
+		t.Errorf("expected HEAD output to include the server's X-Custom-Header, got: %s", result)
 	}
 }
 
@@ -704,17 +714,20 @@ func TestCurlMultipartFormUpload(t *testing.T) {
 // ============== INSECURE MODE TESTS (-k) ==============
 
 func TestCurlInsecureWithBadCert(t *testing.T) {
-	// Create server with self-signed certificate would require more setup
-	// Just test that the flag is accepted without error
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "secure content")
 	}))
 	defer server.Close()
 
-	// The -k flag should be accepted even with good certs
+	// Without -k, the self-signed cert must be rejected.
+	if _, err := runCurlCmd([]string{server.URL}); err == nil {
+		t.Fatalf("expected curl to reject the self-signed certificate without -k")
+	}
+
+	// With -k, the same request must succeed and return the real body.
 	output, err := runCurlCmd([]string{"-k", server.URL})
 	if err != nil {
-		t.Fatalf("curl command failed: %v", err)
+		t.Fatalf("curl -k command failed: %v", err)
 	}
 
 	result := string(output)
@@ -900,17 +913,29 @@ func TestCurlResolveHostInvalidFormat(t *testing.T) {
 // ============== CONNECT TIMEOUT TESTS (--connect-timeout) ==============
 
 func TestCurlConnectTimeout(t *testing.T) {
-	// Create a slow server that delays connection
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(3 * time.Second)
-		fmt.Fprint(w, "slow")
-	}))
-	defer server.Close()
-
-	// Set a short connect timeout
-	_, err := runCurlCmd([]string{"--connect-timeout", "0.1", "-m", "5", server.URL})
+	// 10.255.255.1 is an unroutable RFC1918 probe address: it never traverses
+	// the real internet and has no responder on this private network, so the
+	// TCP connect() itself should hang until --connect-timeout fires. Some
+	// sandboxed network namespaces return an immediate "network unreachable"
+	// instead of hanging; that's an environment difference, not a gobox bug,
+	// so we skip rather than falsely fail in that case (mirrors CURL-013 in
+	// tests/parity/net_parity_test.go).
+	start := time.Now()
+	_, err := runCurlCmd([]string{"--connect-timeout", "0.05", "http://10.255.255.1:81"})
+	elapsed := time.Since(start)
 	if err == nil {
-		t.Logf("Note: connect timeout behavior may vary by platform")
+		t.Fatalf("expected curl --connect-timeout to fail against an unroutable address")
+	}
+	msg := strings.ToLower(err.Error())
+	immediateUnreachable := strings.Contains(msg, "network is unreachable") || strings.Contains(msg, "no route to host")
+	if immediateUnreachable && elapsed < 20*time.Millisecond {
+		t.Skipf("environment returned an immediate network-unreachable error instead of a connect timeout (elapsed=%s): %v", elapsed, err)
+	}
+	if !strings.Contains(msg, "timeout") && !strings.Contains(msg, "timed out") && !strings.Contains(msg, "i/o timeout") {
+		t.Fatalf("expected a timeout-related error, got: %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("--connect-timeout=0.05 should fail quickly, took %s", elapsed)
 	}
 }
 
@@ -993,7 +1018,7 @@ func TestCurlBenchConcurrency(t *testing.T) {
 	}
 
 	if maxConcurrent < 2 {
-		t.Logf("Note: concurrency observed: %d (may vary by implementation)", maxConcurrent)
+		t.Fatalf("expected -c 5 to run requests concurrently (server-observed peak concurrency), got max observed concurrency %d", maxConcurrent)
 	}
 }
 
@@ -1246,14 +1271,15 @@ func TestCurlBenchWithFailOnError(t *testing.T) {
 	defer server.Close()
 
 	output, err := runCurlCmd([]string{"--bench", "-c", "1", "-n", "5", "-f", server.URL})
-	// Should complete even with failures when using -f
+	// Bench mode must complete and report the failure count, not abort the
+	// whole run when -f causes one of the 5 requests (the 3rd, a 500) to fail.
 	if err != nil {
-		t.Logf("Note: bench mode with -f may behave differently")
+		t.Fatalf("expected bench mode to complete despite one -f failure, got: %v", err)
 	}
 
 	result := string(output)
-	if !strings.Contains(result, "Failed:") {
-		t.Logf("Note: benchmark result: %s", result)
+	if !strings.Contains(result, "Failed: 1") {
+		t.Errorf("expected exactly 1 failed request out of 5, got: %s", result)
 	}
 }
 
@@ -1318,9 +1344,9 @@ func TestCurlHttp304NotModified(t *testing.T) {
 	defer server.Close()
 
 	_, err := runCurlCmd([]string{"-f", server.URL})
-	if err == nil {
-		// 304 is technically not an error condition
-		t.Logf("Note: 304 with -f returned no error")
+	// -f only fails on status >= 400; 304 must not be treated as an error.
+	if err != nil {
+		t.Fatalf("expected -f to accept a 304 response, got error: %v", err)
 	}
 }
 
@@ -1363,12 +1389,11 @@ func TestCurlBenchDefaults(t *testing.T) {
 	}
 
 	result := string(output)
-	if !strings.Contains(result, "Requests:") {
-		t.Errorf("Expected benchmark output, got: %s", result)
+	if !strings.Contains(result, "Requests: 100") {
+		t.Errorf("expected default request count of 100, got: %s", result)
 	}
 	if !strings.Contains(result, "Concurrency: 1") {
-		// Default concurrency is 1
-		t.Logf("Concurrency info: %s", result)
+		t.Errorf("expected default concurrency of 1, got: %s", result)
 	}
 }
 
@@ -1490,7 +1515,52 @@ func TestCurlHttpsGoogle(t *testing.T) {
 // ============== BENCHMARK STATISTICS ==============
 
 func TestCurlBenchStatisticsOutput(t *testing.T) {
-	// Test is now enabled - quicksort bug has been fixed
+	// Regression coverage for a historical quicksort stack overflow when
+	// percentile-sorting bench latencies (see comment above
+	// TestCurlBenchBasic). Give requests varying latency so min/p50/p90/p99/max
+	// are meaningfully different, then verify the reported percentiles are
+	// actually monotonic and consistent with each other.
+	var count int
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		n := count
+		count++
+		mu.Unlock()
+		time.Sleep(time.Duration(n) * time.Millisecond)
+		fmt.Fprint(w, "stats")
+	}))
+	defer server.Close()
+
+	output, err := runCurlCmd([]string{"--bench", "-c", "1", "-n", "20", server.URL})
+	if err != nil {
+		t.Fatalf("curl command failed: %v", err)
+	}
+
+	result := string(output)
+	re := regexp.MustCompile(`Latency: min=([\d.]+)ms, max=([\d.]+)ms, mean=([\d.]+)ms, p50=([\d.]+)ms, p90=([\d.]+)ms, p99=([\d.]+)ms`)
+	m := re.FindStringSubmatch(result)
+	if m == nil {
+		t.Fatalf("expected a Latency: min=.../max=.../mean=.../p50=.../p90=.../p99=... line, got: %s", result)
+	}
+	vals := make([]float64, 6)
+	for i, s := range m[1:] {
+		v, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			t.Fatalf("failed to parse latency value %q: %v", s, err)
+		}
+		vals[i] = v
+	}
+	min, max, mean, p50, p90, p99 := vals[0], vals[1], vals[2], vals[3], vals[4], vals[5]
+	if !(min <= p50 && p50 <= p90 && p90 <= p99 && p99 <= max) {
+		t.Fatalf("expected min<=p50<=p90<=p99<=max, got min=%v p50=%v p90=%v p99=%v max=%v", min, p50, p90, p99, max)
+	}
+	if mean < min || mean > max {
+		t.Fatalf("expected min<=mean<=max, got min=%v mean=%v max=%v", min, mean, max)
+	}
+	if max <= min {
+		t.Fatalf("expected varying request latencies to produce max > min, got min=%v max=%v", min, max)
+	}
 }
 
 func TestCurlBenchWithWarmupRequests(t *testing.T) {
@@ -1552,9 +1622,8 @@ func TestCurlHeadWithFail(t *testing.T) {
 	}
 
 	result := string(output)
-	// HEAD with -f should work and return some output
-	if result == "" {
-		t.Errorf("Expected some output from HEAD request, got empty")
+	if !strings.Contains(result, "200") {
+		t.Errorf("expected HEAD -f output to include the 200 status, got: %s", result)
 	}
 }
 
@@ -1591,10 +1660,16 @@ func TestCurlMissingHeaderArgument(t *testing.T) {
 }
 
 func TestCurlMissingDataArgument(t *testing.T) {
+	// -d consumes the single following argument as its value, leaving no
+	// positional URL argument at all, so this must fail with "URL required"
+	// rather than silently treating "http://example.com" as the target URL.
 	_, err := runCurlCmd([]string{"-d", "http://example.com"})
-	// -d requires a URL after it, but curl will try to use "http://example.com" as the URL
-	// The error should be about something else or it might actually work
-	t.Logf("Note: -d with single argument behavior: err=%v", err)
+	if err == nil {
+		t.Fatalf("expected an error when -d consumes the only argument, leaving no URL")
+	}
+	if !strings.Contains(err.Error(), "URL required") {
+		t.Errorf("expected \"URL required\" error, got: %v", err)
+	}
 }
 
 func TestCurlMissingResolveArgument(t *testing.T) {
@@ -1618,9 +1693,8 @@ func TestCurlBenchAllSuccess(t *testing.T) {
 	}
 
 	result := string(output)
-	// Check for failed: 0
 	if !strings.Contains(result, "Failed: 0") {
-		t.Logf("Note: benchmark result: %s", result)
+		t.Errorf("expected all 40 requests to succeed (Failed: 0), got: %s", result)
 	}
 }
 
@@ -1650,23 +1724,27 @@ var requestCount int
 // ============== ISSUE #5 - BENCHMARK WITH ACTUAL REQUEST COUNT ==============
 
 func TestCurlBenchActualRequestCount(t *testing.T) {
+	// "Requests: 50" in the summary is the echoed input parameter, not proof
+	// the server actually received 50 requests. Count real server hits with
+	// an atomic counter to verify -n actually drives that many requests.
+	var received int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&received, 1)
 		fmt.Fprint(w, "ok")
 	}))
 	defer server.Close()
 
-	// Use higher request count to verify actual number of requests
 	output, err := runCurlCmd([]string{"--bench", "-c", "2", "-n", "50", server.URL})
 	if err != nil {
 		t.Fatalf("curl command failed: %v", err)
 	}
 
 	result := string(output)
-	// Parse the output to verify request count
-	if strings.Contains(result, "Requests: 50") {
-		// Success
-	} else if strings.Contains(result, "Requests:") {
-		t.Logf("Note: actual benchmark output: %s", result)
+	if !strings.Contains(result, "Requests: 50") {
+		t.Errorf("expected summary to report Requests: 50, got: %s", result)
+	}
+	if got := atomic.LoadInt64(&received); got != 50 {
+		t.Errorf("expected server to actually receive 50 requests, got %d", got)
 	}
 }
 
@@ -1902,8 +1980,19 @@ func TestCurlOutputAbsolutePath(t *testing.T) {
 // ============== CLEANUP ON ERROR ==============
 
 func TestCurlOutputFileCleanupOnError(t *testing.T) {
+	// Hijack and close the connection without writing any response, so
+	// client.Do genuinely fails with a connection error before curl ever
+	// reaches the os.Create(outputFile) step.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Close connection without sending response
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatalf("ResponseWriter does not support hijacking")
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			t.Fatalf("hijack failed: %v", err)
+		}
+		conn.Close()
 	}))
 	defer server.Close()
 
@@ -1913,7 +2002,15 @@ func TestCurlOutputFileCleanupOnError(t *testing.T) {
 
 	_, err := runCurlCmd([]string{"-o", outputFile, server.URL})
 	if err == nil {
-		t.Logf("Note: command may not error on connection close")
+		t.Fatalf("expected an error when the connection is closed before any response")
+	}
+
+	data, readErr := os.ReadFile(outputFile)
+	if readErr != nil {
+		t.Fatalf("output file should still exist after a failed request: %v", readErr)
+	}
+	if string(data) != "original content" {
+		t.Errorf("expected the pre-existing output file to be left untouched on request failure, got: %q", string(data))
 	}
 }
 

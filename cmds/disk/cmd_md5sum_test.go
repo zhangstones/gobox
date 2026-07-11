@@ -505,11 +505,20 @@ func TestMd5sumCmdCheckMalformedLine(t *testing.T) {
 		t.Fatalf("write checksum file: %v", err)
 	}
 
-	// Use cmd.Dir to run command in the directory
-	output, err := runMd5sumCmd([]string{"-c", "-w", "test.txt.md5"}, dir)
-	_ = output
-	_ = err
-	// Should handle gracefully, not crash
+	stdout, stderr, err := runMd5sumCmdFull([]string{"-c", "-w", "test.txt.md5"}, dir)
+	// A hash-only line (no filename) is skipped entirely rather than
+	// checked, so with -w it must warn on stderr, produce no OK/FAILED
+	// line on stdout for it, and exit non-zero (checksum verification
+	// found nothing valid to confirm).
+	if err == nil {
+		t.Fatalf("expected a malformed checksum line to cause a non-zero exit, got success")
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("expected no OK/FAILED line for a line with no filename, got stdout: %q", stdout)
+	}
+	if !strings.Contains(stderr, "improperly formatted checksum line") {
+		t.Fatalf("expected a malformed-line warning on stderr, got: %q", stderr)
+	}
 }
 
 func TestMd5sumCmdCheckMissingFile(t *testing.T) {
@@ -816,13 +825,74 @@ func TestMd5sumCmdTagAndQuietTogether(t *testing.T) {
 
 // ============== STDIN IN CHECK MODE ==============
 
-func TestMd5sumCmdStdinNotSupportedInCheckMode(t *testing.T) {
-	// md5sum -c does not read from stdin, it requires file arguments
-	// Providing stdin with -c should result in error about missing file
-	_, err := runMd5sumCmdWithStdin([]string{"-c"}, "5eb63bbbe01eeed093cb22bb8f5acdc3  test.txt\n", "")
-	// stdin content is ignored when -c is specified, so this should error
-	// about missing file
+// TestMd5sumCmdCheckModeIgnoredWithStdinAndNoFiles documents the actual
+// (surprising) current contract: with no file arguments, cmd_md5sum.go's
+// "no files" branch checks for stdin data *before* checking checkMode, so
+// `-c` is silently ignored and stdin is treated as compute-mode input --
+// it does not read a checksum list from stdin, and it does not error about
+// a missing file either. This was previously asserted the opposite way
+// (expected to error) and used t.Log instead of a real assertion, so the
+// mismatch between the comment and the real behavior was never caught.
+// TestMd5sumCmdCheckModeReadsChecksumListFromStdinWithNoFiles is a
+// regression test: -c with no file operands previously ignored -c entirely
+// and computed the MD5 of the stdin bytes themselves (falling into compute
+// mode). GNU md5sum instead reads the checksum *list* from stdin in this
+// case, matching -c FILE behavior with FILE replaced by stdin.
+func TestMd5sumCmdCheckModeReadsChecksumListFromStdinWithNoFiles(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.txt")
+	if err := os.WriteFile(target, []byte("hello"), 0644); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+	sum := fmt.Sprintf("%x", md5.Sum([]byte("hello")))
+	checksumList := sum + "  target.txt\n"
+
+	stdout, _, err := runMd5sumCmdWithStdinFull([]string{"-c"}, checksumList, dir)
+	if err != nil {
+		t.Fatalf("expected -c to successfully verify target.txt via stdin checksum list, got: %v", err)
+	}
+	want := "target.txt: OK\n"
+	if stdout != want {
+		t.Fatalf("expected %q, got %q", want, stdout)
+	}
+}
+
+// TestMd5sumCmdCheckModeStdinDetectsMismatch confirms the stdin-checksum-list
+// path (added above) actually verifies content rather than always reporting
+// OK.
+func TestMd5sumCmdCheckModeStdinDetectsMismatch(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.txt")
+	if err := os.WriteFile(target, []byte("hello"), 0644); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+	wrongSum := fmt.Sprintf("%x", md5.Sum([]byte("not hello")))
+	checksumList := wrongSum + "  target.txt\n"
+
+	stdout, _, err := runMd5sumCmdWithStdinFull([]string{"-c"}, checksumList, dir)
 	if err == nil {
-		t.Log("Note: md5sum -c with stdin did not error")
+		t.Fatalf("expected a checksum mismatch via stdin list to fail, got success with stdout %q", stdout)
+	}
+	want := "target.txt: FAILED\n"
+	if stdout != want {
+		t.Fatalf("expected %q, got %q", want, stdout)
+	}
+}
+
+// TestMd5sumCmdCheckModeWithoutStdinDataStillErrors preserves the original
+// "no files, no stdin" contract: -c should not hang waiting on a stdin that
+// was never provided data, it should print usage and error immediately.
+func TestMd5sumCmdCheckModeWithoutStdinDataStillErrors(t *testing.T) {
+	oldStdin := os.Stdin
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
+	}
+	defer devNull.Close()
+	os.Stdin = devNull
+	defer func() { os.Stdin = oldStdin }()
+
+	if err := Md5sumCmd([]string{"-c"}); err == nil {
+		t.Fatalf("expected -c with no files and no stdin data to error")
 	}
 }

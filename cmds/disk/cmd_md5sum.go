@@ -75,9 +75,19 @@ func Md5sumCmd(args []string) error {
 
 	// If no files and no stdin, show usage
 	if len(files) == 0 {
-		// Check if there's data on stdin
 		stat, _ := os.Stdin.Stat()
-		if (stat.Mode() & os.ModeCharDevice) == 0 {
+		hasStdinData := (stat.Mode() & os.ModeCharDevice) == 0
+		if checkMode {
+			// -c with no file operands reads the checksum list from stdin,
+			// matching GNU md5sum -- it must not fall through to compute
+			// mode and hash the stdin bytes themselves.
+			if hasStdinData {
+				return md5sumCheckStdin(warn, status, quiet)
+			}
+			fsFlags.Usage()
+			return errors.New("no files specified")
+		}
+		if hasStdinData {
 			// Data is available on stdin
 			if err := md5sumStdin(tag, quiet); err != nil {
 				return err
@@ -173,106 +183,7 @@ func md5sumCheck(files []string, warn, status, quiet bool) error {
 			hasError = true
 			continue
 		}
-		scanner := bufio.NewScanner(f)
-		lineNum := 0
-		for scanner.Scan() {
-			lineNum++
-			line := strings.TrimRight(scanner.Text(), "\r\n")
-			if line == "" {
-				continue
-			}
-
-			// Parse the line: expected format is "<hash> <filename>" or "MD5 (file) = hash"
-			var expectedHash, filename string
-
-			// Try BSD format: MD5 (file) = hash
-			if strings.HasPrefix(line, "MD5 (") {
-				// Format: MD5 (filename) = hash
-				parts := strings.SplitN(line, " = ", 2)
-				if len(parts) != 2 {
-					if warn {
-						fmt.Fprintf(os.Stderr, "md5sum: %s:%d: improperly formatted BSD style checksum line\n", file, lineNum)
-					}
-					hasError = true
-					continue
-				}
-				// Extract filename from "MD5 (filename)"
-				middle := strings.TrimPrefix(parts[0], "MD5 (")
-				if !strings.HasSuffix(middle, ")") {
-					if warn {
-						fmt.Fprintf(os.Stderr, "md5sum: %s:%d: improperly formatted BSD style checksum line\n", file, lineNum)
-					}
-					hasError = true
-					continue
-				}
-				filename = strings.TrimSuffix(middle, ")")
-				expectedHash = parts[1]
-			} else {
-				// Try POSIX format: hash  filename (two spaces between)
-				// Some implementations use "  " as separator, some use " *"
-				parts := strings.Fields(line)
-				if len(parts) < 2 {
-					if warn {
-						fmt.Fprintf(os.Stderr, "md5sum: %s:%d: improperly formatted checksum line\n", file, lineNum)
-					}
-					hasError = true
-					continue
-				}
-				expectedHash = parts[0]
-				if !md5HexPattern.MatchString(expectedHash) {
-					if warn {
-						fmt.Fprintf(os.Stderr, "md5sum: %s:%d: improperly formatted checksum line\n", file, lineNum)
-					}
-					hasError = true
-					continue
-				}
-				// Filename might have spaces, so join remaining parts; strip binary-mode prefix
-				filename = strings.TrimPrefix(strings.Join(parts[1:], " "), "*")
-			}
-
-			// Compute actual hash
-			fileToCheck, err := os.Open(filename)
-			if err != nil {
-				if !quiet {
-					fmt.Fprintf(os.Stderr, "md5sum: %s: %v\n", filename, err)
-				}
-				if !quiet && !status {
-					fmt.Printf("%s: FAILED open or read\n", filename)
-				}
-				hasError = true
-				continue
-			}
-
-			hash, err := computeMD5(fileToCheck)
-			fileToCheck.Close()
-			if err != nil {
-				if !quiet {
-					fmt.Fprintf(os.Stderr, "md5sum: %s: %v\n", filename, err)
-				}
-				hasError = true
-				continue
-			}
-
-			actualHash := fmt.Sprintf("%x", hash)
-
-			if !quiet && !status {
-				if actualHash == expectedHash {
-					fmt.Printf("%s: OK\n", filename)
-				} else {
-					fmt.Printf("%s: FAILED\n", filename)
-					hasError = true
-				}
-			} else {
-				if actualHash != expectedHash {
-					hasError = true
-				}
-			}
-		}
-
-		if err := scanner.Err(); err != nil {
-			if !quiet {
-				fmt.Fprintf(os.Stderr, "md5sum: %s: error reading: %v\n", file, err)
-			}
+		if md5sumCheckReader(f, file, warn, status, quiet) {
 			hasError = true
 		}
 		f.Close()
@@ -282,4 +193,125 @@ func md5sumCheck(files []string, warn, status, quiet bool) error {
 		return md5sumExitError{code: 1, err: errors.New("checksum verification failed")}
 	}
 	return nil
+}
+
+// md5sumCheckStdin implements `-c` with no file operands: GNU md5sum reads
+// the checksum list from stdin in that case (rather than falling through to
+// compute mode and hashing the stdin bytes themselves).
+func md5sumCheckStdin(warn, status, quiet bool) error {
+	if md5sumCheckReader(os.Stdin, "-", warn, status, quiet) {
+		return md5sumExitError{code: 1, err: errors.New("checksum verification failed")}
+	}
+	return nil
+}
+
+// md5sumCheckReader reads a checksum list (POSIX "<hash>  <filename>" or BSD
+// "MD5 (filename) = hash" format) from r and verifies each referenced file,
+// reporting via sourceName in diagnostics. Returns true if any line failed
+// to parse or any referenced file's checksum did not match.
+func md5sumCheckReader(r io.Reader, sourceName string, warn, status, quiet bool) bool {
+	var hasError bool
+	scanner := bufio.NewScanner(r)
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		line := strings.TrimRight(scanner.Text(), "\r\n")
+		if line == "" {
+			continue
+		}
+
+		// Parse the line: expected format is "<hash> <filename>" or "MD5 (file) = hash"
+		var expectedHash, filename string
+
+		// Try BSD format: MD5 (file) = hash
+		if strings.HasPrefix(line, "MD5 (") {
+			// Format: MD5 (filename) = hash
+			parts := strings.SplitN(line, " = ", 2)
+			if len(parts) != 2 {
+				if warn {
+					fmt.Fprintf(os.Stderr, "md5sum: %s:%d: improperly formatted BSD style checksum line\n", sourceName, lineNum)
+				}
+				hasError = true
+				continue
+			}
+			// Extract filename from "MD5 (filename)"
+			middle := strings.TrimPrefix(parts[0], "MD5 (")
+			if !strings.HasSuffix(middle, ")") {
+				if warn {
+					fmt.Fprintf(os.Stderr, "md5sum: %s:%d: improperly formatted BSD style checksum line\n", sourceName, lineNum)
+				}
+				hasError = true
+				continue
+			}
+			filename = strings.TrimSuffix(middle, ")")
+			expectedHash = parts[1]
+		} else {
+			// Try POSIX format: hash  filename (two spaces between)
+			// Some implementations use "  " as separator, some use " *"
+			parts := strings.Fields(line)
+			if len(parts) < 2 {
+				if warn {
+					fmt.Fprintf(os.Stderr, "md5sum: %s:%d: improperly formatted checksum line\n", sourceName, lineNum)
+				}
+				hasError = true
+				continue
+			}
+			expectedHash = parts[0]
+			if !md5HexPattern.MatchString(expectedHash) {
+				if warn {
+					fmt.Fprintf(os.Stderr, "md5sum: %s:%d: improperly formatted checksum line\n", sourceName, lineNum)
+				}
+				hasError = true
+				continue
+			}
+			// Filename might have spaces, so join remaining parts; strip binary-mode prefix
+			filename = strings.TrimPrefix(strings.Join(parts[1:], " "), "*")
+		}
+
+		// Compute actual hash
+		fileToCheck, err := os.Open(filename)
+		if err != nil {
+			if !quiet {
+				fmt.Fprintf(os.Stderr, "md5sum: %s: %v\n", filename, err)
+			}
+			if !quiet && !status {
+				fmt.Printf("%s: FAILED open or read\n", filename)
+			}
+			hasError = true
+			continue
+		}
+
+		hash, err := computeMD5(fileToCheck)
+		fileToCheck.Close()
+		if err != nil {
+			if !quiet {
+				fmt.Fprintf(os.Stderr, "md5sum: %s: %v\n", filename, err)
+			}
+			hasError = true
+			continue
+		}
+
+		actualHash := fmt.Sprintf("%x", hash)
+
+		if !quiet && !status {
+			if actualHash == expectedHash {
+				fmt.Printf("%s: OK\n", filename)
+			} else {
+				fmt.Printf("%s: FAILED\n", filename)
+				hasError = true
+			}
+		} else {
+			if actualHash != expectedHash {
+				hasError = true
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		if !quiet {
+			fmt.Fprintf(os.Stderr, "md5sum: %s: error reading: %v\n", sourceName, err)
+		}
+		hasError = true
+	}
+	return hasError
 }

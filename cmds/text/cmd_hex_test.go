@@ -81,6 +81,34 @@ func TestHexCmdOptionsDumpCanonicalShortLine(t *testing.T) {
 
 }
 
+// -C is only accepted for hexdump compatibility: gobox's --dump output is
+// always canonical, with or without -C. This locks that contract so a
+// future change doesn't silently make -C do something different from bare
+// --dump without an explicit decision.
+func TestHexCmdOptionsDumpCanonicalIsDefaultRegardlessOfCFlag(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "bin")
+	if err := os.WriteFile(input, []byte("abcdef"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	withC, err := captureTextCmd(t, "", func() error {
+		return HexCmd([]string{"--dump", "-C", input})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutC, err := captureTextCmd(t, "", func() error {
+		return HexCmd([]string{"--dump", input})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withC != withoutC {
+		t.Fatalf("--dump -C and --dump should produce identical output, got:\n-C:  %q\nbare: %q", withC, withoutC)
+	}
+}
+
 func TestHexCmdOptionsDumpZeroLength(t *testing.T) {
 	dir := t.TempDir()
 	input := filepath.Join(dir, "bin")
