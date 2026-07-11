@@ -125,6 +125,8 @@ func KillCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -n                choose newest match")
 		fmt.Fprintln(os.Stderr, "  -o                choose oldest match")
 		fmt.Fprintln(os.Stderr, "  --dry-run         print matches only")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "  -h, --help        show this help")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

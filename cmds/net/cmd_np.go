@@ -45,6 +45,7 @@ func NpCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -l N               long connection mode")
 		fmt.Fprintln(os.Stderr, "  -q                 quiet mode, only show final statistics")
 		fmt.Fprintln(os.Stderr, "  -v                 verbose output")
+		fmt.Fprintln(os.Stderr, "  -h, --help         show this help")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  gobox np --tcp -p 80 -c 1 127.0.0.1")

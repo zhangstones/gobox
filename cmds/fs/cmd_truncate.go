@@ -22,6 +22,7 @@ func TruncateCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -s SIZE             set or adjust file size")
 		fmt.Fprintln(os.Stderr, "  -r RFILE            use reference file size")
 		fmt.Fprintln(os.Stderr, "  -c, --no-create     do not create files")
+		fmt.Fprintln(os.Stderr, "  -h, --help          show this help")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  gobox truncate -s 0 app.log")

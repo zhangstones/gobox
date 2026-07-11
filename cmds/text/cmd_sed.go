@@ -130,7 +130,7 @@ doneFlags:
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: gobox sed [OPTIONS] [SCRIPT] [FILE...]")
+	fmt.Fprintln(w, "Usage: gobox sed [OPTION]... [SCRIPT] [FILE...]")
 	fmt.Fprintln(w, "Stream editor for filtering and transforming text.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Options:")

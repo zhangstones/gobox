@@ -457,7 +457,7 @@ func buildCurlRequest(targetURL, method string, headers []string, postData, uplo
 }
 
 func printCurlUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: gobox curl [OPTIONS] URL")
+	fmt.Fprintln(w, "Usage: gobox curl [OPTION]... URL")
 	fmt.Fprintln(w, "Transfer data from a URL.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Options:")
@@ -479,6 +479,7 @@ func printCurlUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --resolve HOST:PORT:ADDR Force resolve HOST:PORT to ADDR")
 	fmt.Fprintln(w, "  -f, --fail            Fail on HTTP 4xx/5xx errors")
 	fmt.Fprintln(w, "  -i, --include         Include response headers in output")
+	fmt.Fprintln(w, "  -h, --help            Show this help")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Benchmark mode (--bench):")
 	fmt.Fprintln(w, "  -c, --concurrent=N    Number of concurrent requests (default 1)")

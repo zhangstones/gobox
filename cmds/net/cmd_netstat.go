@@ -56,7 +56,7 @@ func NetstatCmd(args []string) error {
 	wide := fsFlags.Bool("W", false, "wide output (accepted; gobox does not truncate addresses)")
 	wideLong := fsFlags.Bool("wide", false, "wide output (accepted; gobox does not truncate addresses)")
 	fsFlags.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: gobox netstat")
+		fmt.Fprintln(os.Stderr, "Usage: gobox netstat [OPTION]...")
 		fmt.Fprintln(os.Stderr, "Print network connection statistics (Linux /proc/net/tcp*, /proc/net/udp*, /proc/net/unix).")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Filters:")
@@ -85,6 +85,8 @@ func NetstatCmd(args []string) error {
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Sorting:")
 		fmt.Fprintln(os.Stderr, "      --sort FIELD    sort by recvq|sendq|local|remote|pid")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "  -h, --help          show this help")
 	}
 	if err := fsFlags.Parse(normalizeNetstatArgs(args)); err != nil {
 		if err == flag.ErrHelp {

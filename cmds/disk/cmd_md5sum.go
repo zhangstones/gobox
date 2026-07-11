@@ -52,14 +52,17 @@ func Md5sumCmd(args []string) error {
 	fsFlags.BoolVar(&warn, "warn", false, "warn about malformed lines")
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox md5sum [OPTION]... [FILE]...")
-		fmt.Fprintln(os.Stderr, "Compute or check MD5 checksums.")
+		fmt.Fprintln(os.Stderr, "Compute or check MD5 message digests.")
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Options:")
-		fmt.Fprintln(os.Stderr, "  -c, --check      verify checksums against file")
-		fmt.Fprintln(os.Stderr, "      --tag        BSD style output (MD5 (file) = xxx)")
+		fmt.Fprintln(os.Stderr, "Modes:")
+		fmt.Fprintln(os.Stderr, "  -c, --check      check MD5 sums from files")
+		fmt.Fprintln(os.Stderr, "      --tag        use BSD style output (MD5 (file) = xxx)")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Output:")
 		fmt.Fprintln(os.Stderr, "  -q, --quiet      quiet mode")
-		fmt.Fprintln(os.Stderr, "  -s, --status     only return status code")
+		fmt.Fprintln(os.Stderr, "  -s, --status     status mode")
 		fmt.Fprintln(os.Stderr, "  -w, --warn       warn about malformed lines")
+		fmt.Fprintln(os.Stderr, "  -h, --help       show this help")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

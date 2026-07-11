@@ -297,8 +297,10 @@ func invokeGobox(args []string) error {
 		return textcmd.GrepCmd(argv)
 	case "sed":
 		return textcmd.SedCmd(argv)
-	case "dig", "nslookup":
+	case "dig":
 		return netcmd.DigCmd(argv)
+	case "nslookup":
+		return netcmd.NslookupCmd(argv)
 	case "sort":
 		return textcmd.SortCmd(argv)
 	case "rand":

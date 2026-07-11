@@ -43,6 +43,7 @@ func ReadpathCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -n, --no-newline               do not print trailing newline")
 		fmt.Fprintln(os.Stderr, "  -z, --zero                     terminate each output with NUL")
 		fmt.Fprintln(os.Stderr, "  -q, --quiet                    suppress most error messages")
+		fmt.Fprintln(os.Stderr, "  -h, --help                     show this help")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

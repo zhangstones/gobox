@@ -25,6 +25,7 @@ func StringsCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -f         print filename before each string")
 		fmt.Fprintln(os.Stderr, "  -t BASE    print offset in o, d, or x")
 		fmt.Fprintln(os.Stderr, "  -a         scan entire file")
+		fmt.Fprintln(os.Stderr, "  -h, --help show this help")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

@@ -109,14 +109,15 @@ doneFlags:
 }
 
 func printTwUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: gobox tw [OPTIONS]")
+	fmt.Fprintln(w, "Usage: gobox tw [OPTION]...")
 	fmt.Fprintln(w, "Tiny web server for serving static files or benchmark endpoints.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Options:")
 	fmt.Fprintln(w, "  -p, --port=PORT   Listen on port (default 8080)")
 	fmt.Fprintln(w, "  -d, --dir=DIR     Directory to serve (default current directory)")
 	fmt.Fprintln(w, "  -r, --reuse       Enable SO_REUSEADDR")
-	fmt.Fprintln(w, "  --bench            Enable benchmark mode")
+	fmt.Fprintln(w, "  --bench           Enable benchmark mode")
+	fmt.Fprintln(w, "  -h, --help        Show this help")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Benchmark mode endpoints (--bench):")
 	fmt.Fprintln(w, "  GET  /ping         Returns 200 OK with \"pong\"")

@@ -67,6 +67,7 @@ func DuCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  --exclude PATTERN     exclude files matching PATTERN")
 		fmt.Fprintln(os.Stderr, "  -x                    skip directories on different filesystems")
 		fmt.Fprintln(os.Stderr, "  --apparent-size       print apparent sizes instead of disk usage")
+		fmt.Fprintln(os.Stderr, "  --help                show this help")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  gobox du -sh .")

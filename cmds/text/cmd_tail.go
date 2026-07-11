@@ -149,7 +149,7 @@ func TailCmd(args []string) error {
 }
 
 func printTailUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: gobox tail [OPTIONS] [FILE...]")
+	fmt.Fprintln(w, "Usage: gobox tail [OPTION]... [FILE...]")
 	fmt.Fprintln(w, "Print the last lines of a file.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Options:")

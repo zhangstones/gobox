@@ -47,6 +47,7 @@ func FindCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -mindepth N        skip matches shallower than N levels")
 		fmt.Fprintln(os.Stderr, "  -not               negate the combined match result")
 		fmt.Fprintln(os.Stderr, "  -print             print matched paths (default true)")
+		fmt.Fprintln(os.Stderr, "  -h, --help         show this help")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  gobox find . -type f -name '*.log'")

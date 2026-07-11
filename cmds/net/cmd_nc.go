@@ -175,7 +175,7 @@ doneFlags:
 }
 
 func printNCHelp(w io.Writer) {
-	fmt.Fprintln(w, "Usage: gobox nc [OPTIONS] [HOST] PORT")
+	fmt.Fprintln(w, "Usage: gobox nc [OPTION]... [HOST] PORT")
 	fmt.Fprintln(w, "Netcat - arbitrary TCP/UDP connections and listening")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Options:")
@@ -185,8 +185,9 @@ func printNCHelp(w io.Writer) {
 	fmt.Fprintln(w, "  -w SEC, --wait=SEC     Connection timeout")
 	fmt.Fprintln(w, "  -v, --verbose          Verbose output")
 	fmt.Fprintln(w, "  -n, --numeric-only     Skip DNS resolution")
-	fmt.Fprintln(w, "  -4                      Force IPv4")
-	fmt.Fprintln(w, "  -6                      Force IPv6")
+	fmt.Fprintln(w, "  -4                     Force IPv4")
+	fmt.Fprintln(w, "  -6                     Force IPv6")
+	fmt.Fprintln(w, "  -h, --help             Show this help")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Benchmark mode:")
 	fmt.Fprintln(w, "  --bench                Enable benchmark mode")

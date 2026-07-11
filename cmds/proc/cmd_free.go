@@ -41,6 +41,8 @@ func FreeCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "Sampling:")
 		fmt.Fprintln(os.Stderr, "  -s SEC      repeat every SEC seconds")
 		fmt.Fprintln(os.Stderr, "  -c COUNT    repeat COUNT times")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "      --help  show this help")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

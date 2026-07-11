@@ -11,8 +11,18 @@ import (
 	"time"
 )
 
-// digCmd implements dig functionality
+// DigCmd implements dig functionality
 func DigCmd(args []string) error {
+	return runDNSLookup("dig", args)
+}
+
+// NslookupCmd runs the same DNS lookup logic as DigCmd, but with help text
+// and error messages that reflect the "nslookup" invocation name.
+func NslookupCmd(args []string) error {
+	return runDNSLookup("nslookup", args)
+}
+
+func runDNSLookup(progName string, args []string) error {
 	var host string
 	var dnsServer string
 	var queryType string
@@ -28,7 +38,7 @@ func DigCmd(args []string) error {
 		arg := args[i]
 		switch {
 		case arg == "-h" || arg == "--help":
-			digUsage(os.Stdout)
+			digUsage(os.Stdout, progName)
 			return nil
 		case arg == "+short":
 			shortOutput = true
@@ -61,8 +71,8 @@ func DigCmd(args []string) error {
 	}
 
 	if host == "" {
-		fmt.Fprintln(os.Stderr, "dig: missing host argument")
-		digUsage(os.Stderr)
+		fmt.Fprintf(os.Stderr, "%s: missing host argument\n", progName)
+		digUsage(os.Stderr, progName)
 		return fmt.Errorf("host required")
 	}
 
@@ -90,8 +100,8 @@ func DigCmd(args []string) error {
 	return digFullOutput(host, queryType, dnsServer, useTCP)
 }
 
-func digUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: dig [@DNS_SERVER] HOST [DNS_SERVER] [OPTIONS]")
+func digUsage(w io.Writer, progName string) {
+	fmt.Fprintf(w, "Usage: gobox %s [@DNS_SERVER] HOST [DNS_SERVER] [OPTIONS]\n", progName)
 	fmt.Fprintln(w, "DNS lookup utility")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Options:")
@@ -103,11 +113,11 @@ func digUsage(w io.Writer) {
 	fmt.Fprintln(w, "  -h, --help        Show this help message")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Examples:")
-	fmt.Fprintln(w, "  dig example.com")
-	fmt.Fprintln(w, "  dig @8.8.8.8 example.com")
-	fmt.Fprintln(w, "  dig -t MX example.com")
-	fmt.Fprintln(w, "  dig +short example.com")
-	fmt.Fprintln(w, "  dig +noall +answer example.com")
+	fmt.Fprintf(w, "  gobox %s example.com\n", progName)
+	fmt.Fprintf(w, "  gobox %s @8.8.8.8 example.com\n", progName)
+	fmt.Fprintf(w, "  gobox %s -t MX example.com\n", progName)
+	fmt.Fprintf(w, "  gobox %s +short example.com\n", progName)
+	fmt.Fprintf(w, "  gobox %s +noall +answer example.com\n", progName)
 }
 
 func doDNSQuery(host, queryType, dnsServer string) error {

@@ -75,6 +75,8 @@ func IoperfCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  --latency                 output latency distribution histogram")
 		fmt.Fprintln(os.Stderr, "  --write_hist_log PREFIX   fio-compatible histogram log prefix")
 		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "  -h, --help                show this help")
+		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  gobox ioperf --rw=write --filename=/tmp/testfile --size=1G --bs=4k")
 		fmt.Fprintln(os.Stderr, "  gobox ioperf --rw=randread --filename=/tmp/testfile --size=1G --numjobs=4 --direct=1")

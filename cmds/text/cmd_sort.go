@@ -452,7 +452,7 @@ func checkSorted(lines []string, cfg sortConfig) error {
 }
 
 func printSortUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: gobox sort [OPTIONS] [FILE]")
+	fmt.Fprintln(w, "Usage: gobox sort [OPTION]... [FILE]")
 	fmt.Fprintln(w, "Sort lines of text files.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Options:")
@@ -467,7 +467,7 @@ func printSortUsage(w io.Writer) {
 	fmt.Fprintln(w, "  -c, --check             Check if sorted")
 	fmt.Fprintln(w, "  -o, --output=FILE       Write to FILE")
 	fmt.Fprintln(w, "  -z, --zero-terminated   Lines end with 0 byte")
-	fmt.Fprintln(w, "  -h, --help              Show this help")
+	fmt.Fprintln(w, "      --help              Show this help")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Examples:")
 	fmt.Fprintln(w, "  gobox sort file.txt")

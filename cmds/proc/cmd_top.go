@@ -52,6 +52,7 @@ func TopCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -o FIELD     sort by field")
 		fmt.Fprintln(os.Stderr, "  --sort FIELD sort by: pid|cpu|rss|vms|pmem|cmd|comm|user|ppid|start|etime|time")
 		fmt.Fprintln(os.Stderr, "  -r           reverse sort order")
+		fmt.Fprintln(os.Stderr, "  -h, --help   show this help")
 	}
 
 	if err := fsFlags.Parse(args); err != nil {

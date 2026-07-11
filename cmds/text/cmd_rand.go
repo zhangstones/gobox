@@ -158,7 +158,7 @@ func isDigits(s string) bool {
 }
 
 func printRandUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: gobox rand [OPTIONS] [NUM]")
+	fmt.Fprintln(w, "Usage: gobox rand [OPTION]... [NUM]")
 	fmt.Fprintln(w, "Generate random bytes.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Options:")

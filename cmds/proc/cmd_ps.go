@@ -297,6 +297,7 @@ func printPSUsage() {
 	fmt.Fprintln(os.Stderr, "  --maxcmd N        max command length (0 = unlimited)")
 	fmt.Fprintln(os.Stderr, "  --hide-idle       hide processes with zero sampled CPU")
 	fmt.Fprintln(os.Stderr, "  --long            long format")
+	fmt.Fprintln(os.Stderr, "  -h, --help        show this help")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Compatibility:")
 	fmt.Fprintln(os.Stderr, "  ps aux            BSD-style process table with user-oriented columns")

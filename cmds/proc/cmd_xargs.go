@@ -38,6 +38,7 @@ func XargsCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -t                 print commands before executing")
 		fmt.Fprintln(os.Stderr, "  -v                 legacy alias for -t")
 		fmt.Fprintln(os.Stderr, "  -r                 do not run command if no input")
+		fmt.Fprintln(os.Stderr, "  -h, --help         show this help")
 	}
 
 	if err := xargsFlags.Parse(args); err != nil {

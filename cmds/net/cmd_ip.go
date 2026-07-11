@@ -53,11 +53,33 @@ func IpCmd(args []string) error {
 	case "neigh", "n":
 		return ipNeigh()
 	case "-h", "--help", "help":
-		fmt.Fprintln(os.Stdout, "Usage: gobox ip [-o] addr | [-s] link | route | neigh")
+		printIpUsage()
 		return nil
 	default:
 		return fmt.Errorf("unsupported ip object %s", object)
 	}
+}
+
+func printIpUsage() {
+	fmt.Fprintln(os.Stdout, "Usage: gobox ip [-o] addr | [-s] link | route | neigh")
+	fmt.Fprintln(os.Stdout, "Show network interfaces, routes, and neighbours (read-only subset).")
+	fmt.Fprintln(os.Stdout)
+	fmt.Fprintln(os.Stdout, "Objects:")
+	fmt.Fprintln(os.Stdout, "  addr, a       show interface addresses")
+	fmt.Fprintln(os.Stdout, "  link, l       show interface link state")
+	fmt.Fprintln(os.Stdout, "  route, r      show the routing table")
+	fmt.Fprintln(os.Stdout, "  neigh, n      show the ARP/neighbour table")
+	fmt.Fprintln(os.Stdout)
+	fmt.Fprintln(os.Stdout, "Options:")
+	fmt.Fprintln(os.Stdout, "  -o            single-line output (addr only)")
+	fmt.Fprintln(os.Stdout, "  -s            show extra statistics (link only)")
+	fmt.Fprintln(os.Stdout, "  -h, --help    show this help")
+	fmt.Fprintln(os.Stdout)
+	fmt.Fprintln(os.Stdout, "Examples:")
+	fmt.Fprintln(os.Stdout, "  gobox ip addr")
+	fmt.Fprintln(os.Stdout, "  gobox ip -o addr")
+	fmt.Fprintln(os.Stdout, "  gobox ip -s link")
+	fmt.Fprintln(os.Stdout, "  gobox ip route")
 }
 
 func ipAddr(oneLine bool) error {

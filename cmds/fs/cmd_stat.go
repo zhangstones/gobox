@@ -45,6 +45,7 @@ func StatCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -f, --file-system    display filesystem status")
 		fmt.Fprintln(os.Stderr, "  -c, --format FORMAT  use custom format string (see directives below)")
 		fmt.Fprintln(os.Stderr, "  -t, --terse          terse output")
+		fmt.Fprintln(os.Stderr, "  -h, --help           show this help")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Format directives:")
 		fmt.Fprintf(os.Stderr, "%s\n", "  %n  filename              %s  size in bytes")

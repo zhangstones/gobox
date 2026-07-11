@@ -37,6 +37,8 @@ func IfstatCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -A              show all interfaces including virtual ones")
 		fmt.Fprintln(os.Stderr, "  -e              show error packet counts")
 		fmt.Fprintln(os.Stderr, "  -d              show drop packet counts")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "  -h, --help      show this help")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

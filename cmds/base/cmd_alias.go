@@ -46,8 +46,14 @@ func aliasCmd(args []string, stdout io.Writer) error {
 
 func writeAliasUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: gobox alias [-u]")
-	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Print shell code for enabling or disabling gobox bash aliases.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Options:")
+	fmt.Fprintln(w, "  -u            print unalias commands instead of alias commands")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Examples:")
+	fmt.Fprintln(w, "  eval \"$(gobox alias)\"")
+	fmt.Fprintln(w, "  eval \"$(gobox alias -u)\"")
 }
 
 func writeAliasScript(w io.Writer) {

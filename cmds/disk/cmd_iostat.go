@@ -81,6 +81,7 @@ func iostatCmd(args []string, stdout io.Writer) error {
 		fmt.Fprintln(os.Stderr, "  -H          humanize IOPS and throughput")
 		fmt.Fprintln(os.Stderr, "  -z          show only devices with non-zero I/O rates")
 		fmt.Fprintln(os.Stderr, "  --cgroup    use cgroup io.stat/blkio based output")
+		fmt.Fprintln(os.Stderr, "  -h, --help  show this help")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Positionals:")
 		fmt.Fprintln(os.Stderr, "  interval   sample interval in seconds (same as -i)")

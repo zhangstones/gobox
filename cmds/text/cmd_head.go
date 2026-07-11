@@ -115,7 +115,7 @@ doneFlags:
 }
 
 func printHeadUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: gobox head [OPTIONS] [FILE...]")
+	fmt.Fprintln(w, "Usage: gobox head [OPTION]... [FILE...]")
 	fmt.Fprintln(w, "Print the first lines of a file.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Options:")

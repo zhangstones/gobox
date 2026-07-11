@@ -103,6 +103,7 @@ func GrepCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -C, --context N         print N lines of surrounding context")
 		fmt.Fprintln(os.Stderr, "  --include PATTERN       search only files matching PATTERN")
 		fmt.Fprintln(os.Stderr, "  --exclude-dir DIR       skip directories named DIR")
+		fmt.Fprintln(os.Stderr, "  -h, --help              show this help")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  gobox grep \"error\" /var/log/syslog")

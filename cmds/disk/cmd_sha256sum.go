@@ -50,6 +50,7 @@ func Sha256sumCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -q, --quiet       quiet mode")
 		fmt.Fprintln(os.Stderr, "  -s, --status      status mode")
 		fmt.Fprintln(os.Stderr, "  -w, --warn        warn about malformed lines")
+		fmt.Fprintln(os.Stderr, "  -h, --help        show this help")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

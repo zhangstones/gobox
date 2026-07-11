@@ -32,6 +32,7 @@ func WatchCmdWithContext(ctx context.Context, args []string) error {
 		fmt.Fprintln(os.Stderr, "  -n SEC             interval in seconds between refreshes")
 		fmt.Fprintln(os.Stderr, "  -t                 hide the title line")
 		fmt.Fprintln(os.Stderr, "  --append           append output instead of clearing the screen")
+		fmt.Fprintln(os.Stderr, "  -h, --help         show this help")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  gobox watch -n 1 date")

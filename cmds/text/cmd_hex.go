@@ -38,6 +38,7 @@ func HexCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -v                  do not fold repeated lines")
 		fmt.Fprintf(os.Stderr, "%s\n", "  -e FORMAT           dump byte format, one of: %02x %02X %u %d")
 		fmt.Fprintln(os.Stderr, "  -o FILE             write output to file")
+		fmt.Fprintln(os.Stderr, "  -h, --help          show this help")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

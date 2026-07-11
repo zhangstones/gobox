@@ -27,6 +27,7 @@ func Base64Cmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -w, --wrap COLS           wrap encoded lines after COLS characters (0 disables wrapping)")
 		fmt.Fprintln(os.Stderr, "  -i, --ignore-garbage      ignore non-alphabet characters while decoding")
 		fmt.Fprintln(os.Stderr, "  -o FILE                   write output to file")
+		fmt.Fprintln(os.Stderr, "  -h, --help                show this help")
 	}
 	if err := fsFlags.Parse(args); err != nil {
 		if err == flag.ErrHelp {

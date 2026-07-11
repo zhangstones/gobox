@@ -61,9 +61,11 @@
 | `gobox find -mindepth int` | `find -mindepth` | ✅ 一致 | 最小目录深度 |
 | `gobox find -mtime string` | `find -mtime` | ✅ 一致 | 文件修改时间过滤，格式同`-atime` |
 | `gobox find -name string` | `find -name` | ✅ 一致 | 按文件名匹配（支持shell glob模式） |
+| `gobox find -path string` | `find -path` | ✅ 一致 | 按完整路径匹配（支持shell glob模式） |
 | `gobox find -print` | `find -print` | ✅ 一致 | 打印匹配的文件路径（默认为true） |
 | `gobox find -size string` | `find -size` | ✅ 一致 | 文件大小过滤：`+N`（大于N）、`-N`（小于N）。支持`K`/`M`/`G`后缀 |
 | `gobox find -type string` | `find -type` | ✅ 一致 | 文件类型过滤：`f`（普通文件）或`d`（目录） |
+| `gobox find -not` | `find -not` | ✅ 一致 | 对组合匹配结果取反 |
 
 ### du
 
@@ -290,7 +292,7 @@
 | `gobox hex --dump -e FORMAT FILE...` | `hexdump -e` | ⚠️ 部分一致 | 仅识别 FORMAT 中是否含有 `%02x`/`%02X`（十六进制，无分隔）或 `%u`/`%d`（十进制，空格分隔）子串；不解析 `hexdump -e` 的重复计数/分隔符语法 |
 | `gobox hex --encode FILE...` | `xxd -p` / `od -An -tx1` | 🆕 gobox扩展 | 将输入编码为连续 lowercase hex 文本 |
 | `gobox hex --decode FILE...` | `xxd -r -p` | 🆕 gobox扩展 | 将 hex 文本解码为原始字节 |
-| `gobox hex --decode -o FILE INPUT` | `xxd -r -p > FILE` | 🆕 gobox扩展 | 将解码结果写入指定文件 |
+| `gobox hex --dump/--encode/--decode -o FILE` | `hexdump > FILE` / `xxd -r -p > FILE` | 🆕 gobox扩展 | 将输出（dump 文本、编码或解码结果）写入指定文件，三种模式下均生效 |
 
 ### base64
 
@@ -543,6 +545,7 @@
 | `gobox xargs -P int` | `xargs -P` | ✅ 一致 | 最大并行进程数（默认 1） |
 | `gobox xargs -r` | `xargs -r` | ✅ 一致 | 无输入时不运行命令 |
 | `gobox xargs -t` | `xargs -t` | ✅ 一致 | 执行前打印命令 |
+| `gobox xargs -v` | gobox-only | 🆕 gobox扩展 | `-t` 的别名，行为完全等价 |
 
 > 注意：默认命令是 `echo`，即 `gobox xargs` 等同于 `xargs echo`。
 
@@ -626,7 +629,9 @@
 | `gobox ioperf --iodepth int` | `fio --iodepth` | ✅ 常用一致 | 队列深度（默认 1） |
 | `gobox ioperf --write_hist_log string` | `fio --write_hist_log --log_hist_msec` | ✅ 常用一致 | 输出并落盘延迟直方图日志 |
 | `gobox ioperf --numjobs int` | `fio --numjobs` | ✅ 常用一致 | 并行任务数量（默认 1） |
+| `gobox ioperf --percentile int` | `fio --percentile_list`（单值） | ✅ 常用一致 | `--percentile_list` 的单值别名，指定单个百分位（如 99） |
 | `gobox ioperf --percentile_list string` | `fio --percentile_list` | ✅ 常用一致 | 报告指定延迟百分位列表 |
+| `gobox ioperf --latency` | `fio --lat_percentiles` | ✅ 常用一致 | 输出延迟分布直方图 |
 | `gobox ioperf --rate string` | `fio --rate` | ✅ 常用一致 | 速率限制（如 100M） |
 | `gobox ioperf --runtime int` | `fio --runtime` | ✅ 常用一致 | 运行时间（秒） |
 | `gobox ioperf --rw string` | `fio --rw` | ✅ 常用一致 | I/O 模式：read/write/randread/randwrite/readwrite（默认 "read"） |
