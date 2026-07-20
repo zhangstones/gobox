@@ -74,6 +74,25 @@ func netstatSocketKey(line string) string {
 	return netstatLocalAddress(line) + "|" + netstatState(line)
 }
 
+// netstatRowIsFamily reports whether a netstat row belongs to the requested
+// address family (v4 vs v6). Used to prove -4/-6 actually filter rows by
+// family, not just to check they run.
+//
+// This checks the Proto column (TCP/UDP vs TCP6/UDP6) rather than parsing
+// the LocalAddress column's IP. A dual-stack socket bound to a v6 wildcard
+// address (e.g. "::") can legitimately accept an IPv4 client; both native
+// netstat and gobox render that connection's local/remote address in plain
+// dotted-decimal form (stripping the "::ffff:" v4-mapped prefix) while still
+// reporting it under the v6-family proto column (tcp6/udp6), since the
+// listening socket itself is an AF_INET6 socket read from
+// /proc/net/{tcp6,udp6}. So a "TCP6" row with a 127.0.0.1 address is
+// expected, real netstat behavior, not a bug -- the Proto suffix is the
+// actual family signal -4/-6 filter on.
+func netstatRowIsFamily(line string, wantV4 bool) bool {
+	isV6Proto := strings.HasSuffix(netstatProto(line), "6")
+	return isV6Proto != wantV4
+}
+
 func ifstatHeaderAndRows(out string) (string, []string) {
 	lines := nonEmptyLines(out)
 	if len(lines) == 0 {
@@ -125,6 +144,61 @@ func ifstatParseUintField(t *testing.T, field string) uint64 {
 	return v
 }
 
+// readProcNetDevCounters reads the ground-truth error/dropped counters for
+// iface directly from /proc/net/dev (same kernel source cmd_ifstat.go reads
+// via /sys/class/net/*/statistics), to cross-check ifstat -d/-e output
+// against real values instead of only checking they parse.
+//
+// Format: "iface: rxBytes rxPackets rxErrs rxDrop rxFifo rxFrame rxCompressed
+// rxMulticast txBytes txPackets txErrs txDrop txFifo txColls txCarrier
+// txCompressed".
+func readProcNetDevCounters(t *testing.T, iface string) (rxErrs, rxDrop, txErrs, txDrop uint64, ok bool) {
+	t.Helper()
+	data, err := os.ReadFile("/proc/net/dev")
+	if err != nil {
+		t.Fatalf("read /proc/net/dev: %v", err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		idx := strings.Index(line, ":")
+		if idx < 0 {
+			continue
+		}
+		if strings.TrimSpace(line[:idx]) != iface {
+			continue
+		}
+		fields := strings.Fields(line[idx+1:])
+		if len(fields) < 12 {
+			return 0, 0, 0, 0, false
+		}
+		rxErrs = ifstatParseUintField(t, fields[2])
+		rxDrop = ifstatParseUintField(t, fields[3])
+		txErrs = ifstatParseUintField(t, fields[10])
+		txDrop = ifstatParseUintField(t, fields[11])
+		return rxErrs, rxDrop, txErrs, txDrop, true
+	}
+	return 0, 0, 0, 0, false
+}
+
+// withinCounterTolerance reports whether two samples of the same live kernel
+// counter, taken moments apart, are close enough to be considered the same
+// underlying value. Loose enough to tolerate a small amount of ticking
+// between samples, but tight enough to catch a hardcoded-zero bug (a real
+// nonzero counter compared against a hardcoded 0 always exceeds the slack).
+func withinCounterTolerance(a, b uint64) bool {
+	if a == b {
+		return true
+	}
+	lo, hi := a, b
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	slack := uint64(20)
+	if hi/20 > slack {
+		slack = hi / 20
+	}
+	return hi-lo <= slack
+}
+
 func ncBenchTotalFields(t *testing.T, out string) (float64, string) {
 	t.Helper()
 	line := findNetLineWithPrefix(out, "Total:")
@@ -174,17 +248,80 @@ func ipBlocks(out string) map[string][]string {
 	blocks := make(map[string][]string)
 	var current string
 	for _, line := range nonEmptyLines(out) {
-		if fields := strings.Fields(line); len(fields) >= 2 && strings.HasSuffix(fields[0], ":") {
-			name := strings.TrimSuffix(fields[1], ":")
-			current = name
-			blocks[current] = []string{line}
-			continue
+		fields := strings.Fields(line)
+		// A new interface block starts with its numeric index, e.g. "1: lo:
+		// ...". Guard on the index being numeric so that "-s link" detail
+		// lines like "RX:" / "TX:" (whose first field also happens to end in
+		// ":") aren't mistaken for a new block header, which would silently
+		// truncate the current block.
+		if len(fields) >= 2 && strings.HasSuffix(fields[0], ":") {
+			if _, err := strconv.Atoi(strings.TrimSuffix(fields[0], ":")); err == nil {
+				name := strings.TrimSuffix(fields[1], ":")
+				current = name
+				blocks[current] = []string{line}
+				continue
+			}
 		}
 		if current != "" {
 			blocks[current] = append(blocks[current], line)
 		}
 	}
 	return blocks
+}
+
+// ipLinkCounters parses the numeric RX/TX counter line that follows the
+// "RX:" and "TX:" label lines in an `ip -s link` block (as returned by
+// ipBlocks), e.g.:
+//
+//	RX:      bytes  packets errors dropped  missed   mcast
+//	1029789393 11211588      0       0       0       0
+//
+// Returns ok=false if the block doesn't contain a parseable RX and TX pair.
+func ipLinkCounters(block []string) (rxBytes, rxPackets, rxErrors, rxDropped, txBytes, txPackets, txErrors, txDropped uint64, ok bool) {
+	var rxLine, txLine string
+	for i, l := range block {
+		trimmed := strings.TrimSpace(l)
+		if strings.HasPrefix(trimmed, "RX:") && i+1 < len(block) {
+			rxLine = block[i+1]
+		}
+		if strings.HasPrefix(trimmed, "TX:") && i+1 < len(block) {
+			txLine = block[i+1]
+		}
+	}
+	rxFields := strings.Fields(rxLine)
+	txFields := strings.Fields(txLine)
+	if len(rxFields) < 4 || len(txFields) < 4 {
+		return 0, 0, 0, 0, 0, 0, 0, 0, false
+	}
+	parse := func(s string) uint64 {
+		v, _ := strconv.ParseUint(s, 10, 64)
+		return v
+	}
+	return parse(rxFields[0]), parse(rxFields[1]), parse(rxFields[2]), parse(rxFields[3]),
+		parse(txFields[0]), parse(txFields[1]), parse(txFields[2]), parse(txFields[3]), true
+}
+
+// parseIPRouteLine parses one `ip route` output line into its destination
+// (first token, e.g. "default" or a CIDR) and its key/value fields (via, dev,
+// proto, scope, metric, src), so routes can be compared structurally instead
+// of by substring.
+func parseIPRouteLine(line string) (dest string, fields map[string]string) {
+	fields = make(map[string]string)
+	toks := strings.Fields(line)
+	if len(toks) == 0 {
+		return "", fields
+	}
+	dest = toks[0]
+	for i := 1; i < len(toks); i++ {
+		switch toks[i] {
+		case "via", "dev", "proto", "scope", "metric", "src":
+			if i+1 < len(toks) {
+				fields[toks[i]] = toks[i+1]
+				i++
+			}
+		}
+	}
+	return dest, fields
 }
 
 // startSlowTCPEchoServer behaves like startTCPEchoServer but sleeps for delay
@@ -548,6 +685,67 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 
 		t.Run("sort-pid", func(t *testing.T) {
+			// assertMonotonic on ambient system sockets alone can't tell
+			// "sorting is happening" from "the ambient data already
+			// happened to be in order". Build a deterministic fixture
+			// instead: gobox's unsorted netstat listing always walks TCP,
+			// then UDP, then UNIX sockets in that fixed source order,
+			// independent of pid or kernel hash-bucket order (see
+			// printNetstatSockets in cmds/net/cmd_netstat.go). Start the
+			// fixture processes in the reverse of that walk order -- unix
+			// first (lowest pid), udp second, tcp last (highest pid) -- so
+			// the natural/unsorted listing is provably descending by pid
+			// for these three rows, and --sort pid must flip that to
+			// strictly ascending.
+			unixPath := filepath.Join(t.TempDir(), "netstat-sort-pid.sock")
+			unixCmd := exec.Command("ncat", "-lU", unixPath)
+			if err := unixCmd.Start(); err != nil {
+				t.Skipf("cannot start ncat unix-socket fixture: %v", err)
+			}
+			defer stopCmd(unixCmd)
+			time.Sleep(150 * time.Millisecond)
+
+			udpCmd := exec.Command("ncat", "-lu", "127.0.0.1", "0")
+			if err := udpCmd.Start(); err != nil {
+				t.Skipf("cannot start ncat udp fixture: %v", err)
+			}
+			defer stopCmd(udpCmd)
+			time.Sleep(150 * time.Millisecond)
+
+			tcpCmd := exec.Command("ncat", "-l", "127.0.0.1", "0")
+			if err := tcpCmd.Start(); err != nil {
+				t.Skipf("cannot start ncat tcp fixture: %v", err)
+			}
+			defer stopCmd(tcpCmd)
+			time.Sleep(150 * time.Millisecond)
+
+			fixturePIDs := map[int]bool{
+				unixCmd.Process.Pid: true,
+				udpCmd.Process.Pid:  true,
+				tcpCmd.Process.Pid:  true,
+			}
+			filterFixturePIDs := func(out string) []int {
+				var vals []int
+				for _, pid := range extractNetstatPIDs(out) {
+					if fixturePIDs[pid] {
+						vals = append(vals, pid)
+					}
+				}
+				return vals
+			}
+
+			base := runGoboxCLI(t, t.TempDir(), "", "netstat", "-p")
+			if base.ExitCode != 0 {
+				t.Fatalf("netstat -p (baseline) failed: %+v", base)
+			}
+			naturalPIDs := filterFixturePIDs(base.Stdout)
+			if len(naturalPIDs) < 3 {
+				t.Fatalf("expected all 3 fixture sockets in the unsorted listing, got %v in\n%s", naturalPIDs, base.Stdout)
+			}
+			// Natural order must be exactly descending (tcp, udp, unix by
+			// construction), proving it is not already ascending by luck.
+			assertMonotonic(t, naturalPIDs, true)
+
 			res := runGoboxCLI(t, t.TempDir(), "", "netstat", "--sort", "pid", "-p")
 			if res.ExitCode != 0 {
 				t.Fatalf("netstat --sort pid failed: %+v", res)
@@ -562,9 +760,6 @@ func TestParity_NetstatCases(t *testing.T) {
 				t.Fatalf("netstat --sort recvq failed: %+v", res)
 			}
 			_, rows := netstatHeaderAndRows(res.Stdout)
-			if len(rows) == 0 {
-				t.Skip("no rows to verify sort order")
-			}
 			// Recv-Q is field 0; verify descending (largest first).
 			var recvqs []int
 			for _, line := range rows {
@@ -576,6 +771,9 @@ func TestParity_NetstatCases(t *testing.T) {
 					recvqs = append(recvqs, v)
 				}
 			}
+			if len(recvqs) < 3 {
+				t.Skip("fewer than 3 rows available in this environment to meaningfully verify sort order")
+			}
 			assertMonotonic(t, recvqs, true) // descending
 		})
 
@@ -585,9 +783,6 @@ func TestParity_NetstatCases(t *testing.T) {
 				t.Fatalf("netstat --sort local failed: %+v", res)
 			}
 			_, rows := netstatHeaderAndRows(res.Stdout)
-			if len(rows) == 0 {
-				t.Skip("no TCP rows to verify sort order")
-			}
 			// Extract local ports and verify ascending order.
 			var ports []int
 			for _, line := range rows {
@@ -595,6 +790,9 @@ func TestParity_NetstatCases(t *testing.T) {
 				if v, err := strconv.Atoi(p); err == nil {
 					ports = append(ports, v)
 				}
+			}
+			if len(ports) < 3 {
+				t.Skip("fewer than 3 TCP rows available in this environment to meaningfully verify sort order")
 			}
 			assertMonotonic(t, ports, false) // ascending by local port
 		})
@@ -899,6 +1097,23 @@ func TestParity_NetstatCases(t *testing.T) {
 		if !strings.Contains(native.Stdout, strconv.Itoa(port)) {
 			t.Fatalf("native netstat -4 baseline missing target port\n%s", native.Stdout)
 		}
+		// Isolated proof that -4 itself filters by family: run it WITHOUT
+		// --port. --port alone already narrows to one row, so the combined
+		// case above never actually exercises -4's own filtering; here every
+		// returned row's Proto column must be the v4 family (not TCP6/UDP6).
+		isolated := runGoboxCLI(t, t.TempDir(), "", "netstat", "-4")
+		if isolated.ExitCode != 0 {
+			t.Fatalf("netstat -4 (no --port) failed: %+v", isolated)
+		}
+		_, isolatedRows := netstatHeaderAndRows(isolated.Stdout)
+		if len(isolatedRows) == 0 {
+			t.Fatalf("netstat -4 (no --port) produced no rows: %s", isolated.Stdout)
+		}
+		for _, row := range isolatedRows {
+			if !netstatRowIsFamily(row, true) {
+				t.Fatalf("netstat -4 leaked a non-IPv4 row: %q\n%s", row, isolated.Stdout)
+			}
+		}
 	})
 
 	t.Run("NETSTAT-012", func(t *testing.T) {
@@ -919,6 +1134,23 @@ func TestParity_NetstatCases(t *testing.T) {
 		}
 		if !strings.Contains(native.Stdout, port) {
 			t.Fatalf("native netstat -6 baseline missing target port\n%s", native.Stdout)
+		}
+		// Isolated proof that -6 itself filters by family: run it WITHOUT
+		// --port (see NETSTAT-011 for why the combined case alone isn't
+		// enough). Every returned row's Proto column must be the v6 family
+		// (TCP6/UDP6).
+		isolated := runGoboxCLI(t, t.TempDir(), "", "netstat", "-6")
+		if isolated.ExitCode != 0 {
+			t.Fatalf("netstat -6 (no --port) failed: %+v", isolated)
+		}
+		_, isolatedRows := netstatHeaderAndRows(isolated.Stdout)
+		if len(isolatedRows) == 0 {
+			t.Fatalf("netstat -6 (no --port) produced no rows: %s", isolated.Stdout)
+		}
+		for _, row := range isolatedRows {
+			if !netstatRowIsFamily(row, false) {
+				t.Fatalf("netstat -6 leaked a non-IPv6 row: %q\n%s", row, isolated.Stdout)
+			}
 		}
 	})
 
@@ -1167,6 +1399,25 @@ func TestParity_NetstatCases(t *testing.T) {
 		if len(lines) < 3 {
 			t.Fatalf("netstat -i should include header plus multiple interfaces\n%s", res.Stdout)
 		}
+		// Value correctness (matches the rigor used for -e/-o/-p elsewhere in
+		// this file): the header/row shape checks above would pass even if
+		// every numeric column were blank or garbage. Verify the MTU and
+		// RX-OK columns (fields[1] and fields[2] of the loopback row: Iface
+		// MTU RX-OK RX-ERR RX-DRP RX-OVR TX-OK TX-ERR TX-DRP TX-OVR Flg) parse
+		// as non-negative integers.
+		rowFields := strings.Fields(row)
+		if len(rowFields) < 3 {
+			t.Fatalf("netstat -i loopback row too short to contain MTU/RX-OK columns: %q", row)
+		}
+		mtuVal, err := strconv.Atoi(rowFields[1])
+		if err != nil || mtuVal < 0 {
+			t.Fatalf("netstat -i MTU column should be a non-negative integer, got %q (err=%v)\nrow=%q", rowFields[1], err, row)
+		}
+		rxOKVal, err := strconv.ParseUint(rowFields[2], 10, 64)
+		if err != nil {
+			t.Fatalf("netstat -i RX-OK column should be a non-negative integer, got %q (err=%v)\nrow=%q", rowFields[2], err, row)
+		}
+		_ = rxOKVal
 	})
 
 	t.Run("NETSTAT-019", func(t *testing.T) {
@@ -1467,6 +1718,44 @@ func TestParity_IpCases(t *testing.T) {
 		if !strings.Contains(gobox.Stdout, "packets") || !strings.Contains(gobox.Stdout, "errors") {
 			t.Fatalf("ip -s link should include packet/error counters\n%s", gobox.Stdout)
 		}
+		// Value correctness: cross-compare the actual numeric RX/TX counters
+		// for the loopback interface (guaranteed to exist, with nonzero
+		// traffic from this test process itself) instead of only checking
+		// for substrings, which would pass even if gobox printed all-zero or
+		// swapped columns. Counters are live and can tick slightly between
+		// the two invocations, so use the same generous ratio-based
+		// tolerance as the iostat parity checks.
+		goboxLo, ok1 := ipBlocks(gobox.Stdout)["lo"]
+		nativeLo, ok2 := ipBlocks(native.Stdout)["lo"]
+		if !ok1 || !ok2 {
+			t.Fatalf("ip -s link missing lo block\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+		}
+		gRxBytes, gRxPkts, gRxErr, gRxDrop, gTxBytes, gTxPkts, gTxErr, gTxDrop, gOK := ipLinkCounters(goboxLo)
+		nRxBytes, nRxPkts, nRxErr, nRxDrop, nTxBytes, nTxPkts, nTxErr, nTxDrop, nOK := ipLinkCounters(nativeLo)
+		if !gOK || !nOK {
+			t.Fatalf("ip -s link lo counters not parseable\ngobox=%v\nnative=%v", goboxLo, nativeLo)
+		}
+		if gRxBytes == 0 || gRxPkts == 0 {
+			t.Fatalf("ip -s link lo RX bytes/packets should not be hardcoded to zero, got bytes=%d packets=%d", gRxBytes, gRxPkts)
+		}
+		for _, c := range []struct {
+			name      string
+			got, want uint64
+		}{
+			{"RX bytes", gRxBytes, nRxBytes},
+			{"RX packets", gRxPkts, nRxPkts},
+			{"TX bytes", gTxBytes, nTxBytes},
+			{"TX packets", gTxPkts, nTxPkts},
+		} {
+			if !withinIostatTolerance(float64(c.got), float64(c.want)) {
+				t.Fatalf("ip -s link lo %s diverges beyond tolerance: gobox=%d native=%d", c.name, c.got, c.want)
+			}
+		}
+		// lo never drops or errors; these small counters should match exactly.
+		if gRxErr != nRxErr || gRxDrop != nRxDrop || gTxErr != nTxErr || gTxDrop != nTxDrop {
+			t.Fatalf("ip -s link lo error/drop counters mismatch: gobox(rxErr=%d rxDrop=%d txErr=%d txDrop=%d) native(rxErr=%d rxDrop=%d txErr=%d txDrop=%d)",
+				gRxErr, gRxDrop, gTxErr, gTxDrop, nRxErr, nRxDrop, nTxErr, nTxDrop)
+		}
 	})
 
 	t.Run("IP-005", func(t *testing.T) {
@@ -1478,10 +1767,45 @@ func TestParity_IpCases(t *testing.T) {
 		if strings.Contains(native.Stdout, "default") && !strings.Contains(gobox.Stdout, "default") {
 			t.Fatalf("ip route missing default route\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
+		goboxRoutes := make(map[string]map[string]string)
 		for _, line := range nonEmptyLines(gobox.Stdout) {
 			if !strings.Contains(line, " dev ") {
 				t.Fatalf("ip route row missing dev field: %q", line)
 			}
+			dest, fields := parseIPRouteLine(line)
+			goboxRoutes[dest] = fields
+		}
+		if len(goboxRoutes) == 0 {
+			t.Fatalf("ip route produced no parseable routes: %q", gobox.Stdout)
+		}
+		nativeRoutes := make(map[string]map[string]string)
+		for _, line := range nonEmptyLines(native.Stdout) {
+			dest, fields := parseIPRouteLine(line)
+			nativeRoutes[dest] = fields
+		}
+		// Structural cross-check: for every destination gobox and native
+		// agree on, dev/via/metric/scope must match field-for-field, not
+		// merely both contain "default" and " dev " somewhere.
+		matched := 0
+		for dest, gFields := range goboxRoutes {
+			nFields, ok := nativeRoutes[dest]
+			if !ok {
+				continue
+			}
+			matched++
+			for _, key := range []string{"dev", "via", "metric", "scope"} {
+				gv, gHas := gFields[key]
+				nv, nHas := nFields[key]
+				if gHas != nHas {
+					t.Fatalf("ip route %q: %s presence mismatch gobox=%v(%q) native=%v(%q)", dest, key, gHas, gv, nHas, nv)
+				}
+				if gHas && gv != nv {
+					t.Fatalf("ip route %q: %s mismatch gobox=%q native=%q", dest, key, gv, nv)
+				}
+			}
+		}
+		if matched == 0 {
+			t.Fatalf("ip route: no matching destinations to structurally compare\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 		}
 	})
 
@@ -2198,20 +2522,47 @@ func TestParity_NcCases(t *testing.T) {
 	})
 
 	t.Run("NC-004", func(t *testing.T) {
-		port := closedTCPPort(t)
-		gobox := runGoboxMainCLI(t, t.TempDir(), "", "nc", "-w", "1", "127.0.0.1", port)
-		native := runNativeCLI(t, t.TempDir(), "", "nc", "-w", "1", "127.0.0.1", port)
+		// A closed port RSTs the SYN instantly regardless of -w's value, so
+		// the wait duration itself is never exercised (see CURL-013 for the
+		// same problem with curl --connect-timeout). Use the same well-known
+		// unroutable RFC1918 probe address instead, whose SYN goes nowhere,
+		// so -w's connect timeout actually has to elapse.
+		target := "10.255.255.1"
+		const port = "81"
+		const waitSec = 1
+		start := time.Now()
+		gobox := runGoboxMainCLI(t, t.TempDir(), "", "nc", "-w", strconv.Itoa(waitSec), target, port)
+		elapsed := time.Since(start)
+		nativeStart := time.Now()
+		native := runNativeCLI(t, t.TempDir(), "", "nc", "-w", strconv.Itoa(waitSec), target, port)
+		nativeElapsed := time.Since(nativeStart)
 		if gobox.ExitCode == 0 || native.ExitCode == 0 {
-			t.Fatalf("nc -w expected connection failure gobox=%+v native=%+v", gobox, native)
+			t.Fatalf("nc -w expected connection failure against a blackholed address gobox=%+v native=%+v", gobox, native)
 		}
-		if strings.Contains(strings.ToLower(gobox.Stdout+gobox.Stderr), "successful") {
-			t.Fatalf("gobox nc -w should not report success on a closed port: %+v", gobox)
+		combinedLower := strings.ToLower(gobox.Stdout + gobox.Stderr)
+		if elapsed < 50*time.Millisecond && (strings.Contains(combinedLower, "unreachable") || strings.Contains(combinedLower, "no route")) {
+			t.Skipf("environment returned an immediate network-unreachable error for the unroutable probe address instead of blackholing it (elapsed=%s); -w wait semantics not observable here: %q", elapsed, combinedLower)
 		}
-		// Stderr must contain a connection-refused or failure indicator.
-		stderrLower := strings.ToLower(gobox.Stdout + gobox.Stderr)
-		if !strings.Contains(stderrLower, "refused") && !strings.Contains(stderrLower, "failed") &&
-			!strings.Contains(stderrLower, "connection") {
-			t.Fatalf("nc -w closed port should emit connection error message: %+v", gobox)
+		if strings.Contains(combinedLower, "successful") {
+			t.Fatalf("gobox nc -w should not report success against a blackholed address: %+v", gobox)
+		}
+		if !strings.Contains(combinedLower, "timeout") && !strings.Contains(combinedLower, "timed out") &&
+			!strings.Contains(combinedLower, "failed") && !strings.Contains(combinedLower, "connection") {
+			t.Fatalf("nc -w blackholed target should emit a connection/timeout error message: %+v", gobox)
+		}
+		// Elapsed wall-clock time should be roughly proportional to -w's
+		// value: not near-instant (which would mean -w isn't wired to the
+		// dial timeout) and not wildly longer (which would mean it's ignored
+		// in favor of some larger default). Loose tolerance for CI jitter.
+		want := time.Duration(waitSec) * time.Second
+		if elapsed < want*70/100 {
+			t.Fatalf("nc -w %ds should wait close to the timeout before giving up, only took %s: %+v", waitSec, elapsed, gobox)
+		}
+		if elapsed > want*5 {
+			t.Fatalf("nc -w %ds took far too long (%s), timeout may not be honored: %+v", waitSec, elapsed, gobox)
+		}
+		if nativeElapsed < want*70/100 && !strings.Contains(strings.ToLower(native.Stdout+native.Stderr), "unreachable") {
+			t.Fatalf("sanity check: native nc -w %ds should also wait close to the timeout, only took %s: %+v", waitSec, nativeElapsed, native)
 		}
 	})
 
@@ -2248,28 +2599,62 @@ func TestParity_NcCases(t *testing.T) {
 	})
 
 	t.Run("NC-007", func(t *testing.T) {
-		_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")
-		defer closeFn()
-		gobox := runGoboxCLI(t, t.TempDir(), "", "nc", "-4", "-z", "127.0.0.1", port)
-		native := runNativeCLI(t, t.TempDir(), "", "nc", "-4", "-z", "127.0.0.1", port)
-		if gobox.ExitCode != 0 || native.ExitCode != 0 {
-			t.Fatalf("nc -4 failed gobox=%+v native=%+v", gobox, native)
+		// Dialing a literal IPv4 address (as this test previously did) never
+		// exercises -4: the family is already unambiguous regardless of the
+		// flag. Use "localhost", which resolves to both 127.0.0.1 and ::1 on
+		// this host, so -4 actually has to pick a single address family.
+		if _, err := net.ResolveIPAddr("ip6", "localhost"); err != nil {
+			t.Skip("localhost does not resolve to an IPv6 address in this environment")
 		}
-		if strings.Contains(strings.ToLower(gobox.Stderr+gobox.Stdout), "ipv6") {
-			t.Fatalf("nc -4 should not attempt ipv6 path: %+v", gobox)
+		_, ipv4Port, closeV4 := startTCPEchoServer(t, "127.0.0.1:0")
+		defer closeV4()
+		_, ipv6Port, closeV6 := startTCPEchoServer(t, "[::1]:0")
+		defer closeV6()
+
+		okGobox := runGoboxCLI(t, t.TempDir(), "", "nc", "-4", "-z", "localhost", ipv4Port)
+		okNative := runNativeCLI(t, t.TempDir(), "", "nc", "-4", "-z", "localhost", ipv4Port)
+		if okGobox.ExitCode != 0 || okNative.ExitCode != 0 {
+			t.Fatalf("nc -4 to localhost:<IPv4-only listener> should succeed gobox=%+v native=%+v", okGobox, okNative)
+		}
+		if strings.Contains(strings.ToLower(okGobox.Stderr+okGobox.Stdout), "ipv6") {
+			t.Fatalf("nc -4 should not attempt ipv6 path: %+v", okGobox)
+		}
+
+		// The real proof -4 forces the family: connecting to the same
+		// "localhost" name but the port that only has an IPv6 listener must
+		// fail when forced to IPv4, even though nothing about the target
+		// literally specifies a family.
+		failGobox := runGoboxCLI(t, t.TempDir(), "", "nc", "-4", "-z", "-w", "1", "localhost", ipv6Port)
+		failNative := runNativeCLI(t, t.TempDir(), "", "nc", "-4", "-z", "-w", "1", "localhost", ipv6Port)
+		if failGobox.ExitCode == 0 || failNative.ExitCode == 0 {
+			t.Fatalf("nc -4 to localhost:<IPv6-only listener> should fail to connect (forced to IPv4) gobox=%+v native=%+v", failGobox, failNative)
 		}
 	})
 
 	t.Run("NC-008", func(t *testing.T) {
-		_, port, closeFn := startTCPEchoServer(t, "[::1]:0")
-		defer closeFn()
-		gobox := runGoboxCLI(t, t.TempDir(), "", "nc", "-6", "-z", "::1", port)
-		native := runNativeCLI(t, t.TempDir(), "", "nc", "-6", "-z", "::1", port)
-		if gobox.ExitCode != 0 || native.ExitCode != 0 {
-			t.Fatalf("nc -6 failed gobox=%+v native=%+v", gobox, native)
+		// Symmetric to NC-007: dialing a literal IPv6 address never exercises
+		// -6 either. Use "localhost" so the flag has to do real work.
+		if _, err := net.ResolveIPAddr("ip6", "localhost"); err != nil {
+			t.Skip("localhost does not resolve to an IPv6 address in this environment")
 		}
-		if strings.Contains(strings.ToLower(gobox.Stderr+gobox.Stdout), "ipv4") {
-			t.Fatalf("nc -6 should not attempt ipv4 path: %+v", gobox)
+		_, ipv4Port, closeV4 := startTCPEchoServer(t, "127.0.0.1:0")
+		defer closeV4()
+		_, ipv6Port, closeV6 := startTCPEchoServer(t, "[::1]:0")
+		defer closeV6()
+
+		okGobox := runGoboxCLI(t, t.TempDir(), "", "nc", "-6", "-z", "localhost", ipv6Port)
+		okNative := runNativeCLI(t, t.TempDir(), "", "nc", "-6", "-z", "localhost", ipv6Port)
+		if okGobox.ExitCode != 0 || okNative.ExitCode != 0 {
+			t.Fatalf("nc -6 to localhost:<IPv6-only listener> should succeed gobox=%+v native=%+v", okGobox, okNative)
+		}
+		if strings.Contains(strings.ToLower(okGobox.Stderr+okGobox.Stdout), "ipv4") {
+			t.Fatalf("nc -6 should not attempt ipv4 path: %+v", okGobox)
+		}
+
+		failGobox := runGoboxCLI(t, t.TempDir(), "", "nc", "-6", "-z", "-w", "1", "localhost", ipv4Port)
+		failNative := runNativeCLI(t, t.TempDir(), "", "nc", "-6", "-z", "-w", "1", "localhost", ipv4Port)
+		if failGobox.ExitCode == 0 || failNative.ExitCode == 0 {
+			t.Fatalf("nc -6 to localhost:<IPv4-only listener> should fail to connect (forced to IPv6) gobox=%+v native=%+v", failGobox, failNative)
 		}
 	})
 
@@ -2518,6 +2903,38 @@ func TestParity_NcCases(t *testing.T) {
 	})
 }
 
+// parseDigAnswerLine parses one line of `dig +noall +answer` output into its
+// NAME TTL CLASS TYPE DATA fields, so answer rows can be compared
+// structurally instead of by substring presence.
+func parseDigAnswerLine(line string) (name, ttl, class, rtype, data string, ok bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 5 {
+		return "", "", "", "", "", false
+	}
+	return fields[0], fields[1], fields[2], fields[3], strings.Join(fields[4:], " "), true
+}
+
+// normalizeDigTXTLine strips dig's TXT quoting so a single unquoted value
+// (as gobox +short renders it) and dig's quoted-segment form (e.g.
+// `"aaa" "bbb"` for a record split across multiple <character-string>
+// segments) compare equal.
+func normalizeDigTXTLine(line string) string {
+	line = strings.ReplaceAll(line, "\"", "")
+	return strings.Join(strings.Fields(line), " ")
+}
+
+// normalizeDigTXTSet turns `dig -t TXT +short` output into a set of
+// normalized record values for content comparison.
+func normalizeDigTXTSet(out string) map[string]bool {
+	set := make(map[string]bool)
+	for _, line := range nonEmptyLines(out) {
+		if norm := normalizeDigTXTLine(line); norm != "" {
+			set[norm] = true
+		}
+	}
+	return set
+}
+
 func TestParity_DnsCases(t *testing.T) {
 	t.Run("DNS-001", func(t *testing.T) {
 		host, port, closeFn := startLocalDNSServer(t, "203.0.113.7")
@@ -2532,10 +2949,37 @@ func TestParity_DnsCases(t *testing.T) {
 	t.Run("DNS-002", func(t *testing.T) {
 		host, port, closeFn := startLocalDNSServer(t, "203.0.113.8")
 		defer closeFn()
-		gobox := runGoboxCLI(t, t.TempDir(), "", "dig", "@"+net.JoinHostPort(host, port), "-t", "A", "+short", "example.test")
+		addr := net.JoinHostPort(host, port)
+
+		// First: A is dig's default query type, so this only means something
+		// if we also prove that omitting -t gives the same result as an
+		// explicit "-t A" against the same server.
+		noType := runGoboxCLI(t, t.TempDir(), "", "dig", "@"+addr, "+short", "example.test")
+		gobox := runGoboxCLI(t, t.TempDir(), "", "dig", "@"+addr, "-t", "A", "+short", "example.test")
+		nativeNoType := runNativeCLI(t, t.TempDir(), "", "dig", "@"+host, "-p", port, "+short", "example.test")
 		native := runNativeCLI(t, t.TempDir(), "", "dig", "@"+host, "-p", port, "-t", "A", "+short", "example.test")
 		if normalizeText(gobox.Stdout) != "203.0.113.8" || normalizeText(native.Stdout) != "203.0.113.8" {
 			t.Fatalf("dig -t A mismatch gobox=%+v native=%+v", gobox, native)
+		}
+		if normalizeText(noType.Stdout) != normalizeText(gobox.Stdout) {
+			t.Fatalf("dig without -t should default to A and match -t A explicitly: no-type=%q -t-A=%q", noType.Stdout, gobox.Stdout)
+		}
+		if normalizeText(nativeNoType.Stdout) != normalizeText(native.Stdout) {
+			t.Fatalf("native dig without -t should default to A and match -t A explicitly: no-type=%q -t-A=%q", nativeNoType.Stdout, native.Stdout)
+		}
+
+		// Second: prove -t actually changes behavior by querying a different
+		// record type against a real domain known to have one, and checking
+		// the result differs from an A query. Uses network access; skip if
+		// unavailable.
+		txtGobox := runGoboxCLI(t, t.TempDir(), "", "dig", "-t", "TXT", "+short", "google.com")
+		aGobox := runGoboxCLI(t, t.TempDir(), "", "dig", "-t", "A", "+short", "google.com")
+		if txtGobox.ExitCode != 0 || strings.TrimSpace(txtGobox.Stdout) == "" ||
+			aGobox.ExitCode != 0 || strings.TrimSpace(aGobox.Stdout) == "" {
+			t.Skip("requires network access to prove -t actually changes the query type")
+		}
+		if normalizeText(txtGobox.Stdout) == normalizeText(aGobox.Stdout) {
+			t.Fatalf("dig -t TXT should return different results than -t A for the same domain\nTXT=%q\nA=%q", txtGobox.Stdout, aGobox.Stdout)
 		}
 	})
 
@@ -2559,8 +3003,40 @@ func TestParity_DnsCases(t *testing.T) {
 		if goboxLine == "" || nativeLine == "" {
 			t.Fatalf("dig +noall +answer mismatch gobox=%+v native=%+v", gobox, native)
 		}
-		if !strings.Contains(goboxLine, "IN") || !strings.Contains(nativeLine, "IN") {
-			t.Fatalf("dig +noall +answer should preserve answer-row shape\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+		// Structural comparison of NAME TTL CLASS TYPE DATA, not just a
+		// substring check that would pass even with a garbled or reordered
+		// answer row.
+		gName, gTTL, gClass, gType, gData, gOK := parseDigAnswerLine(goboxLine)
+		nName, nTTL, nClass, nType, nData, nOK := parseDigAnswerLine(nativeLine)
+		if !gOK || !nOK {
+			t.Fatalf("dig +noall +answer line not in NAME TTL CLASS TYPE DATA form\ngobox=%q\nnative=%q", goboxLine, nativeLine)
+		}
+		if strings.TrimSuffix(gName, ".") != strings.TrimSuffix(nName, ".") {
+			t.Fatalf("dig answer NAME mismatch gobox=%q native=%q", gName, nName)
+		}
+		if gClass != "IN" || nClass != "IN" {
+			t.Fatalf("dig answer CLASS should be IN, gobox=%q native=%q", gClass, nClass)
+		}
+		if gType != "A" || nType != "A" {
+			t.Fatalf("dig answer TYPE should be A, gobox=%q native=%q", gType, nType)
+		}
+		if gData != "203.0.113.10" || nData != "203.0.113.10" {
+			t.Fatalf("dig answer DATA mismatch gobox=%q native=%q", gData, nData)
+		}
+		// TTL: gobox resolves through Go's stdlib net.Resolver (see
+		// digDefaultTTL in cmds/net/cmd_nslookup_dig.go), which does not
+		// expose the real TTL carried in the DNS response, so gobox
+		// necessarily renders a fixed placeholder instead of native's true
+		// value. Assert the column is present and numeric on both sides
+		// (this is what the pre-fix strengthening caught: gobox previously
+		// omitted the TTL field entirely, collapsing NAME TTL CLASS TYPE
+		// DATA into a 4-field line) without requiring exact equality, which
+		// gobox's architecture cannot provide.
+		if _, err := strconv.Atoi(gTTL); err != nil {
+			t.Fatalf("dig answer TTL should be numeric, got gobox=%q", gTTL)
+		}
+		if _, err := strconv.Atoi(nTTL); err != nil {
+			t.Fatalf("dig answer TTL should be numeric, got native=%q", nTTL)
 		}
 	})
 
@@ -2585,12 +3061,29 @@ func TestParity_DnsCases(t *testing.T) {
 		if native.ExitCode != 0 {
 			t.Skip("native dig TXT unavailable")
 		}
-		// Both should return at least one TXT record.
-		if len(nonEmptyLines(gobox.Stdout)) == 0 {
+		goboxSet := normalizeDigTXTSet(gobox.Stdout)
+		nativeSet := normalizeDigTXTSet(native.Stdout)
+		if len(goboxSet) == 0 {
 			t.Fatalf("dig -t TXT +short returned no records: %+v", gobox)
 		}
-		if len(nonEmptyLines(native.Stdout)) == 0 {
-			t.Fatalf("native dig -t TXT +short returned no records: %+v", native)
+		if len(nativeSet) == 0 {
+			t.Skip("native dig -t TXT +short returned no records to compare against")
+		}
+		// Compare actual TXT content, not just non-emptiness. google.com's
+		// TXT rrset is large enough that a plain UDP query (as native dig
+		// issues) can come back truncated to an arbitrary subset across
+		// separate queries, so exact/set equality between the two calls is
+		// not reliable; instead every record native did return must appear
+		// (content-for-content, after stripping dig's quoting) in gobox's
+		// output, which still catches wrong/garbled/missing TXT content.
+		var missing []string
+		for rec := range nativeSet {
+			if !goboxSet[rec] {
+				missing = append(missing, rec)
+			}
+		}
+		if len(missing) > 0 {
+			t.Fatalf("dig -t TXT +short content mismatch: native record(s) missing from gobox output: %v\ngobox=%+v\nnative=%+v", missing, gobox, native)
 		}
 	})
 
@@ -2605,41 +3098,141 @@ func TestParity_DnsCases(t *testing.T) {
 	})
 }
 
-func TestParity_NpCases(t *testing.T) {
-	t.Run("NP-001", func(t *testing.T) {
-		loopbackName := ""
-		ifaces, err := net.Interfaces()
-		if err != nil {
-			t.Fatalf("list interfaces: %v", err)
+// findNpSourceProbeInterface finds a non-loopback, up interface with an
+// IPv4 address gobox's configureNpDialer would actually select (private or
+// global-unicast), so NP-001 can prove -I changes the dial's source address.
+// A literal 127.0.0.1 target with -I set to the loopback interface can't
+// prove anything: loopback addresses are neither IsGlobalUnicast nor
+// IsPrivate, so configureNpDialer never selects one, and the connection
+// would use the same default source either way.
+func findNpSourceProbeInterface(t *testing.T) (name, ip string, ok bool) {
+	t.Helper()
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatalf("list interfaces: %v", err)
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+			continue
 		}
-		for _, iface := range ifaces {
-			if iface.Flags&net.FlagLoopback != 0 && iface.Flags&net.FlagUp != 0 {
-				loopbackName = iface.Name
-				break
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipNet, isNet := addr.(*net.IPNet)
+			if !isNet {
+				continue
+			}
+			ip4 := ipNet.IP.To4()
+			if ip4 == nil {
+				continue
+			}
+			if ip4.IsGlobalUnicast() || ip4.IsPrivate() {
+				return iface.Name, ip4.String(), true
 			}
 		}
-		if loopbackName == "" {
-			t.Skip("no active loopback interface available")
+	}
+	return "", "", false
+}
+
+func TestParity_NpCases(t *testing.T) {
+	t.Run("NP-001", func(t *testing.T) {
+		// 127.0.0.1 is loopback-routed regardless of -I, so it can't prove
+		// the flag does anything. Bind to a specific non-loopback interface
+		// and confirm gobox actually used that interface's address as the
+		// dial's source address, observable server-side via RemoteAddr.
+		ifaceName, ifaceIP, ok := findNpSourceProbeInterface(t)
+		if !ok {
+			t.Skip("no non-loopback interface with a private/global-unicast IPv4 address available to prove -I selects a source address")
 		}
-		_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")
-		defer closeFn()
-		res := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-I", loopbackName, "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
+
+		ln, err := net.Listen("tcp", "0.0.0.0:0")
+		if err != nil {
+			t.Fatalf("listen: %v", err)
+		}
+		defer ln.Close()
+		_, port, err := net.SplitHostPort(ln.Addr().String())
+		if err != nil {
+			t.Fatalf("split addr: %v", err)
+		}
+		remoteAddrs := make(chan string, 4)
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				remoteAddrs <- c.RemoteAddr().String()
+				c.Close()
+			}
+		}()
+		waitRemote := func() string {
+			select {
+			case addr := <-remoteAddrs:
+				return addr
+			case <-time.After(3 * time.Second):
+				t.Fatal("connection never observed by listener")
+				return ""
+			}
+		}
+
+		base := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
+		if base.ExitCode != 0 {
+			t.Fatalf("np baseline (no -I) failed: %+v", base)
+		}
+		baseHost, _, err := net.SplitHostPort(waitRemote())
+		if err != nil {
+			t.Fatalf("split baseline remote addr: %v", err)
+		}
+
+		res := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-I", ifaceName, "-p", port, "-c", "1", "-i", "0", "-q", "127.0.0.1")
 		if res.ExitCode != 0 {
 			t.Fatalf("np -I failed: %+v", res)
 		}
 		if line := findNetLineContaining(res.Stdout, "packets transmitted"); !strings.Contains(line, "1 packets transmitted") {
 			t.Fatalf("np -I missing expected summary line: %+v", res)
 		}
+		gotHost, _, err := net.SplitHostPort(waitRemote())
+		if err != nil {
+			t.Fatalf("split -I remote addr: %v", err)
+		}
+		if gotHost != ifaceIP {
+			t.Fatalf("np -I %s should dial using the interface's address (%s) as the source, but the server observed source %s (baseline without -I was %s)", ifaceName, ifaceIP, gotHost, baseHost)
+		}
+		if baseHost == ifaceIP {
+			t.Skip("baseline source address already matched the interface address; -I cannot be shown to have changed anything in this environment")
+		}
 	})
 
 	t.Run("NP-002", func(t *testing.T) {
-		port := closedTCPPort(t)
-		res := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-p", port, "-W", "1", "-c", "1", "-i", "0", "-q", "127.0.0.1")
+		// A closed port RSTs the SYN instantly regardless of -W's value (see
+		// NC-004 for the identical problem with nc -w). Use the same
+		// well-known unroutable RFC1918 probe address so the SYN goes
+		// nowhere and -W's timeout is actually exercised.
+		target := "10.255.255.1"
+		const waitSec = 1
+		start := time.Now()
+		res := runGoboxCLI(t, t.TempDir(), "", "np", "--tcp", "-p", "81", "-W", strconv.Itoa(waitSec), "-c", "1", "-i", "0", "-q", target)
+		elapsed := time.Since(start)
 		if res.ExitCode != 0 {
 			t.Fatalf("np -W failed: %+v", res)
 		}
+		combined := strings.ToLower(res.Stdout + res.Stderr)
+		if elapsed < 50*time.Millisecond && (strings.Contains(combined, "unreachable") || strings.Contains(combined, "no route")) {
+			t.Skipf("environment returned an immediate network-unreachable error for the unroutable probe address instead of blackholing it (elapsed=%s); -W wait semantics not observable here", elapsed)
+		}
 		if line := findNetLineContaining(res.Stdout, "errors"); !strings.Contains(line, "1 errors") {
 			t.Fatalf("np -W missing expected error summary: %+v", res)
+		}
+		// Elapsed wall-clock time should be close to -W's value (loose
+		// tolerance for CI jitter), proving the wait duration itself matters.
+		want := time.Duration(waitSec) * time.Second
+		if elapsed < want*70/100 {
+			t.Fatalf("np -W %ds should wait close to the timeout before giving up, only took %s", waitSec, elapsed)
+		}
+		if elapsed > want*5 {
+			t.Fatalf("np -W %ds took far too long (%s), timeout may not be honored", waitSec, elapsed)
 		}
 	})
 
@@ -2702,13 +3295,23 @@ func TestParity_NpCases(t *testing.T) {
 	})
 
 	t.Run("NP-005", func(t *testing.T) {
+		start := time.Now()
 		gobox := runGoboxCLI(t, t.TempDir(), "", "np", "--icmp", "--flood", "-c", "3", "-q", "-W", "1", "127.0.0.1")
+		elapsed := time.Since(start)
 		native := runNativeCLI(t, t.TempDir(), "", "ping", "-f", "-c", "3", "-q", "-W", "1", "127.0.0.1")
 		if gobox.ExitCode != 0 || native.ExitCode != 0 {
 			t.Fatalf("np --flood failed gobox=%+v native=%+v", gobox, native)
 		}
 		if !strings.Contains(findNetLineContaining(gobox.Stdout, "packets transmitted"), "3 packets transmitted") || !strings.Contains(findNetLineContaining(native.Stdout, "packets transmitted"), "3 packets transmitted") {
 			t.Fatalf("np --flood packet count mismatch gobox=%+v native=%+v", gobox, native)
+		}
+		// cmd_np.go only sleeps opts.interval when !opts.flood, so --flood
+		// must skip the default ~1s inter-packet sleep entirely. 3 packets at
+		// the default 1s interval would take ~2s; flooding over loopback
+		// should finish in a small fraction of that. Loose threshold to
+		// avoid flakiness under load.
+		if elapsed >= 900*time.Millisecond {
+			t.Fatalf("np --flood should skip the inter-packet interval sleep, took %s for 3 packets (a non-flood run at the default 1s interval would take ~2s): %+v", elapsed, gobox)
 		}
 	})
 
@@ -2995,8 +3598,24 @@ func TestParity_IfstatCases(t *testing.T) {
 				txdropIdx := len(cols) - 1
 				for _, line := range rows {
 					fields := ifstatParseRow(t, line, len(cols))
-					_ = ifstatParseUintField(t, fields[rxdropIdx])
-					_ = ifstatParseUintField(t, fields[txdropIdx])
+					iface := fields[0]
+					gotRxDrop := ifstatParseUintField(t, fields[rxdropIdx])
+					gotTxDrop := ifstatParseUintField(t, fields[txdropIdx])
+					// Cross-check against /proc/net/dev's real rx_dropped/
+					// tx_dropped for the same interface (loose tolerance:
+					// counters can tick between the two reads), so this
+					// catches a hardcoded-zero regression, not just parse
+					// failures.
+					_, wantRxDrop, _, wantTxDrop, ok := readProcNetDevCounters(t, iface)
+					if !ok {
+						continue
+					}
+					if !withinCounterTolerance(gotRxDrop, wantRxDrop) {
+						t.Fatalf("ifstat -d rxdrop for %s diverges from /proc/net/dev beyond tolerance: gobox=%d procnetdev=%d", iface, gotRxDrop, wantRxDrop)
+					}
+					if !withinCounterTolerance(gotTxDrop, wantTxDrop) {
+						t.Fatalf("ifstat -d txdrop for %s diverges from /proc/net/dev beyond tolerance: gobox=%d procnetdev=%d", iface, gotTxDrop, wantTxDrop)
+					}
 				}
 			},
 		},
@@ -3023,8 +3642,22 @@ func TestParity_IfstatCases(t *testing.T) {
 				txerrsIdx := len(cols) - 1
 				for _, line := range rows {
 					fields := ifstatParseRow(t, line, len(cols))
-					_ = ifstatParseUintField(t, fields[rxerrsIdx])
-					_ = ifstatParseUintField(t, fields[txerrsIdx])
+					iface := fields[0]
+					gotRxErrs := ifstatParseUintField(t, fields[rxerrsIdx])
+					gotTxErrs := ifstatParseUintField(t, fields[txerrsIdx])
+					// Cross-check against /proc/net/dev's real rx_errors/
+					// tx_errors for the same interface (loose tolerance: see
+					// IFSTAT-003).
+					wantRxErrs, _, wantTxErrs, _, ok := readProcNetDevCounters(t, iface)
+					if !ok {
+						continue
+					}
+					if !withinCounterTolerance(gotRxErrs, wantRxErrs) {
+						t.Fatalf("ifstat -e rxerrs for %s diverges from /proc/net/dev beyond tolerance: gobox=%d procnetdev=%d", iface, gotRxErrs, wantRxErrs)
+					}
+					if !withinCounterTolerance(gotTxErrs, wantTxErrs) {
+						t.Fatalf("ifstat -e txerrs for %s diverges from /proc/net/dev beyond tolerance: gobox=%d procnetdev=%d", iface, gotTxErrs, wantTxErrs)
+					}
 				}
 			},
 		},

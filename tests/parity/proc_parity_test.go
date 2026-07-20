@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"io"
+	"math"
 	"net"
 	"os"
 	"os/exec"
@@ -143,6 +144,31 @@ func holdLockedOSThreads(t *testing.T, n int) func() {
 		close(stop)
 		wg.Wait()
 	}
+}
+
+// startExactCommMismatchedCmdlineProcess starts a sleep process via a symlink
+// named exactly commName, with argv[0] explicitly overridden to a value that
+// does not contain commName. On Linux, /proc/PID/comm is derived from the
+// execve() filename's basename (the symlink's own name here), independent of
+// argv[0]/cmdline -- so this fixture's comm exactly equals commName while its
+// full cmdline does not, letting a test distinguish an exact comm match
+// (ps/kill's -x) from a cmdline substring/regex match (-f) on the same
+// pattern. Unlike startExactNameProcess (which defaults argv[0] to the
+// symlink's path and so leaves the pattern in the cmdline too), this fixture
+// makes the two match modes provably different.
+func startExactCommMismatchedCmdlineProcess(t *testing.T, commName string) *exec.Cmd {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, commName)
+	if err := os.Symlink("/usr/bin/sleep", path); err != nil {
+		t.Fatalf("create sleep symlink: %v", err)
+	}
+	cmd := &exec.Cmd{Path: path, Args: []string{"unrelated-argv0", "30"}}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start exact-comm-mismatched-cmdline process: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	return cmd
 }
 
 func lsofHeaderAndRows(out string) (string, []string) {
@@ -362,6 +388,26 @@ func TestParity_TopCases(t *testing.T) {
 				assertMonotonicFloat(t, baseCPU, true)
 				assertMonotonicFloat(t, resCPU, false)
 			case "TOP-004":
+				// Checking only resPIDs can't distinguish "--sort pid
+				// actually sorted" from "the default (%CPU-sorted)
+				// snapshot already happened to be pid-descending too".
+				// Prove the two orders differ by first asserting the
+				// baseline snapshot is NOT already descending by pid;
+				// only then does resPIDs being descending mean the flag
+				// did something.
+				if len(basePIDs) < 3 {
+					t.Skip("TOP-004: need at least 3 process rows in the baseline snapshot to prove sort direction")
+				}
+				baseAlreadyDescending := true
+				for i := 1; i < len(basePIDs); i++ {
+					if basePIDs[i-1] < basePIDs[i] {
+						baseAlreadyDescending = false
+						break
+					}
+				}
+				if baseAlreadyDescending {
+					t.Skip("TOP-004: baseline (default %CPU-sorted) snapshot coincidentally already descending by pid; cannot prove --sort pid changed anything in this run")
+				}
 				assertMonotonic(t, resPIDs, true)
 			}
 		})
@@ -439,6 +485,34 @@ func TestParity_TopCases(t *testing.T) {
 					if len(fields) <= userIdx || fields[userIdx] != currentUser.Username {
 						t.Fatalf("%s returned row for unexpected user: %q", tc.id, line)
 					}
+				}
+				// Every filtered row already having the target user tells us
+				// nothing about whether -u actually removed anything: in a
+				// root-only environment where nearly every process is
+				// root-owned, a no-op -u would still pass this check. Compare
+				// against the unfiltered baseline snapshot and require -u to
+				// have narrowed it, but only when the baseline actually spans
+				// more than one distinct user -- otherwise there is nothing
+				// for -u to filter out and the row-count comparison would
+				// pass vacuously.
+				baseLines := topProcessLines(base.Stdout)
+				baseHeaderLine := nonEmptyLines(base.Stdout)[topHeaderIndex(base.Stdout)]
+				baseUserIdx := columnIndex(baseHeaderLine, "USER")
+				if baseUserIdx < 0 {
+					t.Fatalf("%s baseline missing USER column in header: %q", tc.id, baseHeaderLine)
+				}
+				baseUsers := map[string]bool{}
+				for _, line := range baseLines {
+					fields := strings.Fields(line)
+					if len(fields) > baseUserIdx {
+						baseUsers[fields[baseUserIdx]] = true
+					}
+				}
+				if len(baseUsers) < 2 {
+					t.Skip("TOP-007: unfiltered baseline snapshot only contains a single distinct user in this environment; cannot prove -u narrowed the result set")
+				}
+				if len(processLines) >= len(baseLines) {
+					t.Fatalf("%s should narrow the unfiltered baseline (spanning users %v): baseline=%d rows, filtered=%d rows\n--- baseline ---\n%s\n--- filtered ---\n%s", tc.id, keysOfBoolMap(baseUsers), len(baseLines), len(processLines), base.Stdout, res.Stdout)
 				}
 			case "TOP-009":
 				idleCmd := exec.Command("sleep", "30")
@@ -1034,6 +1108,33 @@ func TestParity_PsCases(t *testing.T) {
 				t.Fatalf("ps -u returned row for unexpected user %q (want uid=%s or username=%s): %q", fields[1], uid, currentUser.Username, line)
 			}
 		}
+		// Every filtered row already belonging to the target user proves
+		// nothing about whether -u actually removed anything: in a
+		// root-only CI environment where nearly every process is
+		// root-owned, a no-op -u would still pass every check above.
+		// Compare against an unfiltered baseline and require -u to have
+		// narrowed it, but only when that baseline actually spans more than
+		// one distinct user -- otherwise there's nothing for -u to filter
+		// out and a row-count comparison would pass vacuously.
+		baseline := runGoboxCLI(t, env, "", "ps", "-A", "-o", "pid,user", "-i", "1")
+		if baseline.ExitCode != 0 {
+			t.Fatalf("ps -A baseline failed: %+v", baseline)
+		}
+		baseRows := nonEmptyLines(baseline.Stdout)[1:]
+		baseUsers := map[string]bool{}
+		for _, line := range baseRows {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				baseUsers[fields[1]] = true
+			}
+		}
+		if len(baseUsers) < 2 {
+			t.Skip("PS-014: unfiltered -A baseline only contains a single distinct user in this environment; cannot prove -u narrowed the result set")
+		}
+		filteredRows := nonEmptyLines(res.Stdout)[1:]
+		if len(filteredRows) >= len(baseRows) {
+			t.Fatalf("ps -u should narrow the unfiltered baseline (spanning users %v): baseline=%d rows, filtered=%d rows\n--- baseline ---\n%s\n--- filtered ---\n%s", keysOfBoolMap(baseUsers), len(baseRows), len(filteredRows), baseline.Stdout, res.Stdout)
+		}
 	})
 
 	t.Run("PS-015", func(t *testing.T) {
@@ -1174,15 +1275,32 @@ func TestParity_PsCases(t *testing.T) {
 		if def.ExitCode != 0 || withA.ExitCode != 0 {
 			t.Fatalf("bsd 'a' baseline failed default=%+v a=%+v", def, withA)
 		}
+		// The two length/self checks below are both trivially satisfied
+		// when withA == def (a no-op 'a' that just mirrors default output).
+		// Prove a real filtering effect independent of self's own tty
+		// status with a fixture process gobox's own tty model always
+		// treats as having no controlling tty (see applyPSBSDSelection in
+		// cmds/proc/cmd_ps.go: 'a' alone requires hasTTY regardless of
+		// user). This check runs unconditionally, unlike the self-based
+		// check below which can be environment-dependent.
+		marker := startMarkerProcess(t, "ps018amarker")
+		defer stopCmd(marker)
+		markerWithA := runGoboxCLI(t, env, "", "ps", "a", "-o", "pid", "-i", "1")
+		if markerWithA.ExitCode != 0 {
+			t.Fatalf("bsd 'a' marker check failed: %+v", markerWithA)
+		}
+		if _, ok := rowFieldsByPID(markerWithA.Stdout, strconv.Itoa(marker.Process.Pid)); ok {
+			t.Fatalf("'a' alone (without 'x') must exclude a process with no controlling tty, but included marker pid %d\n%s", marker.Process.Pid, markerWithA.Stdout)
+		}
 		selfPID := strconv.Itoa(os.Getpid())
 		if _, ok := rowFieldsByPID(def.Stdout, selfPID); ok {
-			t.Skip("current test process unexpectedly has a controlling tty in this environment; cannot distinguish 'a' from default via non-tty visibility here")
+			t.Skip("current test process unexpectedly has a controlling tty in this environment (or gobox ps's no-tty bypass made default include all current-user processes regardless of tty); cannot distinguish 'a' from default via non-tty visibility here -- the marker-based exclusion check above already proves 'a' is not a no-op")
 		}
 		if _, ok := rowFieldsByPID(withA.Stdout, selfPID); ok {
 			t.Fatalf("'a' alone (without 'x') must still require a controlling tty and must not surface the non-tty current process %s\n%s", selfPID, withA.Stdout)
 		}
-		if len(nonEmptyLines(withA.Stdout)) < len(nonEmptyLines(def.Stdout)) {
-			t.Fatalf("'a' should not shrink the tty-attached result set relative to default\n--- default ---\n%s\n--- a ---\n%s", def.Stdout, withA.Stdout)
+		if len(nonEmptyLines(withA.Stdout)) <= len(nonEmptyLines(def.Stdout)) {
+			t.Fatalf("'a' should strictly grow the tty-attached result set relative to a tty-exact-matched default (not just avoid shrinking it)\n--- default ---\n%s\n--- a ---\n%s", def.Stdout, withA.Stdout)
 		}
 	})
 
@@ -1195,6 +1313,16 @@ func TestParity_PsCases(t *testing.T) {
 			t.Fatalf("bsd 'x' baseline failed default=%+v x=%+v", def, withX)
 		}
 		selfPID := strconv.Itoa(os.Getpid())
+		// Mirror PS-018-a's exclusion-baseline guard: if the current test
+		// process already appears in the *default* (no 'x') listing --
+		// because it happens to have a controlling tty here, or because
+		// gobox's no-tty bypass makes default include all current-user
+		// processes regardless of tty -- then withX including it too
+		// proves nothing about 'x' specifically, since both would already
+		// trivially include it.
+		if _, ok := rowFieldsByPID(def.Stdout, selfPID); ok {
+			t.Skip("current test process already appears in the default ps listing; cannot use its inclusion in 'x' output to prove 'x' had any effect here")
+		}
 		if _, ok := rowFieldsByPID(withX.Stdout, selfPID); !ok {
 			t.Fatalf("'x' alone (without 'a') should include the current (non-tty) test process %s among same-user processes\n%s", selfPID, withX.Stdout)
 		}
@@ -1419,20 +1547,29 @@ func TestParity_LsofCases(t *testing.T) {
 		if !strings.Contains(gobox.Stdout, targetPort) {
 			t.Fatalf("lsof -i should include the target listener port %s\n%s", targetPort, gobox.Stdout)
 		}
-		_, rows := lsofHeaderAndRows(gobox.Stdout)
+		header, rows := lsofHeaderAndRows(gobox.Stdout)
+		// The protocol designation ("TCP"/"UDP") lives in the NODE column
+		// for both gobox and native lsof -i output (see the LSOF-005/006
+		// cases). Only rejecting rows containing the literal substring
+		// "unix" left other non-network FD types (REG/DIR/CHR/FIFO) able to
+		// leak through unnoticed; assert every row's NODE column is
+		// explicitly TCP or UDP instead.
+		nodeIdx := columnIndex(header, "NODE")
+		if nodeIdx < 0 {
+			t.Fatalf("lsof -i header missing NODE column: %q", header)
+		}
 		foundPort := false
 		for _, line := range rows {
-			if strings.Contains(line, "TCP") {
-				if strings.Contains(line, targetPort) {
-					foundPort = true
-				}
-				continue
+			fields := strings.Fields(line)
+			if nodeIdx >= len(fields) {
+				t.Fatalf("lsof -i row too short to contain NODE column: %q", line)
 			}
-			if strings.Contains(line, "UDP") {
-				continue
+			proto := fields[nodeIdx]
+			if proto != "TCP" && proto != "UDP" {
+				t.Fatalf("lsof -i leaked non-network row with NODE=%q (want TCP or UDP): %q", proto, line)
 			}
-			if strings.Contains(strings.ToLower(line), "unix") {
-				t.Fatalf("lsof -i leaked unexpected non-network row %q", line)
+			if proto == "TCP" && strings.Contains(line, targetPort) {
+				foundPort = true
 			}
 		}
 		if !foundPort {
@@ -1519,7 +1656,10 @@ func TestParity_LsofCases(t *testing.T) {
 			t.Fatalf("lsof -i :PORT should not enlarge the bare -i result set\n--- base ---\n%s\n--- filtered ---\n%s", base.Stdout, gobox.Stdout)
 		}
 		for _, line := range rows {
-			if !strings.Contains(line, port) {
+			// containsPortToken (not a raw strings.Contains) avoids false
+			// positives such as port "80" matching inside "8080" or a PID
+			// like "1801".
+			if !containsPortToken(line, port) {
 				t.Fatalf("lsof -i :PORT leaked non-target row %q", line)
 			}
 		}
@@ -1698,6 +1838,30 @@ func TestParity_FreeCases(t *testing.T) {
 			}
 			if !allZero {
 				t.Fatalf("free -h Swap row missing human-readable suffix: %q", goboxSwap)
+			}
+		}
+		// The checks above only prove *some* unit suffix is present, not
+		// that the human-readable value's magnitude actually matches the
+		// underlying data -- a -h implementation that always printed
+		// "1.0KB" would still pass. Cross-check every human-readable value
+		// against the already-computed base (default-unit, KiB) result
+		// from the same test by converting it back to KiB and allowing for
+		// HumanSize's one-decimal-place rounding (see
+		// cmds/utils/utils.go's HumanSize).
+		baseMemFields := freeRowFields(t, base.Stdout, "Mem:")
+		goboxMemFields := strings.Fields(goboxMem)
+		if len(goboxMemFields) < len(baseMemFields) {
+			t.Fatalf("free -h Mem row has fewer columns than base Mem row\nbase=%q\nhuman=%q", strings.Join(baseMemFields, " "), goboxMem)
+		}
+		for i := 1; i < len(baseMemFields); i++ {
+			baseKiB, err := strconv.ParseFloat(baseMemFields[i], 64)
+			if err != nil {
+				t.Fatalf("free base Mem column %d not numeric: %q", i, baseMemFields[i])
+			}
+			humanBytes, tolerance := parseHumanSizeBytes(t, goboxMemFields[i])
+			baseBytes := baseKiB * 1024
+			if diff := math.Abs(humanBytes - baseBytes); diff > tolerance {
+				t.Fatalf("free -h Mem column %d magnitude mismatch: human=%q (~%.0f bytes) vs base=%q (~%.0f bytes), diff=%.0f exceeds tolerance %.0f\nbase=%q\nhuman=%q", i, goboxMemFields[i], humanBytes, baseMemFields[i], baseBytes, diff, tolerance, base.Stdout, gobox.Stdout)
 			}
 		}
 	})
@@ -2054,16 +2218,35 @@ func TestParity_KillCases(t *testing.T) {
 					t.Fatalf("kill -l 15 mismatch: %q", out)
 				}
 			case "KILL-003":
-				cmd := exec.Command("sleep", "30")
+				// waitForExit alone only proves the process exited before a
+				// timeout, not that it exited *because it received SIGTERM*
+				// specifically -- a `kill -s TERM` that actually sent the
+				// wrong signal (or none at all) could still pass if the
+				// process happened to die for an unrelated reason. Use a
+				// fixture that traps SIGTERM and writes a distinctive marker
+				// only when that exact signal arrives, then assert the
+				// marker to prove the specific signal was delivered.
+				marker := filepath.Join(t.TempDir(), "term-marker")
+				script := "trap 'echo TERM > \"$1\"; exit 0' TERM; while true; do sleep 1; done"
+				cmd := exec.Command("sh", "-c", script, "sh", marker)
 				if err := cmd.Start(); err != nil {
 					t.Fatal(err)
 				}
+				time.Sleep(100 * time.Millisecond) // let the trap register before signaling
 				if res := runGoboxCLI(t, t.TempDir(), "", "kill", "-s", "TERM", strconv.Itoa(cmd.Process.Pid)); res.ExitCode != 0 {
+					_ = cmd.Process.Kill()
 					t.Fatalf("kill -s TERM failed: %+v", res)
 				}
 				if err := waitForExit(t, cmd, time.Second); err != nil {
 					_ = cmd.Process.Kill()
 					t.Fatal(err)
+				}
+				data, err := os.ReadFile(marker)
+				if err != nil {
+					t.Fatalf("kill -s TERM: expected SIGTERM-specific marker file, got error: %v", err)
+				}
+				if got := strings.TrimSpace(string(data)); got != "TERM" {
+					t.Fatalf("kill -s TERM: expected marker %q (proves SIGTERM was received), got %q", "TERM", got)
 				}
 			case "KILL-004":
 				cmd := exec.Command("sleep", "30")
@@ -2093,8 +2276,18 @@ func TestParity_KillCases(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "KILL-006":
+				// startExactNameProcess names the symlink `name` but leaves
+				// argv[0] defaulted to the symlink's own path, so both comm
+				// (exact match, -x) and the full cmdline (substring/regex
+				// match, -f) contain `name` -- that fixture can't tell -x
+				// apart from -f, since a broken -x that silently fell back
+				// to -f's cmdline-substring behavior would still pass. Use
+				// a fixture whose kernel comm (derived from the execve
+				// filename, i.e. the symlink's own basename) exactly equals
+				// the pattern, but whose argv[0]/cmdline is unrelated, so
+				// only -x can match it.
 				name := "pkx" + strconv.FormatInt(time.Now().UnixNano()%100000000, 10)
-				cmd := startExactNameProcess(t, name)
+				cmd := startExactCommMismatchedCmdlineProcess(t, name)
 				if res := runGoboxCLI(t, t.TempDir(), "", "kill", "-x", name); res.ExitCode != 0 {
 					stopCmd(cmd)
 					t.Fatalf("kill -x failed: %+v", res)
@@ -2103,6 +2296,16 @@ func TestParity_KillCases(t *testing.T) {
 					stopCmd(cmd)
 					t.Fatal(err)
 				}
+				// Prove -x and -f genuinely behave differently on this
+				// pattern: a fresh instance of the same fixture must
+				// survive `kill -f name`, since its cmdline doesn't contain
+				// the pattern at all.
+				cmd2 := startExactCommMismatchedCmdlineProcess(t, name)
+				defer stopCmd(cmd2)
+				if res := runGoboxCLI(t, t.TempDir(), "", "kill", "-f", name); res.ExitCode != 0 {
+					t.Fatalf("kill -f unexpectedly failed (expected a successful no-op with zero cmdline matches): %+v", res)
+				}
+				requireAlive(t, cmd2)
 			case "KILL-007":
 				parent := exec.Command("sh", "-c", "sleep 30 & wait")
 				if err := parent.Start(); err != nil {
@@ -2187,6 +2390,45 @@ func TestParity_KillCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+// parseHumanSizeBytes parses a HumanSize-formatted string (see
+// cmds/utils/utils.go's HumanSize: "<N>B" for values under 1024, otherwise
+// "<N.D><unit>B" with unit one of K/M/G/T/P/E) into its approximate byte
+// value, along with the maximum rounding error introduced by HumanSize's
+// one-decimal-place formatting.
+func parseHumanSizeBytes(t *testing.T, s string) (bytesVal float64, tolerance float64) {
+	t.Helper()
+	if !strings.HasSuffix(s, "B") || len(s) < 2 {
+		t.Fatalf("human size %q missing expected \"B\" suffix", s)
+	}
+	prefix := s[:len(s)-1]
+	const unitLetters = "KMGTPE"
+	if len(prefix) > 0 && strings.ContainsRune(unitLetters, rune(prefix[len(prefix)-1])) {
+		letter := prefix[len(prefix)-1]
+		numStr := prefix[:len(prefix)-1]
+		val, err := strconv.ParseFloat(numStr, 64)
+		if err != nil {
+			t.Fatalf("cannot parse human size %q: %v", s, err)
+		}
+		exp := strings.IndexByte(unitLetters, letter) + 1 // K=1, M=2, G=3, T=4, P=5, E=6
+		div := math.Pow(1024, float64(exp))
+		return val * div, 0.05 * div
+	}
+	// Plain byte count, e.g. "512B" or "0B" -- printed as an exact integer.
+	val, err := strconv.ParseFloat(prefix, 64)
+	if err != nil {
+		t.Fatalf("cannot parse human size %q: %v", s, err)
+	}
+	return val, 0.5
+}
+
+func keysOfBoolMap(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func containsAny(s string, subs []string) bool {

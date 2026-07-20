@@ -358,7 +358,11 @@ func humanSizeBase(b uint64, unit uint64) string {
 		suf = 'k'
 	}
 	if rounded >= 10 {
-		return fmt.Sprintf("%.0f%c", rounded, suf)
+		// rounded can land on an exact ".5" (e.g. 12.5), and fmt's "%.0f"
+		// rounds exact ties to even (12.5 -> "12"), whereas GNU df/du round
+		// ties away from zero (12.5 -> "13"). Apply math.Round explicitly so
+		// the tie-breaking direction matches native output.
+		return fmt.Sprintf("%.0f%c", math.Round(rounded), suf)
 	}
 	return fmt.Sprintf("%.1f%c", rounded, suf)
 }

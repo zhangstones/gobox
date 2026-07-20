@@ -11,6 +11,14 @@ import (
 	"time"
 )
 
+// digDefaultTTL is used to render the TTL column of dig's answer lines.
+// gobox resolves records through Go's stdlib net.Resolver, which does not
+// expose the real TTL from the DNS response, so a fixed value is used
+// instead of omitting the column entirely (real dig's answer format is
+// NAME TTL CLASS TYPE DATA; omitting TTL breaks tooling that parses that
+// fixed field layout).
+const digDefaultTTL = 300
+
 // DigCmd implements dig functionality
 func DigCmd(args []string) error {
 	return runDNSLookup("dig", args)
@@ -402,7 +410,7 @@ func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 		}
 		for _, ip := range ips {
 			if net.ParseIP(ip).To4() != nil {
-				fmt.Printf("%s. IN A %s\n", host, ip)
+				fmt.Printf("%s.\t\t%d\tIN\tA\t%s\n", host, digDefaultTTL, ip)
 			}
 		}
 	case "AAAA":
@@ -414,7 +422,7 @@ func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 		for _, addr := range addrs {
 			ip := net.ParseIP(addr)
 			if ip != nil && ip.To4() == nil {
-				fmt.Printf("%s. IN AAAA %s\n", host, addr)
+				fmt.Printf("%s.\t\t%d\tIN\tAAAA\t%s\n", host, digDefaultTTL, addr)
 			}
 		}
 	case "TXT":
@@ -424,7 +432,7 @@ func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 			return nil
 		}
 		for _, txt := range txts {
-			fmt.Printf("%s. IN TXT \"%s\"\n", host, txt)
+			fmt.Printf("%s.\t\t%d\tIN\tTXT\t\"%s\"\n", host, digDefaultTTL, txt)
 		}
 	case "CNAME":
 		cname, err := resolver.LookupCNAME(context.Background(), host)
@@ -432,7 +440,7 @@ func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 			fmt.Printf("%s. IN CNAME\n", host)
 			return nil
 		}
-		fmt.Printf("%s. IN CNAME %s\n", host, cname)
+		fmt.Printf("%s.\t\t%d\tIN\tCNAME\t%s\n", host, digDefaultTTL, cname)
 	case "NS":
 		nss, err := resolver.LookupNS(context.Background(), host)
 		if err != nil {
@@ -440,7 +448,7 @@ func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 			return nil
 		}
 		for _, ns := range nss {
-			fmt.Printf("%s. IN NS %s\n", host, ns.Host)
+			fmt.Printf("%s.\t\t%d\tIN\tNS\t%s\n", host, digDefaultTTL, ns.Host)
 		}
 	case "MX":
 		mxs, err := resolver.LookupMX(context.Background(), host)
@@ -449,7 +457,7 @@ func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 			return nil
 		}
 		for _, mx := range mxs {
-			fmt.Printf("%s. IN MX %d %s\n", host, mx.Pref, mx.Host)
+			fmt.Printf("%s.\t\t%d\tIN\tMX\t%d %s\n", host, digDefaultTTL, mx.Pref, mx.Host)
 		}
 	case "SRV":
 		_, addrs, err := resolver.LookupSRV(context.Background(), "", "", host)
@@ -458,7 +466,7 @@ func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 			return nil
 		}
 		for _, srv := range addrs {
-			fmt.Printf("%s. IN SRV %d %d %d %s\n", host, srv.Priority, srv.Weight, srv.Port, srv.Target)
+			fmt.Printf("%s.\t\t%d\tIN\tSRV\t%d %d %d %s\n", host, digDefaultTTL, srv.Priority, srv.Weight, srv.Port, srv.Target)
 		}
 	default:
 		ips, err := resolver.LookupHost(context.Background(), host)
@@ -467,7 +475,7 @@ func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 			return nil
 		}
 		for _, ip := range ips {
-			fmt.Printf("%s. IN A %s\n", host, ip)
+			fmt.Printf("%s.\t\t%d\tIN\tA\t%s\n", host, digDefaultTTL, ip)
 		}
 	}
 
@@ -501,7 +509,7 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 		if err == nil {
 			for _, ip := range ips {
 				if net.ParseIP(ip).To4() != nil {
-					fmt.Printf("%s. IN A %s\n", host, ip)
+					fmt.Printf("%s.\t\t%d\tIN\tA\t%s\n", host, digDefaultTTL, ip)
 					hasAnswer = true
 				}
 			}
@@ -513,7 +521,7 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 			for _, addr := range addrs {
 				ip := net.ParseIP(addr)
 				if ip != nil && ip.To4() == nil {
-					fmt.Printf("%s. IN AAAA %s\n", host, addr)
+					fmt.Printf("%s.\t\t%d\tIN\tAAAA\t%s\n", host, digDefaultTTL, addr)
 					hasAnswer = true
 				}
 			}
@@ -523,7 +531,7 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 		queryErr = err
 		if err == nil {
 			for _, txt := range txts {
-				fmt.Printf("%s. IN TXT \"%s\"\n", host, txt)
+				fmt.Printf("%s.\t\t%d\tIN\tTXT\t\"%s\"\n", host, digDefaultTTL, txt)
 				hasAnswer = true
 			}
 		}
@@ -531,7 +539,7 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 		cname, err := resolver.LookupCNAME(context.Background(), host)
 		queryErr = err
 		if err == nil {
-			fmt.Printf("%s. IN CNAME %s\n", host, cname)
+			fmt.Printf("%s.\t\t%d\tIN\tCNAME\t%s\n", host, digDefaultTTL, cname)
 			hasAnswer = true
 		}
 	case "NS":
@@ -539,7 +547,7 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 		queryErr = err
 		if err == nil {
 			for _, ns := range nss {
-				fmt.Printf("%s. IN NS %s\n", host, ns.Host)
+				fmt.Printf("%s.\t\t%d\tIN\tNS\t%s\n", host, digDefaultTTL, ns.Host)
 				hasAnswer = true
 			}
 		}
@@ -548,7 +556,7 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 		queryErr = err
 		if err == nil {
 			for _, mx := range mxs {
-				fmt.Printf("%s. IN MX %d %s\n", host, mx.Pref, mx.Host)
+				fmt.Printf("%s.\t\t%d\tIN\tMX\t%d %s\n", host, digDefaultTTL, mx.Pref, mx.Host)
 				hasAnswer = true
 			}
 		}
@@ -557,7 +565,7 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 		queryErr = err
 		if err == nil {
 			for _, srv := range addrs {
-				fmt.Printf("%s. IN SRV %d %d %d %s\n", host, srv.Priority, srv.Weight, srv.Port, srv.Target)
+				fmt.Printf("%s.\t\t%d\tIN\tSRV\t%d %d %d %s\n", host, digDefaultTTL, srv.Priority, srv.Weight, srv.Port, srv.Target)
 				hasAnswer = true
 			}
 		}
@@ -566,7 +574,7 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 		queryErr = err
 		if err == nil {
 			for _, ip := range ips {
-				fmt.Printf("%s. IN A %s\n", host, ip)
+				fmt.Printf("%s.\t\t%d\tIN\tA\t%s\n", host, digDefaultTTL, ip)
 				hasAnswer = true
 			}
 		}

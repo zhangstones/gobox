@@ -239,6 +239,23 @@ func TestParity_Md5sumCases(t *testing.T) {
 		if normalizeText(gobox.Stdout) != normalizeText(native.Stdout) {
 			t.Fatalf("md5sum --quiet file stdout mismatch\ngobox=%q\nnative=%q", gobox.Stdout, native.Stdout)
 		}
+		// The diagnostic distinguishing "quiet in compute mode is an error"
+		// from "quiet silently accepted" lives on stderr (see the
+		// md5sumQuietError branch in cmds/disk/cmd_md5sum.go), not stdout, so
+		// a stdout-only comparison could pass even if gobox stopped emitting
+		// the diagnostic entirely. runGoboxCLI calls the command function
+		// directly and does not replicate main.go's err->stderr conversion,
+		// so use the real subprocess path (runGoboxSubprocess, which goes
+		// through the same os.Exit/stderr-printing logic as the compiled
+		// binary) to observe it faithfully.
+		const wantDiag = "the --quiet option is meaningful only when verifying checksums"
+		goboxSub := runGoboxSubprocess(t, env, []string{"md5sum", "--quiet", "file.txt"}, 10*time.Second)
+		if !strings.Contains(goboxSub.Stderr, wantDiag) {
+			t.Fatalf("md5sum --quiet file: gobox stderr missing diagnostic %q, got %q", wantDiag, goboxSub.Stderr)
+		}
+		if !strings.Contains(native.Stderr, wantDiag) {
+			t.Fatalf("md5sum --quiet file: native stderr missing diagnostic %q, got %q", wantDiag, native.Stderr)
+		}
 	})
 
 	t.Run("MD5-007", func(t *testing.T) {
@@ -463,6 +480,28 @@ func TestParity_IostatCases(t *testing.T) {
 			}
 		}
 		base := runGoboxCLI(t, t.TempDir(), "", "iostat", "-n", "1")
+
+		// Perform a real, sizeable, fsync'd write before sampling so that at
+		// least one cgroup I/O counter is guaranteed to reflect genuine
+		// activity: an all-zero stub implementation must not be able to
+		// pass this case merely because the sandbox happens to be idle.
+		ioPath := filepath.Join(t.TempDir(), "iostat005.dat")
+		ioData := make([]byte, 16<<20) // 16MiB
+		for i := range ioData {
+			ioData[i] = byte(i)
+		}
+		f, err := os.Create(ioPath)
+		if err != nil {
+			t.Fatalf("iostat --cgroup: create real I/O test file: %v", err)
+		}
+		if _, err := f.Write(ioData); err != nil {
+			t.Fatalf("iostat --cgroup: write real I/O test file: %v", err)
+		}
+		if err := f.Sync(); err != nil {
+			t.Fatalf("iostat --cgroup: fsync real I/O test file: %v", err)
+		}
+		_ = f.Close()
+
 		res := runGoboxCLI(t, t.TempDir(), "", "iostat", "--cgroup", "-n", "1")
 		if base.ExitCode != 0 || res.ExitCode != 0 {
 			t.Fatalf("iostat --cgroup failed base=%+v cgroup=%+v", base, res)
@@ -479,7 +518,10 @@ func TestParity_IostatCases(t *testing.T) {
 				t.Fatalf("iostat --cgroup expected structured device row width=%d header=%d row=%v", len(row), len(header), row)
 			}
 		}
-		// Validate that all cgroup numeric fields are non-negative numbers.
+		// Validate that all cgroup numeric fields are non-negative numbers,
+		// and that at least one is strictly positive -- proving the reader
+		// surfaces real counters rather than a hardcoded all-zero stub.
+		sawPositive := false
 		for _, row := range rows {
 			for _, field := range row[1:] {
 				s := strings.TrimSuffix(field, "/s")
@@ -490,7 +532,13 @@ func TestParity_IostatCases(t *testing.T) {
 				if v < 0 {
 					t.Fatalf("iostat --cgroup: negative I/O field %q (value %.4f) in row %v", field, v, row)
 				}
+				if v > 0 {
+					sawPositive = true
+				}
 			}
+		}
+		if !sawPositive {
+			t.Fatalf("iostat --cgroup: all counters are zero even after a real 16MiB fsync'd write; got:\n%s", res.Stdout)
 		}
 	})
 
@@ -583,6 +631,59 @@ func parseLatencyField(line, label string) (float64, bool) {
 	}
 	v, err := strconv.ParseFloat(m[1], 64)
 	return v, err == nil
+}
+
+// sumHistLogCounts sums the count column of every "mode,bucket,count" line in
+// a gobox --write_hist_log CSV. Used to prove the log reflects real recorded
+// latency observations (which scale with how much I/O actually ran) rather
+// than a fixed/hardcoded set of rows.
+func sumHistLogCounts(data []byte) int64 {
+	var total int64
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.Split(strings.TrimSpace(line), ",")
+		if len(parts) < 3 {
+			continue
+		}
+		n, err := strconv.ParseInt(strings.TrimSuffix(parts[2], "+"), 10, 64)
+		if err != nil {
+			continue
+		}
+		total += n
+	}
+	return total
+}
+
+// fioPercentileUnitRe locates the unit fio declares on its
+// "clat percentiles (nsec|usec|msec):" line, used by parseFioPercentile
+// below to normalize the adjacent "|  95th=[18048]" style value so gobox's
+// own percentile fields can be numerically compared against fio's, not
+// merely checked for substring presence.
+var fioPercentileUnitRe = regexp.MustCompile(`percentiles \((nsec|usec|msec)\):`)
+
+// parseFioPercentile extracts the value of "<percentile>th=[<value>]" from
+// fio's stdout and normalizes it to microseconds using the unit declared on
+// the preceding "clat percentiles (...)"/"lat percentiles (...)" line.
+func parseFioPercentile(out string, percentile int) (float64, bool) {
+	unit := "usec"
+	if m := fioPercentileUnitRe.FindStringSubmatch(out); m != nil {
+		unit = m[1]
+	}
+	re := regexp.MustCompile(fmt.Sprintf(`%dth=\[\s*([0-9.]+)\]`, percentile))
+	m := re.FindStringSubmatch(out)
+	if m == nil {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return 0, false
+	}
+	switch unit {
+	case "nsec":
+		v /= 1000.0
+	case "msec":
+		v *= 1000.0
+	}
+	return v, true
 }
 
 func requireStrace(t *testing.T) string {
@@ -890,6 +991,31 @@ func TestParity_IoperfCases(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("IOPERF-007: histogram log missing mode,bucket,count CSV lines:\n%s", data)
+		}
+
+		// A hardcoded/fake CSV would satisfy every check above regardless of
+		// how much I/O actually ran. Prove the log tracks real recorded
+		// latencies by asserting the total observation count scales with a
+		// longer --runtime.
+		sum1 := sumHistLogCounts(data)
+		if sum1 <= 0 {
+			t.Fatalf("IOPERF-007: histogram log records zero total observations, looks like a hardcoded/fake log:\n%s", data)
+		}
+
+		env2 := t.TempDir()
+		res2 := runGoboxCLI(t, env2, "", "ioperf", "--filename", filepath.Join(env2, "io.dat"), "--write_hist_log", filepath.Join(env2, "hist"), "--time_based", "--runtime", "3", "--size", "1M")
+		if res2.ExitCode != 0 {
+			t.Fatalf("IOPERF-007 (longer runtime) failed: %+v", res2)
+		}
+		data2, err := os.ReadFile(filepath.Join(env2, "hist_read_hist.1.log"))
+		if err != nil {
+			t.Fatalf("IOPERF-007: read longer-runtime histogram log: %v", err)
+		}
+		sum2 := sumHistLogCounts(data2)
+		if sum2 <= sum1 {
+			t.Fatalf("IOPERF-007: histogram observation count should scale with --runtime "+
+				"(runtime=1 total=%d, runtime=3 total=%d); looks hardcoded rather than derived "+
+				"from real recorded latencies", sum1, sum2)
 		}
 	})
 
@@ -1204,6 +1330,26 @@ func TestParity_IoperfFioCases(t *testing.T) {
 			},
 			assert: func(t *testing.T, env, goboxFile, nativeFile string, gobox, native parityResult) {
 				assertReadWrite(t, gobox, native, false, true)
+				// assertReadWrite only confirms a WRITE: summary line exists;
+				// it says nothing about whether --direct actually reached
+				// the real open() syscall. Verify via strace, mirroring the
+				// non-fio IOPERF-002 case which checks both the on and off
+				// cases.
+				lineOff := traceOpenFlagsLine(t, env,
+					[]string{"ioperf", "--filename", "direct_off.dat", "--rw", "write", "--bs", "4k", "--size", "32K", "--direct", "0"},
+					"direct_off.dat", 20*time.Second)
+				if strings.Contains(lineOff, "O_DIRECT") {
+					t.Fatalf("ioperf --direct=0 (default) should not request O_DIRECT, got %q", lineOff)
+				}
+				lineOn := traceOpenFlagsLine(t, env,
+					[]string{"ioperf", "--filename", "direct_on.dat", "--rw", "write", "--bs", "4k", "--size", "32K", "--direct", "1"},
+					"direct_on.dat", 20*time.Second)
+				if lineOn == "" {
+					t.Fatalf("strace did not capture an openat() call for the ioperf target file")
+				}
+				if !strings.Contains(lineOn, "O_DIRECT") {
+					t.Fatalf("ioperf --direct=1 must open the target file with O_DIRECT; strace observed flags %q instead", lineOn)
+				}
 			},
 		},
 		{
@@ -1234,6 +1380,23 @@ func TestParity_IoperfFioCases(t *testing.T) {
 			},
 			assert: func(t *testing.T, env, goboxFile, nativeFile string, gobox, native parityResult) {
 				assertReadWrite(t, gobox, native, false, true)
+				// assertReadWrite only confirms a WRITE: summary line exists,
+				// not that --fsync=1 actually triggered a real fsync() call.
+				// Verify the real effect via a measurable latency increase,
+				// mirroring the non-fio IOPERF-004 case.
+				base := runGoboxCLI(t, env, "", "ioperf", "--filename", filepath.Join(env, "fsync_effect_base.dat"), "--rw", "write", "--bs", "4k", "--size", "512K", "--fsync", "0")
+				withFsync := runGoboxCLI(t, env, "", "ioperf", "--filename", filepath.Join(env, "fsync_effect_on.dat"), "--rw", "write", "--bs", "4k", "--size", "512K", "--fsync", "1")
+				if base.ExitCode != 0 || withFsync.ExitCode != 0 {
+					t.Fatalf("ioperf --fsync real-effect run failed base=%+v fsync=%+v", base, withFsync)
+				}
+				baseLat, ok1 := parseLatencyField(findLineWithPrefix(base.Stdout, "WRITE:"), "avg")
+				fsyncLat, ok2 := parseLatencyField(findLineWithPrefix(withFsync.Stdout, "WRITE:"), "avg")
+				if !ok1 || !ok2 {
+					t.Fatalf("ioperf --fsync: could not parse avg latency base=%q fsync=%q", base.Stdout, withFsync.Stdout)
+				}
+				if fsyncLat < baseLat*2 {
+					t.Fatalf("ioperf --fsync=1 should measurably increase average write latency via a real fsync() call: base avg=%.2fus fsync avg=%.2fus", baseLat, fsyncLat)
+				}
 			},
 		},
 		{
@@ -1263,8 +1426,44 @@ func TestParity_IoperfFioCases(t *testing.T) {
 			},
 			assert: func(t *testing.T, env, goboxFile, nativeFile string, gobox, native parityResult) {
 				assertReadWrite(t, gobox, native, false, true)
-				if findLineContaining(gobox.Stdout, "iodepth=2") == "" || findLineWithPrefix(strings.TrimSpace(native.Stdout), "IO depths") == "" {
-					t.Fatalf("iodepth not reflected gobox=%+v native=%+v", gobox, native)
+				if findLineWithPrefix(strings.TrimSpace(native.Stdout), "IO depths") == "" {
+					t.Fatalf("fio missing IO depths accounting: %+v", native)
+				}
+				// The previous check here grepped gobox's own stdout for the
+				// literal string "iodepth=2", which is just an unconditional
+				// echo of the flag value and proves nothing about real
+				// concurrency. Replace it with a throughput-based real-effect
+				// check mirroring the non-fio IOPERF-006 case: --iodepth=32
+				// should measurably improve random-read IOPS over
+				// --iodepth=1, taking the best of several trials to reduce
+				// scheduling noise.
+				dataFile := filepath.Join(env, "iodepth_effect.dat")
+				prep := runGoboxCLI(t, env, "", "ioperf", "--filename", dataFile, "--rw", "write", "--bs", "4k", "--size", "4M")
+				if prep.ExitCode != 0 {
+					t.Fatalf("ioperf --iodepth real-effect fixture setup failed: %+v", prep)
+				}
+				bestIOPS := func(depth string) float64 {
+					var best float64
+					for i := 0; i < 3; i++ {
+						res := runGoboxCLI(t, env, "", "ioperf", "--filename", dataFile, "--rw", "randread", "--bs", "4k", "--size", "4M", "--iodepth", depth)
+						if res.ExitCode != 0 {
+							t.Fatalf("ioperf --iodepth=%s failed: %+v", depth, res)
+						}
+						v, ok := parseIOPS(findLineWithPrefix(res.Stdout, "READ:"))
+						if !ok {
+							t.Fatalf("ioperf --iodepth=%s: could not parse IOPS from %q", depth, res.Stdout)
+						}
+						if v > best {
+							best = v
+						}
+					}
+					return best
+				}
+				shallow := bestIOPS("1")
+				deep := bestIOPS("32")
+				if deep < shallow*1.2 {
+					t.Fatalf("ioperf --iodepth=32 shows no measurable throughput improvement over --iodepth=1 "+
+						"(best-of-3 IOPS: depth=1 -> %.0f, depth=32 -> %.0f)", shallow, deep)
 				}
 			},
 		},
@@ -1277,11 +1476,40 @@ func TestParity_IoperfFioCases(t *testing.T) {
 				return []string{"--filename=" + nativeFile, "--rw=write", "--size=1M", "--time_based=1", "--runtime=1", "--write_hist_log=" + filepath.Join(env, "native_hist"), "--log_hist_msec=100"}
 			},
 			assert: func(t *testing.T, env, goboxFile, nativeFile string, gobox, native parityResult) {
-				if _, err := os.Stat(filepath.Join(env, "gobox_hist_write_hist.1.log")); err != nil {
+				goboxLogPath := filepath.Join(env, "gobox_hist_write_hist.1.log")
+				goboxInfo, err := os.Stat(goboxLogPath)
+				if err != nil {
 					t.Fatalf("gobox histogram log missing: %v", err)
 				}
-				if _, err := os.Stat(filepath.Join(env, "native_hist_clat_hist.1.log")); err != nil {
+				if goboxInfo.Size() == 0 {
+					t.Fatalf("gobox histogram log is empty: %s", goboxLogPath)
+				}
+				goboxData, err := os.ReadFile(goboxLogPath)
+				if err != nil {
+					t.Fatalf("read gobox histogram log: %v", err)
+				}
+				goboxFirstLine := strings.SplitN(string(goboxData), "\n", 2)[0]
+				goboxFields := strings.Split(goboxFirstLine, ",")
+				if len(goboxFields) != 3 {
+					t.Fatalf("gobox histogram log line does not look like mode,bucket,count CSV (got %d fields): %q", len(goboxFields), goboxFirstLine)
+				}
+
+				nativeLogPath := filepath.Join(env, "native_hist_clat_hist.1.log")
+				nativeInfo, err := os.Stat(nativeLogPath)
+				if err != nil {
 					t.Fatalf("fio histogram log missing: %v", err)
+				}
+				if nativeInfo.Size() == 0 {
+					t.Fatalf("fio histogram log is empty: %s", nativeLogPath)
+				}
+				nativeData, err := os.ReadFile(nativeLogPath)
+				if err != nil {
+					t.Fatalf("read fio histogram log: %v", err)
+				}
+				nativeFirstLine := strings.SplitN(string(nativeData), "\n", 2)[0]
+				nativeFields := strings.Split(nativeFirstLine, ",")
+				if len(nativeFields) < 10 {
+					t.Fatalf("fio histogram log line does not look like a real CSV histogram (got %d fields): %q", len(nativeFields), nativeFirstLine)
 				}
 			},
 		},
@@ -1318,6 +1546,55 @@ func TestParity_IoperfFioCases(t *testing.T) {
 				if findLineContaining(strings.ToLower(gobox.Stdout), "p95=") == "" || findLineContaining(strings.ToLower(native.Stdout), "95th=") == "" {
 					t.Fatalf("percentile output mismatch gobox=%+v native=%+v", gobox, native)
 				}
+				// A bare substring check would pass even if the reported
+				// value were hardcoded or wildly wrong. The 32K/8-op fixture
+				// above is too small a sample for a stable percentile, and
+				// gobox's Go-runtime timing overhead vs fio's tight C timing
+				// differ by roughly two orders of magnitude even when both
+				// are measuring the same real syscalls (verified empirically
+				// against this sandbox's fio 3.35), so a tight cross-tool
+				// absolute-value comparison would be flaky. Instead re-run
+				// both tools against a larger, pre-populated file requesting
+				// both p50 and p95 in one pass, and verify, numerically,
+				// that each tool's own p95 sits meaningfully above its own
+				// p50 (the same real-percentile-computation proof the
+				// non-fio IOPERF-009 case applies to gobox alone), plus a
+				// generous cross-tool sanity bound wide enough to absorb the
+				// implementation-overhead gap but still catch a gross bug
+				// such as a unit-conversion error or a hardcoded value.
+				bigGobox := filepath.Join(env, "pctl_big_gobox.dat")
+				bigNative := filepath.Join(env, "pctl_big_native.dat")
+				writeFile(t, bigGobox, strings.Repeat("p", 2*1024*1024))
+				writeFile(t, bigNative, strings.Repeat("p", 2*1024*1024))
+				goboxBig := runGoboxCLI(t, env, "", "ioperf", "--filename", bigGobox, "--rw", "read", "--bs", "4k", "--size", "2M", "--percentile_list", "50:95")
+				nativeBig := runNativeCLI(t, env, "", "fio", "--name=pctlbig", "--filename="+bigNative, "--rw=read", "--bs=4k", "--size=2M", "--percentile_list=50:95")
+				if goboxBig.ExitCode != 0 || nativeBig.ExitCode != 0 {
+					t.Fatalf("ioperf/fio --percentile_list=50:95 real-effect run failed gobox=%+v native=%+v", goboxBig, nativeBig)
+				}
+				goboxP50, ok1 := parseLatencyField(findLineWithPrefix(goboxBig.Stdout, "READ:"), "p50")
+				goboxP95, ok2 := parseLatencyField(findLineWithPrefix(goboxBig.Stdout, "READ:"), "p95")
+				nativeP50, ok3 := parseFioPercentile(nativeBig.Stdout, 50)
+				nativeP95, ok4 := parseFioPercentile(nativeBig.Stdout, 95)
+				if !ok1 || !ok2 || !ok3 || !ok4 {
+					t.Fatalf("ioperf/fio --percentile_list=50:95: could not parse numeric percentiles gobox=%+v native=%+v", goboxBig, nativeBig)
+				}
+				if goboxP95 <= 0 || nativeP95 <= 0 {
+					t.Fatalf("ioperf/fio --percentile_list=50:95: p95 latency should be positive, got gobox=%.3fus native=%.3fus", goboxP95, nativeP95)
+				}
+				if goboxP95 <= goboxP50 {
+					t.Fatalf("ioperf --percentile_list=50:95: gobox p95 (%.3fus) must exceed its own p50 (%.3fus); percentile computation looks broken or hardcoded", goboxP95, goboxP50)
+				}
+				if nativeP95 < nativeP50 {
+					t.Fatalf("fio --percentile_list=50:95: native p95 (%.3fus) is below its own p50 (%.3fus), which should never happen for a real percentile computation", nativeP95, nativeP50)
+				}
+				lo, hi := goboxP95, nativeP95
+				if lo > hi {
+					lo, hi = hi, lo
+				}
+				const crossToolTolerance = 500.0
+				if hi/lo > crossToolTolerance {
+					t.Fatalf("ioperf/fio --percentile_list=50:95: p95 latency differs by more than %.0fx, suggesting a unit or computation bug: gobox=%.3fus native=%.3fus", crossToolTolerance, goboxP95, nativeP95)
+				}
 			},
 		},
 		{
@@ -1330,6 +1607,37 @@ func TestParity_IoperfFioCases(t *testing.T) {
 			},
 			assert: func(t *testing.T, env, goboxFile, nativeFile string, gobox, native parityResult) {
 				assertReadWrite(t, gobox, native, false, true)
+				// assertReadWrite only confirms a WRITE: summary line exists,
+				// not that --rate actually throttled anything. Verify the
+				// real effect (lower wall-clock throughput/IOPS than an
+				// unthrottled baseline), mirroring the non-fio IOPERF-010
+				// case. Deliberately not --time_based here (unlike the
+				// parity args above) so wall-clock duration is itself a
+				// meaningful, unbounded signal rather than being capped to
+				// the same ~1s window for both runs.
+				start := time.Now()
+				base := runGoboxCLI(t, env, "", "ioperf", "--filename", filepath.Join(env, "rate_effect_base.dat"), "--rw", "write", "--bs", "4k", "--size", "256K")
+				baseDur := time.Since(start)
+				if base.ExitCode != 0 {
+					t.Fatalf("ioperf --rate real-effect baseline failed: %+v", base)
+				}
+				start = time.Now()
+				limited := runGoboxCLI(t, env, "", "ioperf", "--filename", filepath.Join(env, "rate_effect_on.dat"), "--rw", "write", "--bs", "4k", "--size", "256K", "--rate", "4k")
+				limitedDur := time.Since(start)
+				if limited.ExitCode != 0 {
+					t.Fatalf("ioperf --rate=4k real-effect run failed: %+v", limited)
+				}
+				baseIOPS, ok1 := parseIOPS(findLineWithPrefix(base.Stdout, "WRITE:"))
+				limitedIOPS, ok2 := parseIOPS(findLineWithPrefix(limited.Stdout, "WRITE:"))
+				if !ok1 || !ok2 {
+					t.Fatalf("ioperf --rate: could not parse IOPS base=%q limited=%q", base.Stdout, limited.Stdout)
+				}
+				if limitedIOPS >= baseIOPS {
+					t.Fatalf("ioperf --rate=4k should report lower measured IOPS than the unthrottled baseline: base=%.0f rate-limited=%.0f", baseIOPS, limitedIOPS)
+				}
+				if limitedDur < baseDur*2 {
+					t.Fatalf("ioperf --rate=4k should measurably throttle wall-clock duration: baseline=%v rate-limited=%v", baseDur, limitedDur)
+				}
 			},
 		},
 		{
@@ -1378,6 +1686,32 @@ func TestParity_IoperfFioCases(t *testing.T) {
 			},
 			assert: func(t *testing.T, env, goboxFile, nativeFile string, gobox, native parityResult) {
 				assertReadWrite(t, gobox, native, true, true)
+				// A readwrite mix always produces both READ: and WRITE:
+				// lines regardless of the configured ratio; assertReadWrite
+				// alone cannot distinguish --rwmixread=70 from any other
+				// mix. The 64K/16-op fixture above is too small a sample
+				// for a stable IOPS-based ratio estimate (per-op latency
+				// noise dominates), so re-run with a larger, --size=1M
+				// fixture -- matching the non-fio IOPERF-013 case -- and
+				// check the actual read:write ratio, with a loose tolerance.
+				mixFile := filepath.Join(env, "rwmix_effect.dat")
+				res := runGoboxCLI(t, env, "", "ioperf", "--filename", mixFile, "--rw", "readwrite", "--rwmixread", "70", "--bs", "4k", "--size", "1M")
+				if res.ExitCode != 0 {
+					t.Fatalf("ioperf --rwmixread=70 real-effect run failed: %+v", res)
+				}
+				readIOPS, ok1 := parseIOPS(findLineWithPrefix(res.Stdout, "READ:"))
+				writeIOPS, ok2 := parseIOPS(findLineWithPrefix(res.Stdout, "WRITE:"))
+				if !ok1 || !ok2 {
+					t.Fatalf("ioperf --rwmixread=70: could not parse READ/WRITE IOPS from %+v", res)
+				}
+				total := readIOPS + writeIOPS
+				if total <= 0 {
+					t.Fatalf("ioperf --rwmixread=70: no I/O recorded: %+v", res)
+				}
+				ratio := readIOPS / total
+				if ratio < 0.55 || ratio > 0.85 {
+					t.Fatalf("ioperf --rwmixread=70: observed read ratio %.2f (want ~0.70 +/- 0.15); read IOPS=%.0f write IOPS=%.0f", ratio, readIOPS, writeIOPS)
+				}
 			},
 		},
 		{
@@ -1412,6 +1746,23 @@ func TestParity_IoperfFioCases(t *testing.T) {
 			},
 			assert: func(t *testing.T, env, goboxFile, nativeFile string, gobox, native parityResult) {
 				assertReadWrite(t, gobox, native, false, true)
+				// assertReadWrite only confirms a WRITE: summary line exists,
+				// not that --sync=sync actually opened the file with
+				// O_SYNC. Verify the real effect via a measurable latency
+				// increase, mirroring the non-fio IOPERF-015 case.
+				base := runGoboxCLI(t, env, "", "ioperf", "--filename", filepath.Join(env, "sync_effect_base.dat"), "--rw", "write", "--bs", "4k", "--size", "512K", "--sync", "none")
+				withSync := runGoboxCLI(t, env, "", "ioperf", "--filename", filepath.Join(env, "sync_effect_on.dat"), "--rw", "write", "--bs", "4k", "--size", "512K", "--sync", "sync")
+				if base.ExitCode != 0 || withSync.ExitCode != 0 {
+					t.Fatalf("ioperf --sync real-effect run failed base=%+v sync=%+v", base, withSync)
+				}
+				baseLat, ok1 := parseLatencyField(findLineWithPrefix(base.Stdout, "WRITE:"), "avg")
+				syncLat, ok2 := parseLatencyField(findLineWithPrefix(withSync.Stdout, "WRITE:"), "avg")
+				if !ok1 || !ok2 {
+					t.Fatalf("ioperf --sync: could not parse avg latency base=%q sync=%q", base.Stdout, withSync.Stdout)
+				}
+				if syncLat < baseLat*2 {
+					t.Fatalf("ioperf --sync=sync should measurably increase average write latency via O_SYNC: base avg=%.2fus sync avg=%.2fus", baseLat, syncLat)
+				}
 			},
 		},
 		{

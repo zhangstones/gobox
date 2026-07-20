@@ -70,7 +70,10 @@ func TestParity_HeadCases(t *testing.T) {
 		if strings.TrimSpace(res.Stderr) != "" {
 			t.Fatalf("head -h should not write stderr, got %q", res.Stderr)
 		}
-		for _, want := range []string{"Usage: gobox head", "Options:", "-n NUM", "Examples:"} {
+		// Assert every flag head actually supports (per cmds/text/cmd_head.go's
+		// printHeadUsage: -n, -c, -q, -h), not just a couple of substrings, so
+		// stale/incomplete help text is caught.
+		for _, want := range []string{"Usage: gobox head", "Options:", "-n NUM", "-c NUM", "-q, --quiet", "-h, --help", "Examples:"} {
 			if !strings.Contains(res.Stdout, want) {
 				t.Fatalf("head -h missing %q in %q", want, res.Stdout)
 			}
@@ -249,6 +252,22 @@ func TestParity_DiffCases(t *testing.T) {
 				"same way native does instead of merging separate change regions into one hunk\ngobox:\n%s\nnative:\n%s",
 				goboxHunks, nativeHunks, gobox.Stdout, native.Stdout)
 		}
+		// Hunk count alone doesn't prove the hunks cover the same lines: gobox
+		// could produce the right count of hunks with different @@ start/length
+		// numbers than native. Parse the "@@ -a,b +c,d @@" headers from both
+		// and assert the actual (a,b,c,d) tuples match line-for-line.
+		goboxHeaders := extractUnifiedHunkHeaders(t, gobox.Stdout)
+		nativeHeaders := extractUnifiedHunkHeaders(t, native.Stdout)
+		if len(goboxHeaders) != len(nativeHeaders) {
+			t.Fatalf("DIFF-010: parsed %d gobox hunk header(s) but %d native hunk header(s)\ngobox:\n%s\nnative:\n%s",
+				len(goboxHeaders), len(nativeHeaders), gobox.Stdout, native.Stdout)
+		}
+		for i := range goboxHeaders {
+			if goboxHeaders[i] != nativeHeaders[i] {
+				t.Fatalf("DIFF-010: hunk header #%d mismatch: gobox=%q native=%q\ngobox:\n%s\nnative:\n%s",
+					i, goboxHeaders[i], nativeHeaders[i], gobox.Stdout, native.Stdout)
+			}
+		}
 	})
 
 	t.Run("DIFF-004", func(t *testing.T) {
@@ -281,6 +300,39 @@ func normalizeUnifiedDiffHeaders(s string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// extractUnifiedHunkHeaders parses each "@@ -a,b +c,d @@" line in a unified
+// diff and returns the four numbers as a normalized "a,b,c,d" string per
+// hunk (the trailing "@@ [context]" text, if any, is ignored). A missing
+// ",b" or ",d" (length 1) is normalized to "b=1"/"d=1" per unified diff
+// convention, matching how both gobox and native diff behave.
+func extractUnifiedHunkHeaders(t *testing.T, s string) []string {
+	t.Helper()
+	var headers []string
+	for _, line := range strings.Split(s, "\n") {
+		if !strings.HasPrefix(line, "@@") {
+			continue
+		}
+		var aStart, aLen, cStart, cLen int
+		aLen, cLen = 1, 1
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			t.Fatalf("extractUnifiedHunkHeaders: malformed hunk header %q", line)
+		}
+		if _, err := fmt.Sscanf(fields[1], "-%d,%d", &aStart, &aLen); err != nil {
+			if _, err2 := fmt.Sscanf(fields[1], "-%d", &aStart); err2 != nil {
+				t.Fatalf("extractUnifiedHunkHeaders: cannot parse %q in %q", fields[1], line)
+			}
+		}
+		if _, err := fmt.Sscanf(fields[2], "+%d,%d", &cStart, &cLen); err != nil {
+			if _, err2 := fmt.Sscanf(fields[2], "+%d", &cStart); err2 != nil {
+				t.Fatalf("extractUnifiedHunkHeaders: cannot parse %q in %q", fields[2], line)
+			}
+		}
+		headers = append(headers, fmt.Sprintf("%d,%d,%d,%d", aStart, aLen, cStart, cLen))
+	}
+	return headers
 }
 
 func sortedNonEmptyLines(s string) []string {
@@ -661,6 +713,19 @@ func TestParity_GrepCases(t *testing.T) {
 		if strings.TrimSpace(res.Stderr) == "" {
 			t.Fatalf("grep with invalid regex should write an error to stderr, got nothing")
 		}
+		// Compare against native grep given the exact same illegal pattern.
+		// Verified on this system: GNU grep rejects the unclosed bracket
+		// expression with exit 2 ("Unmatched [, [^, [:, [., or [="), matching
+		// gobox's own exit 2 for a malformed regex. Assert the exact match
+		// since gobox targets GNU-grep-compatible exit codes; fall back to
+		// "native also rejects it" as the sanity check on the assumption.
+		native := runNativeCLI(t, env, "", "grep", "[invalid", "input.txt")
+		if native.ExitCode == 0 {
+			t.Fatalf("GREP-018: native grep unexpectedly accepted the illegal pattern (exit 0); test assumption invalid")
+		}
+		if res.ExitCode != native.ExitCode {
+			t.Fatalf("GREP-018: exit code mismatch for illegal regex, gobox=%d native=%d", res.ExitCode, native.ExitCode)
+		}
 	})
 }
 
@@ -701,7 +766,13 @@ func TestParity_SedCases(t *testing.T) {
 		if strings.TrimSpace(res.Stderr) != "" {
 			t.Fatalf("sed -h should not write stderr, got %q", res.Stderr)
 		}
-		for _, want := range []string{"Usage: gobox sed", "Options:", "Commands:", "s/pattern/replacement/flags"} {
+		// Assert every flag sed actually supports (per cmds/text/cmd_sed.go's
+		// help text: -n, -i, -e, -f, -h), not just a couple of substrings, so
+		// stale/incomplete help text is caught.
+		for _, want := range []string{
+			"Usage: gobox sed", "Options:", "Commands:", "s/pattern/replacement/flags",
+			"-n ", "-i[SUFFIX]", "-e SCRIPT", "-f FILE", "-h, --help",
+		} {
 			if !strings.Contains(res.Stdout, want) {
 				t.Fatalf("sed -h missing %q in %q", want, res.Stdout)
 			}
@@ -786,28 +857,50 @@ func TestParity_SortCases(t *testing.T) {
 	})
 
 	t.Run("SORT-008", func(t *testing.T) {
+		// cmds/text/cmd_sort.go seeds `-R`'s Fisher-Yates shuffle from
+		// time.Now().UnixNano() on every invocation, so there is no seed flag
+		// we can pin for a deterministic non-identity assertion. Instead, run
+		// enough independent invocations that observing the identity
+		// permutation (input order) on every single run would require a
+		// probability of about (1/6)^numRuns for 3 equally-likely lines - low
+		// enough to rule out "shuffle skipped entirely" while avoiding flakes
+		// from one unlucky identity permutation. This is verified against
+		// numRuns=1 having exposed a regression that always returned the
+		// input order unshuffled.
 		env := &parityEnv{Dir: t.TempDir()}
-		writeFile(t, filepath.Join(env.Dir, "input.txt"), "a\nb\nc\n")
-		result := runGoboxCLI(t, env.Dir, "", "sort", "-R", "input.txt")
-		if result.ExitCode != 0 {
-			t.Fatalf("sort -R failed: %+v", result)
-		}
-		lines := strings.Split(normalizeText(result.Stdout), "\n")
-		sortStrings := append([]string(nil), lines...)
-		if len(sortStrings) != 3 {
-			t.Fatalf("expected 3 lines from sort -R, got %v", lines)
-		}
-		for _, want := range []string{"a", "b", "c"} {
-			found := false
-			for _, got := range sortStrings {
-				if got == want {
-					found = true
-					break
+		inputPath := filepath.Join(env.Dir, "input.txt")
+		writeFile(t, inputPath, "a\nb\nc\n")
+		const inputOrder = "a,b,c"
+		const numRuns = 12
+		sawNonIdentity := false
+		for i := 0; i < numRuns; i++ {
+			result := runGoboxCLI(t, env.Dir, "", "sort", "-R", "input.txt")
+			if result.ExitCode != 0 {
+				t.Fatalf("sort -R failed: %+v", result)
+			}
+			lines := strings.Split(normalizeText(result.Stdout), "\n")
+			if len(lines) != 3 {
+				t.Fatalf("expected 3 lines from sort -R, got %v", lines)
+			}
+			for _, want := range []string{"a", "b", "c"} {
+				found := false
+				for _, got := range lines {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("sort -R output missing %s: %v", want, lines)
 				}
 			}
-			if !found {
-				t.Fatalf("sort -R output missing %s: %v", want, sortStrings)
+			if strings.Join(lines, ",") != inputOrder {
+				sawNonIdentity = true
 			}
+		}
+		if !sawNonIdentity {
+			t.Fatalf("sort -R produced the identity permutation (%s) in all %d runs; "+
+				"the Fisher-Yates shuffle appears to be skipped or a no-op", inputOrder, numRuns)
 		}
 	})
 
@@ -1158,7 +1251,13 @@ func TestParity_SeqCases(t *testing.T) {
 		if strings.TrimSpace(res.Stderr) != "" {
 			t.Fatalf("seq -h should not write stderr, got %q", res.Stderr)
 		}
-		for _, want := range []string{"Usage: gobox seq", "Options:", "-f, --format", "Examples:"} {
+		// Assert every flag seq actually supports (per cmds/text/cmd_seq.go's
+		// help text: -f/--format, -s/--separator, -w/--equal-width, -h/--help),
+		// not just a couple of substrings, so stale/incomplete help text is caught.
+		for _, want := range []string{
+			"Usage: gobox seq", "Options:", "-f, --format", "-s, --separator",
+			"-w, --equal-width", "-h, --help", "Examples:",
+		} {
 			if !strings.Contains(res.Stdout, want) {
 				t.Fatalf("seq -h missing %q in %q", want, res.Stdout)
 			}
@@ -1224,9 +1323,23 @@ func TestParity_RandCases(t *testing.T) {
 	})
 
 	t.Run("RAND-004", func(t *testing.T) {
-		// -hex explicit mode: output must be exactly lowercase hex characters,
-		// with the correct length for the default 32-byte payload, and a
-		// single trailing newline (the documented newline contract).
+		// -hex is rand's default output format (see cmds/text/cmd_rand.go:
+		// "-hex Hex output (default)"), so checking that `rand -hex` merely
+		// *looks* like hex can't distinguish "the -hex flag was parsed and
+		// honored" from "the -hex flag was silently ignored and gobox fell
+		// back to its default anyway" - both produce identical output.
+		// To make the flag's effect observable, first request the
+		// non-default -base64 format, then request -hex, and assert the two
+		// output shapes actually differ (distinct alphabets/lengths for the
+		// same 32-byte payload, as also verified in RAND-005). If -hex were
+		// broken and silently fell back to -base64's format (or vice versa),
+		// this comparison would catch it.
+		b64Res := runGoboxCLI(t, t.TempDir(), "", "rand", "-base64")
+		if b64Res.ExitCode != 0 {
+			t.Fatalf("rand -base64 failed: %+v", b64Res)
+		}
+		b64Line := strings.TrimSpace(b64Res.Stdout)
+
 		res := runGoboxCLI(t, t.TempDir(), "", "rand", "-hex")
 		if res.ExitCode != 0 {
 			t.Fatalf("rand -hex failed: %+v", res)
@@ -1245,6 +1358,16 @@ func TestParity_RandCases(t *testing.T) {
 			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
 				t.Fatalf("rand -hex output %q contains non-hex character %q", line, string(c))
 			}
+		}
+		// The -hex shape (64 lowercase hex chars) must differ from the
+		// -base64 shape (44 chars incl. padding, mixed-case + '+'/'/'/'=')
+		// for the same 32-byte payload, proving -hex actually selected a
+		// distinct encoding rather than reusing whatever -base64 produced.
+		if len(line) == len(b64Line) {
+			t.Fatalf("rand -hex output length (%d) must differ from -base64 output length (%d) for the same byte count", len(line), len(b64Line))
+		}
+		if line == b64Line {
+			t.Fatalf("rand -hex output must not equal -base64 output: %q", line)
 		}
 	})
 
@@ -1315,7 +1438,13 @@ func TestParity_RandCases(t *testing.T) {
 		if strings.TrimSpace(res.Stderr) != "" {
 			t.Fatalf("rand -h should not write stderr, got %q", res.Stderr)
 		}
-		for _, want := range []string{"Usage: gobox rand", "Options:", "-base64", "Examples:"} {
+		// Assert every flag rand actually supports (per cmds/text/cmd_rand.go's
+		// printRandUsage: -n/-NUM, -hex, -base64, -out, -h), not just a couple
+		// of substrings, so stale/incomplete help text is caught.
+		for _, want := range []string{
+			"Usage: gobox rand", "Options:", "-n NUM", "-hex", "-base64",
+			"-out FILE", "-h, --help", "Examples:",
+		} {
 			if !strings.Contains(res.Stdout, want) {
 				t.Fatalf("rand -h missing %q in %q", want, res.Stdout)
 			}

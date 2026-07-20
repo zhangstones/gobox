@@ -48,6 +48,84 @@ func expectedDFRowWidth(header []string) int {
 	return len(header)
 }
 
+// dfCol names a column index into a df output row, for cross-comparison
+// error messages in assertDfColumnsMatch.
+type dfCol struct {
+	idx  int
+	name string
+}
+
+// dfIntFieldToFloat parses a plain integer df column (e.g. the 1K-blocks/
+// Used/Available columns of default `df`) as a float64 for use with
+// assertDfColumnsMatch.
+func dfIntFieldToFloat(s string) (float64, bool) {
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return float64(v), true
+}
+
+// dfHumanFieldToBytes converts a df -h formatted size field such as "3.6G",
+// "512K", or a bare "0" into an approximate byte count, so gobox's and
+// native's human-readable df output can be cross-compared numerically
+// instead of merely checked for "has some K/M/G/T suffix".
+func dfHumanFieldToBytes(s string) (float64, bool) {
+	i := len(s)
+	for i > 0 && (s[i-1] < '0' || s[i-1] > '9') && s[i-1] != '.' {
+		i--
+	}
+	numPart := s[:i]
+	unitPart := s[i:]
+	v, err := strconv.ParseFloat(numPart, 64)
+	if err != nil {
+		return 0, false
+	}
+	if unitPart == "" {
+		return v, true
+	}
+	mult := map[byte]float64{
+		'K': 1 << 10, 'M': 1 << 20, 'G': 1 << 30, 'T': 1 << 40, 'P': 1 << 50,
+	}
+	m, ok := mult[unitPart[0]]
+	if !ok {
+		return 0, false
+	}
+	return v * m, true
+}
+
+// assertDfColumnsMatch parses the named columns of matching gobox/native df
+// rows with parse and asserts the resulting values agree within a relative
+// tolerance. Exact equality is too strict: the two invocations query live
+// filesystem state sequentially (not atomically together), so concurrent
+// host activity can shift Used/Available slightly between the two calls,
+// and human-readable values are additionally already rounded to one
+// significant decimal by both implementations.
+func assertDfColumnsMatch(t *testing.T, label string, goboxFields, nativeFields []string, cols []dfCol, parse func(string) (float64, bool), tolerance float64) {
+	t.Helper()
+	for _, c := range cols {
+		if c.idx >= len(goboxFields) || c.idx >= len(nativeFields) {
+			t.Fatalf("%s: %s column missing gobox=%v native=%v", label, c.name, goboxFields, nativeFields)
+		}
+		gv, gok := parse(goboxFields[c.idx])
+		nv, nok := parse(nativeFields[c.idx])
+		if !gok || !nok {
+			t.Fatalf("%s: %s column not parsable gobox=%q native=%q", label, c.name, goboxFields[c.idx], nativeFields[c.idx])
+		}
+		diff := gv - nv
+		if diff < 0 {
+			diff = -diff
+		}
+		max := gv
+		if nv > max {
+			max = nv
+		}
+		if max > 0 && diff/max > tolerance {
+			t.Fatalf("%s: %s mismatch beyond tolerance: gobox=%q(%v bytes) native=%q(%v bytes)", label, c.name, goboxFields[c.idx], gv, nativeFields[c.idx], nv)
+		}
+	}
+}
+
 // duHasHumanReadableSizeCol returns true if at least one data line has a
 // human-readable suffix (K, M, G, T or KB, MB, GB, TB) in the size column.
 func duHasHumanReadableSizeCol(out string) bool {
@@ -989,11 +1067,15 @@ func TestParity_DfCases(t *testing.T) {
 			}
 		}
 		// Both outputs should name the same filesystem entry.
-		goboxFS := strings.Fields(nonEmptyLines(res.Stdout)[1])[0]
-		nativeFS := strings.Fields(nonEmptyLines(native.Stdout)[1])[0]
-		if goboxFS != nativeFS {
-			t.Fatalf("DF-001 filesystem name mismatch gobox=%q native=%q", goboxFS, nativeFS)
+		goboxFields := strings.Fields(nonEmptyLines(res.Stdout)[1])
+		nativeFields := strings.Fields(nonEmptyLines(native.Stdout)[1])
+		if goboxFields[0] != nativeFields[0] {
+			t.Fatalf("DF-001 filesystem name mismatch gobox=%q native=%q", goboxFields[0], nativeFields[0])
 		}
+		// Cross-compare the Size/Used/Available numeric columns for that same
+		// filesystem, not merely the filesystem name.
+		assertDfColumnsMatch(t, "DF-001", goboxFields, nativeFields,
+			[]dfCol{{1, "Size"}, {2, "Used"}, {3, "Available"}}, dfIntFieldToFloat, 0.02)
 	})
 
 	t.Run("DF-002", func(t *testing.T) {
@@ -1032,6 +1114,14 @@ func TestParity_DfCases(t *testing.T) {
 				}
 			}
 		}
+		// Cross-compare: parse the actual converted numeric value (bytes)
+		// behind each human-readable field for the same filesystem row,
+		// rather than merely checking that some K/M/G/T-style suffix is
+		// present on both sides.
+		goboxFields := strings.Fields(nonEmptyLines(res.Stdout)[1])
+		nativeFields := strings.Fields(nonEmptyLines(native.Stdout)[1])
+		assertDfColumnsMatch(t, "DF-002", goboxFields, nativeFields,
+			[]dfCol{{1, "Size"}, {2, "Used"}, {3, "Avail"}}, dfHumanFieldToBytes, 0.10)
 	})
 
 	t.Run("DF-003", func(t *testing.T) {
@@ -1324,7 +1414,31 @@ func TestParity_DfCases(t *testing.T) {
 					}
 				}
 			case "DF-009":
-				for _, line := range nonEmptyLines(res.Stdout)[1:] {
+				// Capture an unfiltered baseline first: without it, an
+				// environment with zero ambient tmpfs mounts would make
+				// "df -t tmpfs" trivially produce an empty (header-only)
+				// result, and the per-row loop below would vacuously pass
+				// without ever exercising the inclusion filter.
+				base := runGoboxCLI(t, env, "", "df")
+				if base.ExitCode != 0 {
+					t.Fatalf("DF-009 baseline failed: %+v", base)
+				}
+				baseSawTmpfs := false
+				for _, line := range nonEmptyLines(base.Stdout)[1:] {
+					fields := strings.Fields(line)
+					if len(fields) > 0 && fields[0] == "tmpfs" {
+						baseSawTmpfs = true
+						break
+					}
+				}
+				if !baseSawTmpfs {
+					t.Skip("DF-009: no tmpfs mount present in unfiltered df baseline; -t tmpfs filtering cannot be meaningfully exercised in this environment")
+				}
+				resRows := nonEmptyLines(res.Stdout)[1:]
+				if len(resRows) == 0 {
+					t.Fatalf("DF-009 baseline has tmpfs mounts but -t tmpfs returned none\n--- base ---\n%s\n--- filtered ---\n%s", base.Stdout, res.Stdout)
+				}
+				for _, line := range resRows {
 					fields := strings.Fields(line)
 					if len(fields) < 2 {
 						t.Fatalf("DF-009 row too short: %q", line)
@@ -1346,7 +1460,40 @@ func TestParity_DfCases(t *testing.T) {
 					t.Fatalf("DF-009 gobox and native tmpfs mounts differ\ngobox=%s\nnative=%s", res.Stdout, native.Stdout)
 				}
 			case "DF-010":
-				for _, line := range nonEmptyLines(res.Stdout)[1:] {
+				// Capture an unfiltered baseline first: without it, an
+				// environment with only tmpfs mounts (nothing "other than
+				// tmpfs" to keep), or with no tmpfs mounts at all (nothing
+				// for -x to exclude, so a no-op implementation would still
+				// pass the per-row loop below), would let a broken -x
+				// implementation pass vacuously.
+				base := runGoboxCLI(t, env, "", "df")
+				if base.ExitCode != 0 {
+					t.Fatalf("DF-010 baseline failed: %+v", base)
+				}
+				baseSawTmpfs := false
+				baseNonTmpfsCount := 0
+				for _, line := range nonEmptyLines(base.Stdout)[1:] {
+					fields := strings.Fields(line)
+					if len(fields) == 0 {
+						continue
+					}
+					if fields[0] == "tmpfs" {
+						baseSawTmpfs = true
+					} else {
+						baseNonTmpfsCount++
+					}
+				}
+				if !baseSawTmpfs {
+					t.Skip("DF-010: no tmpfs mount present in unfiltered df baseline; -x tmpfs exclusion cannot be meaningfully exercised in this environment")
+				}
+				if baseNonTmpfsCount == 0 {
+					t.Skip("DF-010: unfiltered df baseline contains only tmpfs mounts; -x tmpfs would leave nothing, so exclusion cannot be meaningfully exercised in this environment")
+				}
+				resRows := nonEmptyLines(res.Stdout)[1:]
+				if len(resRows) == 0 {
+					t.Fatalf("DF-010 baseline has %d non-tmpfs mount(s) but -x tmpfs returned none\n--- base ---\n%s\n--- filtered ---\n%s", baseNonTmpfsCount, base.Stdout, res.Stdout)
+				}
+				for _, line := range resRows {
 					fields := strings.Fields(line)
 					if len(fields) < 2 {
 						t.Fatalf("DF-010 row too short: %q", line)
@@ -1747,21 +1894,55 @@ func TestParity_StatCases(t *testing.T) {
 				if got, want := statFieldValue(statLineContaining(gobox.Stdout, "Type:"), "Type:"), statFieldValue(statLineContaining(native.Stdout, "Type:"), "Type:"); got == "" || want == "" || got != want {
 					t.Fatalf("stat -f type field mismatch gobox=%q native=%q\ngobox=%s\nnative=%s", got, want, gobox.Stdout, native.Stdout)
 				}
-				if statLineWithPrefix(gobox.Stdout, "Block size:") == "" || statLineWithPrefix(native.Stdout, "Block size:") == "" {
+				goboxBlockLine := statLineWithPrefix(gobox.Stdout, "Block size:")
+				nativeBlockLine := statLineWithPrefix(native.Stdout, "Block size:")
+				if goboxBlockLine == "" || nativeBlockLine == "" {
 					t.Fatalf("stat -f missing block size line\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 				}
 				if !strings.Contains(gobox.Stdout, "Fundamental block size:") || !strings.Contains(native.Stdout, "Fundamental block size:") {
 					t.Fatalf("stat -f missing Fundamental block size field\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
+				}
+				// Cross-compare: block size is fixed filesystem metadata, so
+				// gobox's reported value should match native's exactly, not
+				// merely be independently parseable.
+				goboxBlockSize := statFieldValue(goboxBlockLine, "Block size:")
+				nativeBlockSize := statFieldValue(nativeBlockLine, "Block size:")
+				if _, err := strconv.ParseUint(goboxBlockSize, 10, 64); goboxBlockSize == "" || err != nil {
+					t.Fatalf("stat -f block size should be numeric, got %q: %v", goboxBlockSize, err)
+				}
+				if goboxBlockSize != nativeBlockSize {
+					t.Fatalf("stat -f block size mismatch gobox=%q native=%q", goboxBlockSize, nativeBlockSize)
 				}
 				goboxInodes := statLineWithPrefix(gobox.Stdout, "Inodes:")
 				nativeInodes := statLineWithPrefix(native.Stdout, "Inodes:")
 				if goboxInodes == "" || nativeInodes == "" {
 					t.Fatalf("stat -f missing Inodes line\ngobox=%s\nnative=%s", gobox.Stdout, native.Stdout)
 				}
-				if got := statFieldValue(goboxInodes, "Total:"); got == "" {
-					t.Fatalf("stat -f Inodes Total should be a real value, got empty in %q", goboxInodes)
-				} else if _, err := strconv.ParseUint(got, 10, 64); err != nil {
-					t.Fatalf("stat -f Inodes Total should be numeric, got %q: %v", got, err)
+				goboxTotalStr := statFieldValue(goboxInodes, "Total:")
+				nativeTotalStr := statFieldValue(nativeInodes, "Total:")
+				goboxTotal, gErr := strconv.ParseUint(goboxTotalStr, 10, 64)
+				if goboxTotalStr == "" || gErr != nil {
+					t.Fatalf("stat -f Inodes Total should be a real numeric value, got %q: %v", goboxTotalStr, gErr)
+				}
+				nativeTotal, nErr := strconv.ParseUint(nativeTotalStr, 10, 64)
+				if nativeTotalStr == "" || nErr != nil {
+					t.Fatalf("stat -f native Inodes Total should be a real numeric value, got %q: %v", nativeTotalStr, nErr)
+				}
+				// Cross-compare: gobox's inode total for the filesystem must
+				// match native's actual reported value, not merely be
+				// independently numeric. A small relative tolerance (mirrors
+				// DF-004's inode cross-check) absorbs the rare case where the
+				// two live syscalls race a concurrent mount/remount.
+				diff := int64(goboxTotal) - int64(nativeTotal)
+				if diff < 0 {
+					diff = -diff
+				}
+				max := goboxTotal
+				if nativeTotal > max {
+					max = nativeTotal
+				}
+				if max == 0 || float64(diff)/float64(max) > 0.01 {
+					t.Fatalf("stat -f Inodes Total mismatch beyond tolerance: gobox=%d native=%d", goboxTotal, nativeTotal)
 				}
 			},
 		},

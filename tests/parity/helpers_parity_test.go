@@ -626,6 +626,13 @@ func extractNetstatPIDs(out string) []int {
 
 func assertMonotonic(t *testing.T, vals []int, descending bool) {
 	t.Helper()
+	// A slice of 0-2 elements is trivially "sorted" regardless of whether
+	// the sort actually ran, so it proves nothing. Require enough rows to
+	// make ordering a meaningful signal, and fail loudly instead of
+	// silently passing when the fixture didn't produce them.
+	if len(vals) < 3 {
+		t.Fatalf("assertMonotonic requires at least 3 values to meaningfully prove ordering, got %d: %v", len(vals), vals)
+	}
 	for i := 1; i < len(vals); i++ {
 		if descending {
 			if vals[i-1] < vals[i] {
