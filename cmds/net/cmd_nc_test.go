@@ -209,6 +209,69 @@ func TestNCListenMode(t *testing.T) {
 	}
 }
 
+// TestNCListenModeNumericOnlyBeforePort is a regression test: "-n" is a
+// boolean flag (--numeric-only) that takes no value, but a following
+// numeric-looking token used to be greedily consumed as a bench request
+// count when "-n" appeared after "-l". That made "nc -l -n PORT" fail with
+// "listen mode requires port" while "nc -n -l PORT" worked, i.e. -n's
+// behavior depended on flag order. Verify both orders bind to the port and
+// actually accept a client connection.
+func TestNCListenModeNumericOnlyBeforePort(t *testing.T) {
+	for _, order := range [][]string{
+		{"-l", "-n", "PORT"},
+		{"-n", "-l", "PORT"},
+	} {
+		order := order
+		t.Run(strings.Join(order, "_"), func(t *testing.T) {
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("failed to reserve port: %v", err)
+			}
+			port := ln.Addr().(*net.TCPAddr).Port
+			ln.Close()
+
+			args := make([]string, len(order))
+			for i, a := range order {
+				if a == "PORT" {
+					a = strconv.Itoa(port)
+				}
+				args[i] = a
+			}
+
+			oldStdout := os.Stdout
+			rOut, wOut, _ := os.Pipe()
+			os.Stdout = wOut
+			defer func() { os.Stdout = oldStdout }()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			serverErr := make(chan error, 1)
+			go func() {
+				serverErr <- NcCmdWithContext(ctx, args)
+			}()
+
+			time.Sleep(100 * time.Millisecond)
+
+			client, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(port), time.Second)
+			if err != nil {
+				wOut.Close()
+				os.Stdout = oldStdout
+				t.Fatalf("client dial failed (port was likely swallowed by -n): %v", err)
+			}
+			_ = client.Close()
+
+			err = <-serverErr
+			_ = wOut.Close()
+			var buf bytes.Buffer
+			_, _ = io.Copy(&buf, rOut)
+			if err != nil && err != context.DeadlineExceeded && err != context.Canceled {
+				t.Fatalf("listen mode returned error: %v", err)
+			}
+		})
+	}
+}
+
 // ============== ALTERNATIVE LISTEN MODE TEST (direct function) ==============
 
 func TestNCListenModeDirect(t *testing.T) {

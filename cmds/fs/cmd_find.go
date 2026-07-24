@@ -121,7 +121,7 @@ func FindCmd(args []string) error {
 
 			// type filter
 			if *typ != "" {
-				if *typ == "f" && d.IsDir() {
+				if *typ == "f" && !d.Type().IsRegular() {
 					matched = false
 				}
 				if *typ == "d" && !d.IsDir() {

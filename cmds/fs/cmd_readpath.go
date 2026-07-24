@@ -96,27 +96,18 @@ func resolveReadpath(p string, readlinkMode, canonicalize, mustExist, allowMissi
 			return "", err
 		}
 	}
-	if canonicalize {
-		if resolved, err := filepath.EvalSymlinks(p); err == nil {
-			return filepath.Abs(resolved)
-		}
-		parent := filepath.Dir(p)
-		base := filepath.Base(p)
-		if parent == "." || parent == "" {
-			parent = "."
-		}
-		resolvedParent, err := filepath.EvalSymlinks(parent)
-		if err != nil {
-			return "", err
-		}
-		return filepath.Abs(filepath.Join(resolvedParent, base))
+	// Default/-f mode: GNU realpath's "all but last component must exist" — fall back to resolved-parent + literal base.
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Abs(resolved)
 	}
-	if _, err := os.Lstat(p); err != nil {
-		return "", err
+	parent := filepath.Dir(p)
+	base := filepath.Base(p)
+	if parent == "." || parent == "" {
+		parent = "."
 	}
-	resolved, err := filepath.EvalSymlinks(p)
+	resolvedParent, err := filepath.EvalSymlinks(parent)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Abs(resolved)
+	return filepath.Abs(filepath.Join(resolvedParent, base))
 }

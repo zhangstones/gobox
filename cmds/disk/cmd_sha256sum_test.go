@@ -583,6 +583,40 @@ func TestSha256sumCmdOptionsQuietCheckSuppressesOk(t *testing.T) {
 
 }
 
+// TestSha256sumCmdOptionsQuietCheckStillReportsFailed is a regression test:
+// GNU coreutils' --quiet only suppresses "OK" lines for successfully
+// verified files; a FAILED checksum must still be printed even under
+// --quiet, or a real verification failure would be silently swallowed.
+func TestSha256sumCmdOptionsQuietCheckStillReportsFailed(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(oldWd) }()
+
+	if err := os.WriteFile("file", []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("mismatch-quiet.check", []byte(strings.Repeat("0", 64)+"  file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := captureSha256Cmd(t, "", func() error {
+		return Sha256sumCmd([]string{"-c", "-q", "mismatch-quiet.check"})
+	})
+	if !strings.Contains(out, "file: FAILED") {
+		t.Fatalf("expected quiet check failure to still print FAILED, got %q", out)
+	}
+	exitErr, ok := err.(sha256sumExitError)
+	if !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("expected quiet check failure exit 1, got %T %v", err, err)
+	}
+}
+
 func TestSha256sumCmdOptionsWarnIgnoresEmptyLines(t *testing.T) {
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()

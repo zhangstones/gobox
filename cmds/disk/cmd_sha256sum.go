@@ -128,7 +128,7 @@ func sha256sumCheck(files []string, warn, status, quiet bool) error {
 		f, err := os.Open(file)
 		if err != nil {
 			failed = true
-			if !status && !quiet {
+			if !status {
 				fmt.Fprintf(os.Stderr, "sha256sum: %s: %v\n", file, err)
 			}
 			continue
@@ -144,7 +144,7 @@ func sha256sumCheck(files []string, warn, status, quiet bool) error {
 			expected, name, ok := parseSHA256CheckLine(line)
 			if !ok {
 				failed = true
-				if warn && !status && !quiet {
+				if warn && !status {
 					fmt.Fprintf(os.Stderr, "sha256sum: %s:%d: improperly formatted checksum line\n", file, lineNo)
 				}
 				continue
@@ -152,13 +152,13 @@ func sha256sumCheck(files []string, warn, status, quiet bool) error {
 			actual, err := sha256File(name)
 			if err != nil {
 				failed = true
-				if !status && !quiet {
+				if !status {
 					fmt.Fprintf(os.Stderr, "sha256sum: %s: %v\n", name, err)
 					fmt.Printf("%s: FAILED\n", name)
 				}
 			} else if !strings.EqualFold(actual, expected) {
 				failed = true
-				if !status && !quiet {
+				if !status {
 					fmt.Printf("%s: FAILED\n", name)
 				}
 			} else if !status && !quiet {

@@ -217,11 +217,7 @@ func npTCP(opts *npOptions) error {
 	stopChan := make(chan struct{})
 	var progressWG sync.WaitGroup
 
-	// Shared, monotonically increasing sequence counter. Each worker used to
-	// keep its own local "for i := 0; ..." loop counter as the seq number,
-	// which meant multiple workers reported duplicate seq values (e.g. two
-	// probes both showing seq=0). A single atomically-incremented counter
-	// shared across all worker goroutines ensures seq numbers are unique.
+	// Shared atomic counter so workers don't report duplicate seq numbers.
 	var seqCounter int64 = -1
 
 	// Worker pool
@@ -755,16 +751,11 @@ func npProgressReporter(sent, received, errors *int64, opts *npOptions, stopChan
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
-	// A carriage-return-based in-place redraw only makes sense on an
-	// interactive terminal, which can reinterpret "\r" to move the cursor
-	// back to the start of the line and overwrite it. When stdout is not a
-	// TTY (piped to a file, captured by tests, redirected in a script, etc.)
-	// "\r" is just an ordinary byte with no special effect, so the summary
-	// line was never terminated by a newline and ran directly into whatever
-	// was printed next (e.g. the following per-probe line), producing
-	// corrupted, concatenated output. Fall back to a plain newline-terminated
-	// line when not attached to a terminal.
+	// "\r" in-place redraw only works on a real terminal; fall back to newline-terminated lines otherwise.
 	interactive := utils.IsTerminal(os.Stdout)
+
+	// Skip re-printing unchanged Sent/Received/Errors between ticks — avoids spurious repeats during slow -W/-l waits.
+	lastSent, lastReceived, lastErrors := int64(-1), int64(-1), int64(-1)
 
 	for {
 		select {
@@ -775,10 +766,11 @@ func npProgressReporter(sent, received, errors *int64, opts *npOptions, stopChan
 			if !opts.quiet {
 				if interactive {
 					fmt.Printf("\rSent=%d Received=%d Errors=%d", s, r, e)
-				} else {
+				} else if s != lastSent || r != lastReceived || e != lastErrors {
 					fmt.Printf("Sent=%d Received=%d Errors=%d\n", s, r, e)
 				}
 			}
+			lastSent, lastReceived, lastErrors = s, r, e
 		case <-stopChan:
 			return
 		}

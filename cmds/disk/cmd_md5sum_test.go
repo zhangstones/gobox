@@ -652,9 +652,13 @@ func TestMd5sumCmdCheckQuietModeInvalid(t *testing.T) {
 	}
 
 	// Use cmd.Dir to run command in the directory
+	//
+	// Regression: GNU coreutils' --quiet only suppresses the "OK" lines for
+	// successfully verified files; a FAILED checksum must still be reported
+	// on stdout even under --quiet, otherwise a failure is silently lost.
 	stdout, stderr, err := runMd5sumCmdFull([]string{"-c", "-q", "test.txt.md5"}, dir)
-	if stdout != "" || stderr != "" {
-		t.Fatalf("expected quiet check failure to stay silent, stdout=%q stderr=%q", stdout, stderr)
+	if !strings.Contains(stdout, "test.txt: FAILED") {
+		t.Fatalf("expected quiet check failure to still print FAILED, stdout=%q stderr=%q", stdout, stderr)
 	}
 	if exitErr, ok := err.(md5sumExitError); !ok || exitErr.ExitCode() != 1 {
 		t.Fatalf("expected quiet check failure exit 1, got %T %v", err, err)

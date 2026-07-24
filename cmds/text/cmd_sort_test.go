@@ -678,9 +678,8 @@ func TestSortCheckSorted(t *testing.T) {
 		t.Fatalf("sort command failed: %v", err)
 	}
 
-	result := output
-	if !strings.Contains(result, "sorted") {
-		t.Errorf("Expected 'sorted' message, got: %s", result)
+	if output != "" {
+		t.Errorf("Expected silent success (GNU sort -c prints nothing on success), got: %q", output)
 	}
 }
 
@@ -709,9 +708,8 @@ func TestSortCheckNumeric(t *testing.T) {
 		t.Fatalf("sort command failed: %v", err)
 	}
 
-	result := output
-	if !strings.Contains(result, "sorted") {
-		t.Errorf("Expected 'sorted' message, got: %s", result)
+	if output != "" {
+		t.Errorf("Expected silent success (GNU sort -c prints nothing on success), got: %q", output)
 	}
 }
 
@@ -740,9 +738,8 @@ func TestSortCheckEmptyFile(t *testing.T) {
 		t.Fatalf("sort command failed: %v", err)
 	}
 
-	result := output
-	if !strings.Contains(result, "succeeded") {
-		t.Errorf("Expected 'succeeded' message for empty file, got: %s", result)
+	if output != "" {
+		t.Errorf("Expected silent success for empty file, got: %q", output)
 	}
 }
 
@@ -758,9 +755,48 @@ func TestSortCheckSingleLine(t *testing.T) {
 		t.Fatalf("sort command failed: %v", err)
 	}
 
-	result := output
-	if !strings.Contains(result, "succeeded") {
-		t.Errorf("Expected 'succeeded' message for single line, got: %s", result)
+	if output != "" {
+		t.Errorf("Expected silent success for single line, got: %q", output)
+	}
+}
+
+// Regression test: GNU sort -c is silent on success and reports the real
+// input source (file path, or "-" for stdin) on failure, not a hardcoded
+// os.Stdin.Name().
+func TestSortCheckSilentSuccessAndRealSourceOnFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_check_source.txt")
+	if err := os.WriteFile(filename, []byte("banana\napple\ncherry\n"), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	stdout, stderr, err := captureTextCmdFull(t, "", func() error {
+		return SortCmd([]string{"-c", filename})
+	})
+	if err == nil {
+		t.Fatalf("expected error for unsorted file")
+	}
+	if stdout != "" {
+		t.Errorf("expected no stdout output on -c failure, got: %q", stdout)
+	}
+	if !strings.Contains(stderr, filename) {
+		t.Errorf("expected error message to name real file %q, got: %q", filename, stderr)
+	}
+	if strings.Contains(stderr, "/dev/stdin") {
+		t.Errorf("error message must not hardcode /dev/stdin when input is a real file, got: %q", stderr)
+	}
+
+	stdout2, stderr2, err2 := captureTextCmdFull(t, "banana\napple\ncherry\n", func() error {
+		return SortCmd([]string{"-c"})
+	})
+	if err2 == nil {
+		t.Fatalf("expected error for unsorted stdin input")
+	}
+	if stdout2 != "" {
+		t.Errorf("expected no stdout output on -c failure via stdin, got: %q", stdout2)
+	}
+	if !strings.Contains(stderr2, "-:") {
+		t.Errorf("expected error message to name stdin source as '-', got: %q", stderr2)
 	}
 }
 

@@ -604,6 +604,29 @@ func TestIfstatCmdInterfaceNotFoundWarning(t *testing.T) {
 	}
 }
 
+// TestIfstatCmdExplicitLoopbackAccepted is a regression test: explicitly
+// requesting a virtual/loopback interface via -i must succeed whenever -A
+// (show all) would list it, instead of being rejected as "not found or not
+// a physical NIC". -i and -A must agree on what counts as an existing
+// interface.
+func TestIfstatCmdExplicitLoopbackAccepted(t *testing.T) {
+	skipIfNoInterfaces(t)
+	if _, err := os.Stat("/sys/class/net/lo"); err != nil {
+		t.Skip("no lo interface available")
+	}
+
+	stdout, stderr, err := runIfstatCmdFull([]string{"-n", "1", "-i", "lo"})
+	if err != nil {
+		t.Fatalf("ifstat -i lo failed: %v", err)
+	}
+	if strings.Contains(stderr, "not found or not a physical NIC") {
+		t.Errorf("expected -i lo to be accepted (same as -A shows), got warning: %s", stderr)
+	}
+	if !strings.Contains(stdout, "lo") {
+		t.Errorf("expected lo interface row in output, got: %s", stdout)
+	}
+}
+
 func TestIfstatCmdEmptyInterfaceName(t *testing.T) {
 	skipIfNoInterfaces(t)
 

@@ -576,7 +576,8 @@ func runSingle(client *http.Client, targetURL, method string, headers []string, 
 }
 
 func formatWriteOut(format string, resp *http.Response, elapsed time.Duration) string {
-	result := format
+	// curl's -w interprets \n/\t/\r escapes in the format string before %{...} substitution.
+	result := strings.NewReplacer(`\n`, "\n", `\t`, "\t", `\r`, "\r").Replace(format)
 
 	// %{http_code}
 	result = strings.ReplaceAll(result, "%{http_code}", strconv.Itoa(resp.StatusCode))

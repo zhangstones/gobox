@@ -119,7 +119,7 @@ func DfCmd(args []string) error {
 	for _, p := range paths {
 		if len(fsFlags.Args()) > 0 {
 			if _, err := statDfPath(p); err != nil {
-				return fmt.Errorf("df: %s: %w", p, err)
+				return fmt.Errorf("%s: %w", p, err)
 			}
 		}
 		m := bestMountForPath(mounts, p)

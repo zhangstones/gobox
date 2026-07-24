@@ -183,7 +183,11 @@ doneFlags:
 
 	// Check mode
 	if cfg.check {
-		return checkSorted(lines, cfg)
+		sourceName := "-"
+		if len(files) > 0 {
+			sourceName = files[0]
+		}
+		return checkSorted(lines, cfg, sourceName)
 	}
 
 	// Sort
@@ -403,13 +407,8 @@ func uniqueLines(lines []string) []string {
 	return result
 }
 
-func checkSorted(lines []string, cfg sortConfig) error {
-	if len(lines) == 0 {
-		fmt.Fprintf(os.Stdout, "Sort: %s: succeeded\n", "(empty)")
-		return nil
-	}
-	if len(lines) == 1 {
-		fmt.Fprintf(os.Stdout, "Sort: %s: succeeded\n", lines[0])
+func checkSorted(lines []string, cfg sortConfig, sourceName string) error {
+	if len(lines) <= 1 {
 		return nil
 	}
 
@@ -445,11 +444,10 @@ func checkSorted(lines []string, cfg sortConfig) error {
 			less = !less
 		}
 		if less {
-			fmt.Fprintf(os.Stderr, "Sort: %s: disorder: line %d\n", os.Stdin.Name(), i+1)
+			fmt.Fprintf(os.Stderr, "sort: %s: disorder: line %d\n", sourceName, i+1)
 			return sortExitError{code: 1, err: errors.New("check failed")}
 		}
 	}
-	fmt.Fprintln(os.Stdout, "sorted")
 	return nil
 }
 

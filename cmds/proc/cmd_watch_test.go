@@ -135,6 +135,27 @@ func TestWatchCmdOptionsCommandFailureStillPrintsNextIterationsUntilContextStops
 
 }
 
+// TestWatchCmdNonexistentCommandReportsError is a regression test: when the
+// wrapped command does not exist, exec fails before the child process ever
+// starts, so nothing is written to the child's stderr. watch must surface
+// that failure itself instead of looping silently forever.
+func TestWatchCmdNonexistentCommandReportsError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	out, err := captureProcOutput(t, func() error {
+		return WatchCmdWithContext(ctx, []string{"-n", "0.05", "-t", "some_command_that_does_not_exist_xyz"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "watch:") {
+		t.Fatalf("expected watch to report the exec error, got %q", out)
+	}
+	if !strings.Contains(strings.ToLower(out), "not found") && !strings.Contains(strings.ToLower(out), "no such file") {
+		t.Fatalf("expected watch error to mention the command could not be found, got %q", out)
+	}
+}
+
 func TestWatchCmdAppendModeSkipsClearScreen(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 220*time.Millisecond)
 	defer cancel()

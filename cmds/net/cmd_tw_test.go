@@ -154,6 +154,72 @@ func TestTwCmdStaticServerServesConfiguredDirectory(t *testing.T) {
 	}
 }
 
+// TestTwReuseStaticModeLogsServerNotBenchmark is a regression test: the
+// -r/--reuse startup log unconditionally said "starting benchmark server"
+// even in plain static-file mode (no --bench). It must describe the actual
+// running mode.
+func TestTwReuseStaticModeLogsServerNotBenchmark(t *testing.T) {
+	dir := t.TempDir()
+	port := freeTCPPort(t)
+
+	stderrFile, err := os.CreateTemp("", "tw-stderr-static-*.log")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	defer os.Remove(stderrFile.Name())
+
+	oldStderr := os.Stderr
+	os.Stderr = stderrFile
+	go func() {
+		_ = TwCmd([]string{"-r", "-p", strconv.Itoa(port), "-d", dir})
+	}()
+
+	waitForHTTPReady(t, fmt.Sprintf("http://127.0.0.1:%d/", port))
+	os.Stderr = oldStderr
+
+	logBytes, err := os.ReadFile(stderrFile.Name())
+	if err != nil {
+		t.Fatalf("read stderr log: %v", err)
+	}
+	logText := string(logBytes)
+	if strings.Contains(logText, "benchmark server") {
+		t.Errorf("expected static-file mode log, not benchmark server, got: %q", logText)
+	}
+	if !strings.Contains(logText, "starting server") {
+		t.Errorf("expected 'starting server' log for static mode, got: %q", logText)
+	}
+}
+
+// TestTwReuseBenchModeLogsBenchmarkServer is the counterpart regression test:
+// -r combined with --bench must still say "starting benchmark server".
+func TestTwReuseBenchModeLogsBenchmarkServer(t *testing.T) {
+	port := freeTCPPort(t)
+
+	stderrFile, err := os.CreateTemp("", "tw-stderr-bench-*.log")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	defer os.Remove(stderrFile.Name())
+
+	oldStderr := os.Stderr
+	os.Stderr = stderrFile
+	go func() {
+		_ = TwCmd([]string{"-r", "--bench", "-p", strconv.Itoa(port)})
+	}()
+
+	waitForHTTPReady(t, fmt.Sprintf("http://127.0.0.1:%d/ping", port))
+	os.Stderr = oldStderr
+
+	logBytes, err := os.ReadFile(stderrFile.Name())
+	if err != nil {
+		t.Fatalf("read stderr log: %v", err)
+	}
+	logText := string(logBytes)
+	if !strings.Contains(logText, "starting benchmark server") {
+		t.Errorf("expected 'starting benchmark server' log for --bench mode, got: %q", logText)
+	}
+}
+
 // ============== BENCHMARK MODE TESTS ==============
 
 func TestTwBenchModeGetPing(t *testing.T) {

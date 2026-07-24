@@ -841,14 +841,38 @@ func TestParity_SortCases(t *testing.T) {
 			if gobox.ExitCode != native.ExitCode {
 				t.Fatalf("sort -c exit mismatch %d != %d", gobox.ExitCode, native.ExitCode)
 			}
+			// GNU sort -c never writes to stdout, whether input is sorted or not.
+			if gobox.Stdout != "" {
+				t.Fatalf("sort -c: gobox stdout should be empty, got %q", gobox.Stdout)
+			}
+			if native.Stdout != "" {
+				t.Fatalf("sort -c: native stdout should be empty, got %q", native.Stdout)
+			}
 			// Both must emit a disorder diagnostic on stderr when exit code is non-zero.
 			if gobox.ExitCode != 0 {
 				if strings.TrimSpace(gobox.Stderr) == "" {
 					t.Fatalf("sort -c: gobox stderr should be non-empty for disordered input, got %q", gobox.Stderr)
 				}
+				if !strings.Contains(gobox.Stderr, "input.txt") {
+					t.Fatalf("sort -c: gobox stderr should name the real input file, got %q", gobox.Stderr)
+				}
 				if strings.TrimSpace(native.Stderr) == "" {
 					t.Fatalf("sort -c: native stderr should be non-empty for disordered input, got %q", native.Stderr)
 				}
+			}
+		}},
+		{ID: "SORT-009b", Name: "sort -c sorted input is silent", GoboxArgs: []string{"sort", "-c", "input.txt"}, NativeCommand: "sort", NativeArgs: []string{"-c", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "a\nb\n") }, Assert: func(t *testing.T, gobox, native parityResult) {
+			if gobox.ExitCode != native.ExitCode {
+				t.Fatalf("sort -c exit mismatch %d != %d", gobox.ExitCode, native.ExitCode)
+			}
+			if gobox.ExitCode != 0 {
+				t.Fatalf("sort -c: expected success for sorted input, gobox exit=%d stderr=%q", gobox.ExitCode, gobox.Stderr)
+			}
+			if gobox.Stdout != "" {
+				t.Fatalf("sort -c: gobox should be silent on success, got stdout %q", gobox.Stdout)
+			}
+			if gobox.Stderr != "" {
+				t.Fatalf("sort -c: gobox should be silent on success, got stderr %q", gobox.Stderr)
 			}
 		}},
 		{ID: "SORT-001b", Name: "sort -n empty file", GoboxArgs: []string{"sort", "-n", "empty.txt"}, NativeCommand: "sort", NativeArgs: []string{"-n", "empty.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "empty.txt"), "") }},

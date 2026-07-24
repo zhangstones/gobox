@@ -83,11 +83,14 @@ func IfstatCmd(args []string) error {
 		var ifaces []string
 		for _, e := range entries {
 			name := e.Name()
-			// Filter by wanted interfaces if specified
-			if wantedIfaces != nil && !wantedIfaces[name] {
+			if wantedIfaces != nil {
+				// Explicit -i bypasses the physical-NIC filter so virtual interfaces (e.g. lo) can be requested directly, matching -A.
+				if wantedIfaces[name] {
+					ifaces = append(ifaces, name)
+				}
 				continue
 			}
-			// Filter virtual interfaces unless -A is specified
+			// No explicit -i: filter virtual interfaces unless -A is specified.
 			if !*showAll && !isPhysical(name) {
 				continue
 			}

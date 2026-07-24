@@ -320,7 +320,7 @@ func TestReadpathCmdOptionsZeroSeparatedFailureDoesNotEmitFakeNul(t *testing.T) 
 	}
 
 	out, err := captureFsCmd(t, func() error {
-		return ReadpathCmd([]string{"-z", file, filepath.Join(dir, "missing")})
+		return ReadpathCmd([]string{"-z", file, filepath.Join(dir, "nope", "missing")})
 	})
 	if err == nil {
 		t.Fatal("expected partial failure")
@@ -370,7 +370,7 @@ func TestReadpathCmdOptionsQuietPartialFailurePreservesSuccessfulOutput(t *testi
 	}
 
 	out, err := captureFsCmd(t, func() error {
-		return ReadpathCmd([]string{"-q", file, filepath.Join(dir, "missing")})
+		return ReadpathCmd([]string{"-q", file, filepath.Join(dir, "nope", "missing")})
 	})
 	if err == nil {
 		t.Fatal("expected partial failure error")
@@ -393,7 +393,7 @@ func TestReadpathCmdOptionsQuietMissingSuppressesStderrPath(t *testing.T) {
 	}
 
 	stdout, stderr, err := captureFsCmdFull(t, func() error {
-		return ReadpathCmd([]string{"-q", filepath.Join(dir, "missing")})
+		return ReadpathCmd([]string{"-q", filepath.Join(dir, "nope", "missing")})
 	})
 	if err == nil {
 		t.Fatal("expected missing path error")

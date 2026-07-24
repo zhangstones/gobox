@@ -64,7 +64,9 @@ func WatchCmdWithContext(ctx context.Context, args []string) error {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Stdin = os.Stdin
-		_ = cmd.Run()
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "watch: %v\n", err)
+		}
 		select {
 		case <-ctx.Done():
 			return nil

@@ -38,6 +38,15 @@ func NcCmdWithContext(ctx context.Context, args []string) error {
 		showHelp       bool
 	)
 
+	// -n never consumes the next token when -l/--listen is present, so port parsing doesn't depend on flag order.
+	hasListenFlag := false
+	for _, a := range args {
+		if a == "-l" || a == "--listen" {
+			hasListenFlag = true
+			break
+		}
+	}
+
 	// Parse flags
 	i := 0
 	for i < len(args) {
@@ -56,7 +65,7 @@ func NcCmdWithContext(ctx context.Context, args []string) error {
 		case arg == "--numeric-only":
 			numericOnly = true
 		case arg == "-n":
-			if i+1 < len(args) {
+			if !hasListenFlag && i+1 < len(args) {
 				if next, err := strconv.Atoi(args[i+1]); err == nil {
 					i++
 					totalRequests = next

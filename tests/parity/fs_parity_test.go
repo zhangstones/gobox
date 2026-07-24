@@ -15,6 +15,26 @@ import (
 	"gobox/cmds/base"
 )
 
+// maskDigitRuns replaces every maximal run of ASCII digits with "#", so two
+// outputs that only differ in live numeric values (e.g. a counter that ticked
+// between two calls) compare equal on structure/labels.
+func maskDigitRuns(s string) string {
+	var b strings.Builder
+	inDigits := false
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			if !inDigits {
+				b.WriteByte('#')
+				inDigits = true
+			}
+			continue
+		}
+		inDigits = false
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 func dfHeaderAndRows(out string) ([]string, [][]string) {
 	lines := nonEmptyLines(out)
 	if len(lines) == 0 {
@@ -1788,23 +1808,18 @@ func TestParity_ReadpathCases(t *testing.T) {
 	})
 
 	// READPATH-noexist-noe: readpath on a non-existent path without -e.
-	// gobox returns exit 1 (file not found via lstat), while native readlink -f
-	// returns exit 0 and synthesises the absolute path. This behavioural difference
-	// is documented as a bug in /tmp/bugs_fs.md.
+	// GNU realpath's default mode only requires all but the last path
+	// component to exist ("CAN_ALL_BUT_LAST" semantics), so a missing last
+	// component under an existing parent (here "/") still resolves
+	// successfully to the synthesised absolute path.
 	t.Run("READPATH-noexist-noe", func(t *testing.T) {
 		env := t.TempDir()
 		gobox := runGoboxCLI(t, env, "", "readpath", "/nonexistent_rp_noe_path")
-		if gobox.ExitCode == 0 {
-			// If gobox ever starts resolving missing paths (aligning with readlink -f),
-			// the stdout should be the absolute path and stderr should be empty.
-			if gobox.Stdout == "" {
-				t.Fatalf("READPATH-noexist-noe: gobox exit 0 but stdout empty")
-			}
-		} else {
-			// Current behaviour: exits non-zero and writes to stderr.
-			if gobox.Stderr == "" {
-				t.Fatalf("READPATH-noexist-noe: gobox non-zero exit but stderr empty")
-			}
+		if gobox.ExitCode != 0 {
+			t.Fatalf("READPATH-noexist-noe: expected exit 0, got %d (stderr=%q)", gobox.ExitCode, gobox.Stderr)
+		}
+		if strings.TrimSpace(gobox.Stdout) != "/nonexistent_rp_noe_path" {
+			t.Fatalf("READPATH-noexist-noe: unexpected stdout %q", gobox.Stdout)
 		}
 	})
 }
@@ -2043,9 +2058,14 @@ func TestParity_StatCases(t *testing.T) {
 			t.Fatalf("stat -L vs --dereference mismatch\n-L=%+v\n--dereference=%+v", short, long)
 		}
 
+		// -f and --file-system are two live syscalls a few milliseconds apart;
+		// under concurrent disk I/O elsewhere in the suite, free-block/inode
+		// counts can tick between the two calls. Mask digit runs so this only
+		// checks that both flags produce the same structure/labels, not that
+		// live filesystem counters were frozen in time.
 		short = runGoboxCLI(t, env, "", "stat", "-f", ".")
 		long = runGoboxCLI(t, env, "", "stat", "--file-system", ".")
-		if short.ExitCode != long.ExitCode || short.Stdout != long.Stdout {
+		if short.ExitCode != long.ExitCode || maskDigitRuns(short.Stdout) != maskDigitRuns(long.Stdout) {
 			t.Fatalf("stat -f vs --file-system mismatch\n-f=%+v\n--file-system=%+v", short, long)
 		}
 

@@ -293,9 +293,11 @@ func md5sumCheckReader(r io.Reader, sourceName string, warn, status, quiet bool)
 
 		actualHash := fmt.Sprintf("%x", hash)
 
-		if !quiet && !status {
+		if !status {
 			if actualHash == expectedHash {
-				fmt.Printf("%s: OK\n", filename)
+				if !quiet {
+					fmt.Printf("%s: OK\n", filename)
+				}
 			} else {
 				fmt.Printf("%s: FAILED\n", filename)
 				hasError = true

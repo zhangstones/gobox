@@ -1718,6 +1718,52 @@ func TestCurlWriteOutSizeDownload(t *testing.T) {
 	}
 }
 
+// TestCurlWriteOutEscapedNewline is a regression test for the -w/--write-out
+// literal "\n" bug: a format string containing the two characters '\' 'n'
+// must be unescaped to an actual newline before %{...} substitution, matching
+// real curl's -w behavior, instead of printing the literal backslash-n.
+func TestCurlWriteOutEscapedNewline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "content")
+	}))
+	defer server.Close()
+
+	output, err := runCurlCmd([]string{"-w", `%{http_code}\n`, "-o", os.DevNull, server.URL})
+	if err != nil {
+		t.Fatalf("curl command failed: %v", err)
+	}
+
+	if strings.Contains(output, `\n`) {
+		t.Errorf("expected literal backslash-n to be unescaped to a real newline, got: %q", output)
+	}
+	if output != "200\n" {
+		t.Errorf("expected %q, got: %q", "200\n", output)
+	}
+}
+
+// TestCurlWriteOutEscapedTab is a regression test that -w also unescapes
+// "\t", matching real curl's -w behavior for tab separators.
+func TestCurlWriteOutEscapedTab(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "content")
+	}))
+	defer server.Close()
+
+	output, err := runCurlCmd([]string{"-w", `%{http_code}\t%{size_download}`, "-o", os.DevNull, server.URL})
+	if err != nil {
+		t.Fatalf("curl command failed: %v", err)
+	}
+
+	if strings.Contains(output, `\t`) {
+		t.Errorf("expected literal backslash-t to be unescaped to a real tab, got: %q", output)
+	}
+	if !strings.Contains(output, "200\t7") {
+		t.Errorf("expected tab-separated output, got: %q", output)
+	}
+}
+
 // Helper to track request count for variable timing tests
 var requestCount int
 

@@ -100,7 +100,11 @@ doneFlags:
 		if err != nil {
 			return fmt.Errorf("failed to create listener: %w", err)
 		}
-		fmt.Fprintf(os.Stderr, "tw: starting benchmark server on %s (SO_REUSEADDR)\n", addr)
+		if bench {
+			fmt.Fprintf(os.Stderr, "tw: starting benchmark server on %s (SO_REUSEADDR)\n", addr)
+		} else {
+			fmt.Fprintf(os.Stderr, "tw: starting server on %s, serving %s (SO_REUSEADDR)\n", addr, dir)
+		}
 		return server.Serve(ln)
 	}
 
