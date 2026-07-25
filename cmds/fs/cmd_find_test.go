@@ -71,6 +71,14 @@ func TestParseSize(t *testing.T) {
 	if size != 10*1024 || op != 1 {
 		t.Fatalf("unexpected parseSize result: size=%d op=%d", size, op)
 	}
+	// GNU find's 'c' suffix means bytes.
+	cSize, cOp, err := parseSize("+1c")
+	if err != nil {
+		t.Fatalf("unexpected error for +1c: %v", err)
+	}
+	if cSize != 1 || cOp != 1 {
+		t.Fatalf("expected +1c to parse as 1 byte (op=1), got size=%d op=%d", cSize, cOp)
+	}
 }
 
 func TestMatchSize(t *testing.T) {

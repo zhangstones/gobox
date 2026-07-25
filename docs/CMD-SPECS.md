@@ -23,6 +23,18 @@
 
 ---
 
+## 参数语法约定
+
+除非具体命令另有说明，以下短选项写法在所有命令中均被接受并视为等价，不再在下方各矩阵中逐条重复：
+
+- 布尔短参数捆绑：`-la` == `-l -a`
+- 取值短参数紧贴或等号：`-n5` == `-n 5` == `-n=5`
+- 单横杠长名（`find -name`、`dig +short` 等）按整体匹配，不做捆绑拆分，其取值仍取下一个 token
+
+该归一化在解析前集中完成（`cmds/utils` 的 `ParseFlagSet` / `ExpandShortClusters`，通过查询 FlagSet 自身定义区分短参与单横杠长名），新增命令默认继承此行为：使用 `flag.NewFlagSet` 的命令调用 `utils.ParseFlagSet` 而非 `fs.Parse`，手写解析器复用 `utils.ExpandShortClusters`。未直接采用通用 getopt 库（如 pflag）的原因是 gobox 混用 GNU 短选项与 BSD 单横杠长名，通用库会把 `-name` 误拆为 `-n -a -m -e`。
+
+---
+
 ## 目录
 
 - [Shell 辅助命令](#shell-辅助命令)
@@ -63,7 +75,7 @@
 | `gobox find -name string` | `find -name` | ✅ 一致 | 按文件名匹配（支持shell glob模式） |
 | `gobox find -path string` | `find -path` | ✅ 一致 | 按完整路径匹配（支持shell glob模式） |
 | `gobox find -print` | `find -print` | ✅ 一致 | 打印匹配的文件路径（默认为true） |
-| `gobox find -size string` | `find -size` | ✅ 一致 | 文件大小过滤：`+N`（大于N）、`-N`（小于N）。支持`K`/`M`/`G`后缀 |
+| `gobox find -size string` | `find -size` | ✅ 常用一致 | 文件大小过滤：`+N`（大于N）、`-N`（小于N）。支持 `c`(字节)/`K`/`M`/`G`/`T` 后缀 |
 | `gobox find -type string` | `find -type` | ✅ 一致 | 文件类型过滤：`f`（普通文件）或`d`（目录） |
 | `gobox find -not` | `find -not` | ✅ 一致 | 对组合匹配结果取反 |
 

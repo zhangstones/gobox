@@ -669,7 +669,16 @@ func ncBenchmarkClient(host, port string, udp, verbose, numericOnly, forceIPv4, 
 			}
 			defer conn.Close()
 
+			// Bound every request's I/O so an incompatible or unresponsive peer
+			// (one that never echoes back) makes the client fail fast instead of
+			// hanging forever. Honor -w when given, otherwise use a default.
+			ioTimeout := 10 * time.Second
+			if waitSec > 0 {
+				ioTimeout = time.Duration(waitSec) * time.Second
+			}
+
 			// Send magic header
+			conn.SetDeadline(time.Now().Add(ioTimeout))
 			conn.Write(benchMagic)
 
 			if verbose {
@@ -691,8 +700,10 @@ func ncBenchmarkClient(host, port string, udp, verbose, numericOnly, forceIPv4, 
 
 				// Send data
 				reqStart := time.Now()
+				conn.SetDeadline(time.Now().Add(ioTimeout))
 				_, err := conn.Write(data)
 				if err != nil {
+					atomic.AddInt32(&connectionErrors, 1)
 					return
 				}
 
@@ -700,6 +711,7 @@ func ncBenchmarkClient(host, port string, udp, verbose, numericOnly, forceIPv4, 
 				respBuf := make([]byte, blockSize)
 				_, err = conn.Read(respBuf)
 				if err != nil {
+					atomic.AddInt32(&connectionErrors, 1)
 					return
 				}
 

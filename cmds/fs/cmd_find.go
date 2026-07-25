@@ -26,7 +26,7 @@ func FindCmd(args []string) error {
 	mindepth := fsFlags.Int("mindepth", 0, "minimum depth")
 	printFlag := fsFlags.Bool("print", true, "print matched paths")
 	empty := fsFlags.Bool("empty", false, "match empty files or directories")
-	size := fsFlags.String("size", "", "file size: +N (larger than N), -N (smaller than N), N (equal to N) (K/M/G suffixes supported)")
+	size := fsFlags.String("size", "", "file size: +N (larger than N), -N (smaller than N), N (equal to N) (c/K/M/G suffixes; default unit is bytes)")
 	atime := fsFlags.String("atime", "", "file access time: +N, -N, N (N[smh] = seconds/minutes/hours/days)")
 	mtime := fsFlags.String("mtime", "", "file modify time: +N, -N, N (N[smh] = seconds/minutes/hours/days)")
 
@@ -39,7 +39,7 @@ func FindCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -path PATTERN      match full path with shell glob")
 		fmt.Fprintln(os.Stderr, "  -type TYPE         file type: f (file) or d (directory)")
 		fmt.Fprintln(os.Stderr, "  -empty             match empty files or directories")
-		fmt.Fprintln(os.Stderr, "  -size SPEC         size filter: +N, -N, N with optional K/M/G suffix")
+		fmt.Fprintln(os.Stderr, "  -size SPEC         size filter: +N, -N, N with optional c/K/M/G suffix (default bytes)")
 		fmt.Fprintln(os.Stderr, "  -atime SPEC        access time filter: +N, -N, N with optional s/m/h suffix")
 		fmt.Fprintln(os.Stderr, "  -mtime SPEC        modify time filter: +N, -N, N with optional s/m/h suffix")
 		fmt.Fprintln(os.Stderr)
@@ -375,6 +375,10 @@ func parseSize(sizeSpec string) (int64, int, error) {
 		numPart = spec[:len(spec)-1]
 	} else if strings.HasSuffix(spec, "T") || strings.HasSuffix(spec, "t") {
 		multiplier = 1024 * 1024 * 1024 * 1024
+		numPart = spec[:len(spec)-1]
+	} else if strings.HasSuffix(spec, "c") || strings.HasSuffix(spec, "C") {
+		// GNU find: 'c' means bytes (the default unit in gobox is already bytes).
+		multiplier = 1
 		numPart = spec[:len(spec)-1]
 	} else {
 		numPart = spec

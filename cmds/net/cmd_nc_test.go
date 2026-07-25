@@ -1024,3 +1024,40 @@ func TestNcExpandShortClusters(t *testing.T) {
 		}
 	}
 }
+
+// TestNCBenchClientDoesNotHangOnSilentPeer is a regression test: the benchmark
+// client reads an echo response for every request, so a peer that accepts and
+// drains but never echoes (e.g. a plain HTTP server) used to hang the client
+// forever because the per-request I/O had no deadline. With -w set, the client
+// must give up and return instead of hanging.
+func TestNCBenchClientDoesNotHangOnSilentPeer(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go io.Copy(io.Discard, c) // drain input, never echo back
+		}
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		_, _, _ = runNcCmdFull([]string{"--bench", "-n", "2", "-c", "1", "-w", "1", "127.0.0.1", strconv.Itoa(port)})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// returned within the timeout: good
+	case <-time.After(8 * time.Second):
+		t.Fatal("nc --bench hung against a non-echoing peer")
+	}
+}
