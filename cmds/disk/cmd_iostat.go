@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"gobox/cmds/utils"
 	"io"
 	"os"
 	"path/filepath"
@@ -102,7 +103,7 @@ func iostatCmd(args []string, stdout io.Writer) error {
 		fmt.Fprintln(os.Stderr, "  gobox iostat -i 2 -n 3 -H -z")
 		fmt.Fprintln(os.Stderr, "  gobox iostat --cgroup 1 1")
 	}
-	if err := fsFlags.Parse(args); err != nil {
+	if err := utils.ParseFlagSet(fsFlags, args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

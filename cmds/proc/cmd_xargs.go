@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"gobox/cmds/utils"
 	"io"
 	"os"
 	"os/exec"
@@ -41,7 +42,7 @@ func XargsCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -h, --help         show this help")
 	}
 
-	if err := xargsFlags.Parse(args); err != nil {
+	if err := utils.ParseFlagSet(xargsFlags, args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

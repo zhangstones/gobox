@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"gobox/cmds/utils"
 	"io"
 	"os"
 	"strconv"
@@ -27,7 +28,7 @@ func StringsCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -a         scan entire file")
 		fmt.Fprintln(os.Stderr, "  -h, --help show this help")
 	}
-	if err := fsFlags.Parse(args); err != nil {
+	if err := utils.ParseFlagSet(fsFlags, args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

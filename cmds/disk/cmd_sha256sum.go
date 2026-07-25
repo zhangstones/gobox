@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"gobox/cmds/utils"
 	"io"
 	"os"
 	"regexp"
@@ -52,7 +53,7 @@ func Sha256sumCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -w, --warn        warn about malformed lines")
 		fmt.Fprintln(os.Stderr, "  -h, --help        show this help")
 	}
-	if err := fsFlags.Parse(args); err != nil {
+	if err := utils.ParseFlagSet(fsFlags, args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

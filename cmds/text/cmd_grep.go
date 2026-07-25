@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"gobox/cmds/utils"
 	"io"
 	"os"
 	"path/filepath"
@@ -114,7 +115,7 @@ func GrepCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  cat file.txt | gobox grep \"pattern\"")
 	}
 
-	if err := fsFlags.Parse(args); err != nil {
+	if err := utils.ParseFlagSet(fsFlags, args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"gobox/cmds/utils"
 	"io"
 )
 
@@ -20,7 +21,7 @@ func aliasCmd(args []string, stdout io.Writer) error {
 	unalias := fs.Bool("u", false, "print unalias commands")
 	help := fs.Bool("h", false, "show help")
 
-	if err := fs.Parse(args); err != nil {
+	if err := utils.ParseFlagSet(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			writeAliasUsage(stdout)
 			return nil

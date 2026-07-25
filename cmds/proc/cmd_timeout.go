@@ -3,6 +3,7 @@ package proc
 import (
 	"flag"
 	"fmt"
+	"gobox/cmds/utils"
 	"os"
 	"os/exec"
 	"strconv"
@@ -36,7 +37,7 @@ func TimeoutCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  gobox timeout 5s sleep 30")
 		fmt.Fprintln(os.Stderr, "  gobox timeout -s TERM -k 2s 10s mycmd")
 	}
-	if err := fsFlags.Parse(args); err != nil {
+	if err := utils.ParseFlagSet(fsFlags, args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

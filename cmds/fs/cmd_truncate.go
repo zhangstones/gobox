@@ -3,6 +3,7 @@ package fs
 import (
 	"flag"
 	"fmt"
+	"gobox/cmds/utils"
 	"os"
 	"strconv"
 	"strings"
@@ -28,7 +29,7 @@ func TruncateCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  gobox truncate -s 0 app.log")
 		fmt.Fprintln(os.Stderr, "  gobox truncate -r ref.bin copy.bin")
 	}
-	if err := fsFlags.Parse(args); err != nil {
+	if err := utils.ParseFlagSet(fsFlags, args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

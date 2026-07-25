@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"gobox/cmds/utils"
 	"net"
 	"os"
 	"os/signal"
@@ -88,7 +89,7 @@ func NetstatCmd(args []string) error {
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "  -h, --help          show this help")
 	}
-	if err := fsFlags.Parse(normalizeNetstatArgs(args)); err != nil {
+	if err := utils.ParseFlagSet(fsFlags, normalizeNetstatArgs(args)); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

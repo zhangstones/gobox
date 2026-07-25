@@ -3,6 +3,7 @@ package fs
 import (
 	"flag"
 	"fmt"
+	"gobox/cmds/utils"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -55,7 +56,7 @@ func FindCmd(args []string) error {
 	}
 
 	flagArgs, pathArgs := splitFindArgs(args)
-	if err := fsFlags.Parse(flagArgs); err != nil {
+	if err := utils.ParseFlagSet(fsFlags, flagArgs); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

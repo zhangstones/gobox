@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
+	"gobox/cmds/utils"
 	"io"
 	"os"
 	"strings"
@@ -29,7 +30,7 @@ func Base64Cmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -o FILE                   write output to file")
 		fmt.Fprintln(os.Stderr, "  -h, --help                show this help")
 	}
-	if err := fsFlags.Parse(args); err != nil {
+	if err := utils.ParseFlagSet(fsFlags, args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

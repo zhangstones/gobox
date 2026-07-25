@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"gobox/cmds/utils"
 	"net"
 	"os"
 	"path/filepath"
@@ -46,7 +47,7 @@ func LsofCmd(args []string) error {
 	}
 	filterArgs := normalizeLsofArgs(args)
 	protoFilter, portFilter := parseLsofIFilters(args)
-	if err := fsFlags.Parse(filterArgs); err != nil {
+	if err := utils.ParseFlagSet(fsFlags, filterArgs); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

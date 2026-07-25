@@ -17,7 +17,37 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"gobox/cmds/utils"
 )
+
+// curlShortClassifier reports curl's single-letter short flags: booleans take
+// no value, the rest consume one.
+func curlShortClassifier(c byte) (defined, takesValue bool) {
+	switch c {
+	case 's', 'S', 'O', 'L', 'I', 'k', 'f', 'i', 'h':
+		return true, false
+	case 'o', 'w', 'm', 'X', 'H', 'd', 'T', 'F', 'c', 'n', 't':
+		return true, true
+	}
+	return false, false
+}
+
+// curlLongClassifier reports curl's long flags. It lets cluster expansion skip
+// the space-separated value of a long option (e.g. --header -X) instead of
+// mistaking it for a flag cluster.
+func curlLongClassifier(name string) (defined, takesValue bool) {
+	switch name {
+	case "silent", "show-error", "remote-name", "location", "head",
+		"insecure", "fail", "include", "bench", "help":
+		return true, false
+	case "output", "write-out", "max-time", "request", "header", "data",
+		"upload-file", "form", "connect-timeout", "resolve", "warmup",
+		"timeout", "concurrent", "requests":
+		return true, true
+	}
+	return false, false
+}
 
 type resolveHost struct {
 	host string
@@ -92,6 +122,10 @@ func CurlCmd(args []string) error {
 		warmupRequests int
 		requestTimeout time.Duration
 	)
+
+	// Expand GNU-style short-flag clusters (e.g. -sI -> -s -I, -m5 -> -m 5) so
+	// the token-matching parser below accepts bundled and attached forms.
+	args = utils.ExpandShortClusters(args, curlShortClassifier, curlLongClassifier)
 
 	// Parse flags manually
 	i := 0

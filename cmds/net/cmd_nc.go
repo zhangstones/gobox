@@ -11,7 +11,21 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"gobox/cmds/utils"
 )
+
+// ncShortClassifier reports nc's single-letter short flags: booleans take no
+// value, the rest consume one.
+func ncShortClassifier(c byte) (defined, takesValue bool) {
+	switch c {
+	case 'l', 'z', 'u', 'v', '4', '6', 'h':
+		return true, false
+	case 'w', 's', 'c', 'n', 't', 'i':
+		return true, true
+	}
+	return false, false
+}
 
 // ncCmd implements netcat functionality
 func NcCmd(args []string) error {
@@ -37,6 +51,10 @@ func NcCmdWithContext(ctx context.Context, args []string) error {
 		reportInterval int   = 1
 		showHelp       bool
 	)
+
+	// Expand GNU-style short-flag clusters (e.g. -zv -> -z -v) so the
+	// token-matching parser below accepts bundled boolean flags.
+	args = utils.ExpandShortClusters(args, ncShortClassifier, nil)
 
 	// -n never consumes the next token when -l/--listen is present, so port parsing doesn't depend on flag order.
 	hasListenFlag := false

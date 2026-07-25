@@ -38,7 +38,7 @@ func WatchCmdWithContext(ctx context.Context, args []string) error {
 		fmt.Fprintln(os.Stderr, "  gobox watch -n 1 date")
 		fmt.Fprintln(os.Stderr, "  gobox watch --append -n 1 date")
 	}
-	if err := fsFlags.Parse(args); err != nil {
+	if err := utils.ParseFlagSet(fsFlags, args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

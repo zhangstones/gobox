@@ -74,7 +74,7 @@ func DuCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  gobox du --max-depth 2 --exclude '*.tmp' /var")
 	}
 
-	if err := fsFlags.Parse(expandDuBundledFlags(args)); err != nil {
+	if err := utils.ParseFlagSet(fsFlags, expandDuBundledFlags(args)); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

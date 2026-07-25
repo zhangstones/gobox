@@ -6,10 +6,13 @@ import (
 	"io"
 	"net"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"gobox/cmds/utils"
 )
 
 // runNcCmdFull runs NcCmd with args and captures stdout and stderr separately.
@@ -1000,5 +1003,24 @@ func ncWriteTestFile(t *testing.T, filename, content string) {
 	err := os.WriteFile(filename, []byte(content), 0644)
 	if err != nil {
 		t.Fatalf("Failed to write test file %s: %v", filename, err)
+	}
+}
+
+func TestNcExpandShortClusters(t *testing.T) {
+	cases := []struct {
+		in   []string
+		want []string
+	}{
+		{[]string{"-zv", "localhost", "8080"}, []string{"-z", "-v", "localhost", "8080"}},
+		{[]string{"-lu", "8080"}, []string{"-l", "-u", "8080"}},
+		{[]string{"-z", "-v", "host", "80"}, []string{"-z", "-v", "host", "80"}},
+		{[]string{"-w5", "host", "80"}, []string{"-w", "5", "host", "80"}},
+		{[]string{"host", "80"}, []string{"host", "80"}},
+	}
+	for _, tc := range cases {
+		got := utils.ExpandShortClusters(tc.in, ncShortClassifier, nil)
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("nc expand %q = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }

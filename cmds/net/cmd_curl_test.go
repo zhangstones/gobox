@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,6 +16,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"gobox/cmds/utils"
 )
 
 // runCurlCmdFull runs CurlCmd with args and captures stdout and stderr separately.
@@ -2064,5 +2067,27 @@ func writeTestFile(t *testing.T, filename, content string) {
 	err := os.WriteFile(filename, []byte(content), 0644)
 	if err != nil {
 		t.Fatalf("Failed to write test file %s: %v", filename, err)
+	}
+}
+
+func TestCurlExpandShortClusters(t *testing.T) {
+	cases := []struct {
+		in   []string
+		want []string
+	}{
+		{[]string{"-sI", "http://x"}, []string{"-s", "-I", "http://x"}},
+		{[]string{"-fL", "http://x"}, []string{"-f", "-L", "http://x"}},
+		{[]string{"-m5", "http://x"}, []string{"-m", "5", "http://x"}},
+		{[]string{"-o", "out", "http://x"}, []string{"-o", "out", "http://x"}},
+		// a long option's space-separated value must not be re-expanded
+		{[]string{"--header", "-sI", "http://x"}, []string{"--header", "-sI", "http://x"}},
+		{[]string{"-d", "-sI", "http://x"}, []string{"-d", "-sI", "http://x"}},
+		{[]string{"http://x"}, []string{"http://x"}},
+	}
+	for _, tc := range cases {
+		got := utils.ExpandShortClusters(tc.in, curlShortClassifier, curlLongClassifier)
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("curl expand %q = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }

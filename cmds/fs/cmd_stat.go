@@ -3,6 +3,7 @@ package fs
 import (
 	"flag"
 	"fmt"
+	"gobox/cmds/utils"
 	"os"
 	"os/user"
 	"runtime"
@@ -65,7 +66,7 @@ func StatCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  gobox stat -f /tmp")
 		fmt.Fprintf(os.Stderr, "%s\n", "  gobox stat -c '%n %s %y' file.txt")
 	}
-	if err := fsFlags.Parse(args); err != nil {
+	if err := utils.ParseFlagSet(fsFlags, args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

@@ -3,6 +3,7 @@ package disk
 import (
 	"flag"
 	"fmt"
+	"gobox/cmds/utils"
 	"io"
 	"math"
 	"os"
@@ -83,7 +84,7 @@ func IoperfCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  gobox ioperf --rw=readwrite --rwmixread=70 --filename=/tmp/testfile --size=1G --numjobs=4 --iodepth=4")
 	}
 
-	if err := fsFlags.Parse(args); err != nil {
+	if err := utils.ParseFlagSet(fsFlags, args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

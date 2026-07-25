@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"gobox/cmds/utils"
 	"io"
 	"os"
 	"path/filepath"
@@ -82,7 +83,7 @@ func parseDiffArgs(args []string) (diffOptions, []string, error) {
 		fmt.Fprintln(os.Stderr, "  -N, --new-file           treat missing files as empty")
 		fmt.Fprintln(os.Stderr, "  --strip-trailing-cr      strip trailing carriage returns")
 	}
-	if err := fsFlags.Parse(args); err != nil {
+	if err := utils.ParseFlagSet(fsFlags, args); err != nil {
 		if err == flag.ErrHelp {
 			return opts, nil, nil
 		}

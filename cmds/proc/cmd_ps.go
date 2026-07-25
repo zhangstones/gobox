@@ -100,7 +100,7 @@ func PsCmd(args []string) error {
 		printPSUsage()
 	}
 
-	if err := fsFlags.Parse(args); err != nil {
+	if err := utils.ParseFlagSet(fsFlags, args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}
