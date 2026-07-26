@@ -434,6 +434,33 @@ func TestNCPortScanOpen(t *testing.T) {
 	}
 }
 
+// TestNCBundledNumericScan is a regression test: bundled short flags including
+// -n (e.g. -znv) must expand to -z -n -v. Previously -n was misclassified as
+// value-taking, so -znv swallowed the following char as -n's value and the
+// host was parsed wrong, yielding "numeric-only mode requires a literal IP".
+func TestNCBundledNumericScan(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start server: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+	time.Sleep(100 * time.Millisecond)
+
+	stdout, stderr, err := runNcCmdFull([]string{"-znv", "127.0.0.1", strconv.Itoa(port)})
+	if err != nil {
+		t.Fatalf("bundled -znv scan failed: stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	// -n applied => host not resolved; -v applied => verbose success line.
+	combined := stdout + stderr
+	if !strings.Contains(combined, "not resolving host") {
+		t.Errorf("expected -n (numeric-only) to be applied, got %q", combined)
+	}
+	if !strings.Contains(combined, "Connection successful") {
+		t.Errorf("expected -v verbose success output, got %q", combined)
+	}
+}
+
 func TestNCPortScanClosed(t *testing.T) {
 	// Try to scan a port that is definitely closed
 	output, err := runNcCmd([]string{"-zj", "127.0.0.1", "59999"})

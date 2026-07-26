@@ -161,6 +161,46 @@ func TestHeadCBytesFlag(t *testing.T) {
 	}
 }
 
+// TestHeadNLinesAttachedFlag is a regression test: GNU head accepts the value
+// attached to the short flag (e.g. -n3), which previously errored as an
+// "unknown option".
+func TestHeadNLinesAttachedFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_head_n_attached.txt")
+	content := "line1\nline2\nline3\nline4\nline5\n"
+	os.WriteFile(filename, []byte(content), 0644)
+
+	output, err := runHeadCmd([]string{"-n3", filename})
+	if err != nil {
+		t.Fatalf("head -n3 command failed: %v", err)
+	}
+
+	result := strings.TrimSpace(string(output))
+	lines := strings.Split(result, "\n")
+	if len(lines) != 3 {
+		t.Errorf("Expected 3 lines, got %d: %s", len(lines), result)
+	}
+	if !strings.Contains(result, "line1") || !strings.Contains(result, "line3") {
+		t.Errorf("Expected lines 1-3, got: %s", result)
+	}
+}
+
+// TestHeadCBytesAttachedFlag is a regression test for -c with an attached
+// value (e.g. -c5).
+func TestHeadCBytesAttachedFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_head_c_attached.txt")
+	os.WriteFile(filename, []byte("hello world"), 0644)
+
+	output, err := runHeadCmd([]string{"-c5", filename})
+	if err != nil {
+		t.Fatalf("head -c5 command failed: %v", err)
+	}
+	if result := strings.TrimSpace(string(output)); result != "hello" {
+		t.Errorf("Expected 'hello', got: %s", result)
+	}
+}
+
 func TestHeadCBytesEqualsFlag(t *testing.T) {
 	tmpDir := t.TempDir()
 	filename := filepath.Join(tmpDir, "test_head_c_equals.txt")

@@ -683,6 +683,41 @@ func TestSortCheckSorted(t *testing.T) {
 	}
 }
 
+// TestSortCheckEqualLines is a regression test: adjacent equal lines are in
+// order, so `sort -c` must succeed (GNU sort returns 0). Previously equal
+// lines were wrongly reported as disorder.
+func TestSortCheckEqualLines(t *testing.T) {
+	content := "apple\napple\nbanana\nbanana\ncherry\n"
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_check_equal.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+
+	output, err := runSortCmd([]string{"-c", filename})
+	if err != nil {
+		t.Fatalf("sort -c wrongly reported disorder on equal lines: %v", err)
+	}
+	if output != "" {
+		t.Errorf("Expected silent success, got: %q", output)
+	}
+}
+
+// TestSortCheckReverseEqualLines verifies the reverse-order check also treats
+// adjacent equal lines as in order.
+func TestSortCheckReverseEqualLines(t *testing.T) {
+	content := "cherry\nbanana\nbanana\napple\napple\n"
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_check_rev_equal.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+
+	output, err := runSortCmd([]string{"-c", "-r", filename})
+	if err != nil {
+		t.Fatalf("sort -c -r wrongly reported disorder on equal lines: %v", err)
+	}
+	if output != "" {
+		t.Errorf("Expected silent success, got: %q", output)
+	}
+}
+
 func TestSortCheckNotSorted(t *testing.T) {
 	content := "banana\napple\ncherry\n"
 	tmpDir := t.TempDir()

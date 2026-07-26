@@ -53,6 +53,13 @@ func TailCmdWithContext(ctx context.Context, args []string) error {
 				return fmt.Errorf("invalid number of lines: %s", val)
 			}
 			lines = n
+		case strings.HasPrefix(arg, "-n") && arg != "-n":
+			// GNU-style attached value, e.g. -n5
+			n, err := strconv.Atoi(arg[2:])
+			if err != nil || n < 0 {
+				return fmt.Errorf("invalid number of lines: %s", arg[2:])
+			}
+			lines = n
 		case arg == "-f" || arg == "--follow":
 			follow = true
 		case arg == "--follow=name":

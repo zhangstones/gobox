@@ -197,6 +197,60 @@ func TestFindNotPathFilter(t *testing.T) {
 	}
 }
 
+// TestFindNotBindsToNextPredicate is a regression test: -not must negate only
+// the predicate that immediately follows it, not the whole expression. So
+// `-type f -not -name '*.txt'` keeps the type filter and must not emit
+// directories or symlinks.
+func TestFindNotBindsToNextPredicate(t *testing.T) {
+	dir := t.TempDir()
+	keepFile := filepath.Join(dir, "keep.log") // regular file, not *.txt -> kept
+	txtFile := filepath.Join(dir, "note.txt")  // regular file, *.txt -> excluded
+	subDir := filepath.Join(dir, "sub")        // directory -> excluded by -type f
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(keepFile, []byte("k"), 0o644); err != nil {
+		t.Fatalf("write keep: %v", err)
+	}
+	if err := os.WriteFile(txtFile, []byte("t"), 0o644); err != nil {
+		t.Fatalf("write txt: %v", err)
+	}
+
+	output, err := runFindCmd(t, []string{"-type", "f", "-not", "-name", "*.txt", dir})
+	if err != nil {
+		t.Fatalf("FindCmd failed: %v", err)
+	}
+	if !strings.Contains(output, keepFile) {
+		t.Fatalf("expected %s to be kept, got %q", keepFile, output)
+	}
+	if strings.Contains(output, txtFile) {
+		t.Fatalf("expected %s to be excluded by -not -name, got %q", txtFile, output)
+	}
+	if strings.Contains(output, subDir) {
+		t.Fatalf("expected directory %s to be excluded by -type f, got %q", subDir, output)
+	}
+}
+
+// TestFindDoubleNotCancels verifies that two -not tokens cancel out.
+func TestFindDoubleNotCancels(t *testing.T) {
+	dir := t.TempDir()
+	txt := filepath.Join(dir, "a.txt")
+	log := filepath.Join(dir, "b.log")
+	_ = os.WriteFile(txt, []byte("x"), 0o644)
+	_ = os.WriteFile(log, []byte("x"), 0o644)
+
+	output, err := runFindCmd(t, []string{"-not", "-not", "-name", "*.txt", dir})
+	if err != nil {
+		t.Fatalf("FindCmd failed: %v", err)
+	}
+	if !strings.Contains(output, txt) {
+		t.Fatalf("expected double -not to keep %s, got %q", txt, output)
+	}
+	if strings.Contains(output, log) {
+		t.Fatalf("expected double -not to exclude %s, got %q", log, output)
+	}
+}
+
 func TestFindBangAliasForNot(t *testing.T) {
 	dir := t.TempDir()
 	match := filepath.Join(dir, "visible.txt")

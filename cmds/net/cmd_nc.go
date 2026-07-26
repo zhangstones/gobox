@@ -19,9 +19,12 @@ import (
 // value, the rest consume one.
 func ncShortClassifier(c byte) (defined, takesValue bool) {
 	switch c {
-	case 'l', 'z', 'u', 'v', '4', '6', 'h':
+	// -n is treated as boolean here so clusters like -znv expand to -z -n -v.
+	// Its benchmark "requests" value form (-n N / -nN) is disambiguated later
+	// in the parse loop by whether the following token is a number.
+	case 'l', 'z', 'u', 'v', '4', '6', 'h', 'n':
 		return true, false
-	case 'w', 's', 'c', 'n', 't', 'i':
+	case 'w', 's', 'c', 't', 'i':
 		return true, true
 	}
 	return false, false

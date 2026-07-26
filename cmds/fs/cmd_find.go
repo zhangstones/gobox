@@ -17,10 +17,14 @@ import (
 // FindCmd implements a basic subset of busybox find
 func FindCmd(args []string) error {
 	args = normalizeFindArgs(args)
+	// GNU find binds -not/! to the predicate that immediately follows it, not
+	// to the whole expression. Pull those per-predicate negations out before
+	// flag parsing; any remaining bare -not keeps the legacy whole-result flag.
+	negated, args := extractNegations(args)
 	fsFlags := flag.NewFlagSet("find", flag.ContinueOnError)
 	name := fsFlags.String("name", "", "match basename with pattern (shell glob)")
 	pathPattern := fsFlags.String("path", "", "match full path with pattern (shell glob)")
-	negate := fsFlags.Bool("not", false, "negate the combined match result")
+	negate := fsFlags.Bool("not", false, "negate the following predicate (legacy: whole result if unbound)")
 	typ := fsFlags.String("type", "", "file type: f (file) or d (dir)")
 	maxdepth := fsFlags.Int("maxdepth", -1, "maximum depth")
 	mindepth := fsFlags.Int("mindepth", 0, "minimum depth")
@@ -46,7 +50,7 @@ func FindCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "Traversal:")
 		fmt.Fprintln(os.Stderr, "  -maxdepth N        descend at most N levels")
 		fmt.Fprintln(os.Stderr, "  -mindepth N        skip matches shallower than N levels")
-		fmt.Fprintln(os.Stderr, "  -not               negate the combined match result")
+		fmt.Fprintln(os.Stderr, "  -not, !            negate the immediately following predicate")
 		fmt.Fprintln(os.Stderr, "  -print             print matched paths (default true)")
 		fmt.Fprintln(os.Stderr, "  -h, --help         show this help")
 		fmt.Fprintln(os.Stderr)
@@ -118,95 +122,85 @@ func FindCmd(args []string) error {
 				return nil
 			}
 
+			// Each predicate is evaluated to a raw boolean, negated on its own
+			// if it was preceded by -not/!, then AND-combined into matched.
 			matched := true
+			apply := func(pred string, ok bool) {
+				if negated[pred] {
+					ok = !ok
+				}
+				matched = matched && ok
+			}
 
 			// type filter
 			if *typ != "" {
+				ok := true
 				if *typ == "f" && !d.Type().IsRegular() {
-					matched = false
+					ok = false
 				}
 				if *typ == "d" && !d.IsDir() {
-					matched = false
+					ok = false
 				}
+				apply("type", ok)
 			}
 
 			// name filter (glob pattern matching, not regex)
-			if matched && *name != "" {
+			if *name != "" {
 				// Use filepath.Match for glob pattern matching
 				// Patterns: * matches any sequence, ? matches any single char, [abc] matches char class
 				nameMatched, err := filepath.Match(*name, d.Name())
-				if err != nil || !nameMatched {
-					matched = false
-				}
+				apply("name", err == nil && nameMatched)
 			}
 
-			if matched && pathPatternRe != nil {
+			if pathPatternRe != nil {
 				candidate := filepath.ToSlash(filepath.Clean(p))
-				matched = pathPatternRe.MatchString(candidate)
+				apply("path", pathPatternRe.MatchString(candidate))
 			}
 
 			// empty filter
-			if matched && *empty {
+			if *empty {
+				ok := true
 				if d.IsDir() {
 					// Check if directory is empty
 					entries, err := os.ReadDir(p)
-					if err != nil {
-						matched = false
-					}
-					if matched && len(entries) > 0 {
-						matched = false
+					if err != nil || len(entries) > 0 {
+						ok = false
 					}
 				} else {
 					// Check if file is empty
 					info, err := d.Info()
-					if err != nil {
-						matched = false
-					}
-					if matched && info.Size() > 0 {
-						matched = false
+					if err != nil || info.Size() > 0 {
+						ok = false
 					}
 				}
+				apply("empty", ok)
 			}
 
 			// size filter
-			if matched && *size != "" {
+			if *size != "" {
+				ok := true
 				if d.IsDir() {
 					// Match GNU find semantics: size filtering applies to files here, so directories do not match.
-					matched = false
+					ok = false
 				} else {
 					info, err := d.Info()
-					if err != nil {
-						matched = false
-					}
-					if matched {
-						fileSize := info.Size()
-						if !matchSize(fileSize, *size) {
-							matched = false
-						}
+					if err != nil || !matchSize(info.Size(), *size) {
+						ok = false
 					}
 				}
+				apply("size", ok)
 			}
 
 			// atime filter (access time)
-			if matched && *atime != "" {
+			if *atime != "" {
 				info, err := d.Info()
-				if err != nil {
-					matched = false
-				}
-				if matched && !matchTime(info, *atime, "atime") {
-					matched = false
-				}
+				apply("atime", err == nil && matchTime(info, *atime, "atime"))
 			}
 
 			// mtime filter (modify time)
-			if matched && *mtime != "" {
+			if *mtime != "" {
 				info, err := d.Info()
-				if err != nil {
-					matched = false
-				}
-				if matched && !matchTime(info, *mtime, "mtime") {
-					matched = false
-				}
+				apply("mtime", err == nil && matchTime(info, *mtime, "mtime"))
 			}
 
 			if *negate {
@@ -261,6 +255,57 @@ func splitFindArgs(args []string) (flagArgs []string, paths []string) {
 		paths = append(paths, arg)
 	}
 	return flagArgs, paths
+}
+
+// findPredicateFlags lists the match predicates that a preceding -not/! can
+// negate individually (GNU find semantics).
+var findPredicateFlags = map[string]bool{
+	"name":  true,
+	"path":  true,
+	"type":  true,
+	"empty": true,
+	"size":  true,
+	"atime": true,
+	"mtime": true,
+}
+
+// extractNegations consumes -not tokens that immediately precede a match
+// predicate and records them as per-predicate negations, returning the
+// remaining args with those -not tokens removed. Consecutive -not tokens
+// toggle (double negation cancels). A -not that does not bind to a predicate
+// is left in place so the FlagSet still applies the legacy whole-result flag.
+func extractNegations(args []string) (map[string]bool, []string) {
+	negated := make(map[string]bool)
+	out := make([]string, 0, len(args))
+	pendingNot := false
+	for _, arg := range args {
+		if arg == "-not" {
+			pendingNot = !pendingNot
+			continue
+		}
+		if pendingNot && len(arg) > 1 && arg[0] == '-' {
+			pred := strings.TrimLeft(arg, "-")
+			if eq := strings.IndexByte(pred, '='); eq >= 0 {
+				pred = pred[:eq]
+			}
+			if findPredicateFlags[pred] {
+				negated[pred] = !negated[pred]
+				pendingNot = false
+				out = append(out, arg)
+				continue
+			}
+		}
+		if pendingNot {
+			// Unbound -not: preserve legacy whole-result negation.
+			out = append(out, "-not")
+			pendingNot = false
+		}
+		out = append(out, arg)
+	}
+	if pendingNot {
+		out = append(out, "-not")
+	}
+	return negated, out
 }
 
 func normalizeFindArgs(args []string) []string {

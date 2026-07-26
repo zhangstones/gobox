@@ -85,6 +85,30 @@ func TestTailNLinesFlag(t *testing.T) {
 	}
 }
 
+// TestTailNLinesAttachedFlag is a regression test: GNU tail accepts the value
+// attached to the short flag (e.g. -n3), which previously errored as an
+// "unknown option".
+func TestTailNLinesAttachedFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_n_attached.txt")
+	content := "line1\nline2\nline3\nline4\nline5\n"
+	os.WriteFile(filename, []byte(content), 0644)
+
+	output, err := runTailCmd([]string{"-n3", filename})
+	if err != nil {
+		t.Fatalf("tail -n3 command failed: %v", err)
+	}
+
+	result := strings.TrimSpace(string(output))
+	lines := strings.Split(result, "\n")
+	if len(lines) != 3 {
+		t.Errorf("Expected 3 lines, got %d: %s", len(lines), result)
+	}
+	if !strings.Contains(result, "line3") || !strings.Contains(result, "line5") {
+		t.Errorf("Expected lines 3-5, got: %s", result)
+	}
+}
+
 func TestTailNLinesEqualsFlag(t *testing.T) {
 	tmpDir := t.TempDir()
 	filename := filepath.Join(tmpDir, "test_tail_n_equals.txt")

@@ -424,26 +424,42 @@ func checkSorted(lines []string, cfg sortConfig, sourceName string) error {
 
 	for i := 1; i < len(entries); i++ {
 		vi, vj := entries[i-1].value, entries[i].value
-		var less bool
+		// cmp: -1 if prev<cur, 0 if equal, 1 if prev>cur.
+		var cmp int
 		switch v := vi.(type) {
 		case float64:
 			vjF := vj.(float64)
-			less = v >= vjF
+			switch {
+			case v < vjF:
+				cmp = -1
+			case v > vjF:
+				cmp = 1
+			}
 		case time.Month:
 			vjM := vj.(time.Month)
-			less = v >= vjM
+			switch {
+			case v < vjM:
+				cmp = -1
+			case v > vjM:
+				cmp = 1
+			}
 		case int:
 			vjI := vj.(int)
-			less = v >= vjI
+			switch {
+			case v < vjI:
+				cmp = -1
+			case v > vjI:
+				cmp = 1
+			}
 		default:
-			vs := vi.(string)
-			vsj := vj.(string)
-			less = strings.Compare(vs, vsj) >= 0
+			cmp = strings.Compare(vi.(string), vj.(string))
 		}
+		// Equal adjacent lines are in order; only a strict inversion is disorder.
+		disorder := cmp > 0
 		if cfg.reverse {
-			less = !less
+			disorder = cmp < 0
 		}
-		if less {
+		if disorder {
 			fmt.Fprintf(os.Stderr, "sort: %s: disorder: line %d\n", sourceName, i+1)
 			return sortExitError{code: 1, err: errors.New("check failed")}
 		}
