@@ -176,3 +176,5 @@ For current command support and planned work:
 **Consolidate interim changes**: Use `git rebase -i` or `git commit --amend` to merge non-substantive, consecutive micro-commits.
 
 **Short commit messages**: Every commit message must be a single short summary line. No multi-paragraph bodies, bullet lists, or verbose explanations of what changed — keep the "why" in the PR description instead.
+
+**No Co-Authored-By trailer**: Do not add `Co-Authored-By` (or any similar attribution/trailer) to commit messages. The message is the summary line only.

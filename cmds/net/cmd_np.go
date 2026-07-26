@@ -77,7 +77,7 @@ func NpCmd(args []string) error {
 	quiet := fsFlags.Bool("q", false, "Quiet mode, only show final statistics")
 	verbose := fsFlags.Bool("v", false, "Verbose output")
 
-	if err := utils.ParseFlagSet(fsFlags, args); err != nil {
+	if err := utils.ParseFlagSetPermute(fsFlags, args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

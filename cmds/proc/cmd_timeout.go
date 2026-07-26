@@ -17,6 +17,12 @@ type timeoutExitError int
 func (e timeoutExitError) Error() string { return fmt.Sprintf("exit code %d", int(e)) }
 func (e timeoutExitError) ExitCode() int { return int(e) }
 
+// SuppressCLIError keeps main from printing "timeout: exit code N" to stderr.
+// Like GNU timeout, we stay silent and only propagate the exit status (124 on
+// timeout, or the command's own code); real usage errors are returned as plain
+// errors and still print.
+func (e timeoutExitError) SuppressCLIError() bool { return true }
+
 func TimeoutCmd(args []string) error {
 	fsFlags := flag.NewFlagSet("timeout", flag.ContinueOnError)
 	sigName := fsFlags.String("s", "TERM", "signal to send on timeout")

@@ -49,7 +49,8 @@ func StatCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -h, --help           show this help")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Format directives:")
-		fmt.Fprintf(os.Stderr, "%s\n", "  %n  filename              %s  size in bytes")
+		fmt.Fprintf(os.Stderr, "%s\n", "  %n  filename              %N  quoted name (+ link target)")
+		fmt.Fprintf(os.Stderr, "%s\n", "  %s  size in bytes")
 		fmt.Fprintf(os.Stderr, "%s\n", "  %f  raw mode (hex)        %F  file type")
 		fmt.Fprintf(os.Stderr, "%s\n", "  %u  user ID               %g  group ID")
 		fmt.Fprintf(os.Stderr, "%s\n", "  %U  user name             %G  group name")
@@ -287,6 +288,16 @@ func formatStat(format, name string, info os.FileInfo) string {
 			out.WriteByte('%')
 		case 'n':
 			out.WriteString(name)
+		case 'N':
+			// Quoted file name; for a symlink (only when not dereferenced,
+			// i.e. info is the link itself) append its target like GNU stat.
+			if info.Mode()&os.ModeSymlink != 0 {
+				if target, lerr := os.Readlink(name); lerr == nil {
+					fmt.Fprintf(&out, "'%s' -> '%s'", name, target)
+					break
+				}
+			}
+			fmt.Fprintf(&out, "'%s'", name)
 		case 's':
 			fmt.Fprintf(&out, "%d", info.Size())
 		case 'f':

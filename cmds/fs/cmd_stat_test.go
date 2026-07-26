@@ -37,6 +37,42 @@ func TestStatCmdOptionsFormatTokens(t *testing.T) {
 	}
 }
 
+// TestStatCmdFormatQuotedName is a regression test for the %N directive, which
+// was previously unimplemented and echoed literally. %N must quote the name and,
+// for a symlink (unless -L dereferences it), append the link target like GNU stat.
+func TestStatCmdFormatQuotedName(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink("file", link); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"regular file", []string{"-c", "%N", file}, fmt.Sprintf("'%s'\n", file)},
+		{"symlink shows target", []string{"-c", "%N", link}, fmt.Sprintf("'%s' -> 'file'\n", link)},
+		{"deref hides target", []string{"-L", "-c", "%N", link}, fmt.Sprintf("'%s'\n", link)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureFsCmd(t, func() error { return StatCmd(tc.args) })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out != tc.want {
+				t.Fatalf("expected %q, got %q", tc.want, out)
+			}
+		})
+	}
+}
+
 // TestStatCmdOptionsExpandedFormatDirectives is a regression test for the
 // previously-missing GNU stat -c directives: %f (raw hex mode), %u/%g
 // (numeric uid/gid), %U/%G (user/group name), %A (rwx permission string),

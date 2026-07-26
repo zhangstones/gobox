@@ -14,6 +14,22 @@ func TestTimeoutTerminatesCommand(t *testing.T) {
 	}
 }
 
+// TestTimeoutExitErrorSuppressesCLIMessage is a regression test ensuring a
+// timeout/child-exit status is propagated silently (like GNU timeout) instead
+// of printing "timeout: exit code N" to stderr. main.go honors SuppressCLIError.
+func TestTimeoutExitErrorSuppressesCLIMessage(t *testing.T) {
+	var err error = timeoutExitError(124)
+	silencer, ok := err.(interface{ SuppressCLIError() bool })
+	if !ok || !silencer.SuppressCLIError() {
+		t.Fatalf("timeoutExitError must suppress the CLI error message")
+	}
+	// The exit code must still be carried for main to return.
+	coder, ok := err.(interface{ ExitCode() int })
+	if !ok || coder.ExitCode() != 124 {
+		t.Fatalf("timeoutExitError must still expose exit code 124")
+	}
+}
+
 func TestTimeoutCmdHelpUsesMergedLongFlags(t *testing.T) {
 	out, err := captureProcOutput(t, func() error {
 		return TimeoutCmd([]string{"--help"})

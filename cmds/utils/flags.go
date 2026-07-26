@@ -36,6 +36,82 @@ func ParseFlagSet(fs *flag.FlagSet, args []string) error {
 	return fs.Parse(ExpandShortClusters(args, short, long))
 }
 
+// ParseFlagSetPermute is like ParseFlagSet but first reorders args so that
+// options (and any values they consume) precede positional operands, matching
+// GNU getopt's default argument permutation. Use it for commands whose options
+// may legitimately follow a positional (e.g. `np --scan PORTS -W 1 HOST`).
+func ParseFlagSetPermute(fs *flag.FlagSet, args []string) error {
+	short := func(c byte) (bool, bool) {
+		f := fs.Lookup(string(c))
+		if f == nil {
+			return false, false
+		}
+		return true, !isBoolFlag(f)
+	}
+	long := func(name string) (bool, bool) {
+		f := fs.Lookup(name)
+		if f == nil {
+			return false, false
+		}
+		return true, !isBoolFlag(f)
+	}
+	permuted := PermuteArgs(args, short, long)
+	return fs.Parse(ExpandShortClusters(permuted, short, long))
+}
+
+// PermuteArgs reorders args so recognized options and the values they consume
+// come before positional operands, leaving the relative order within each group
+// intact. Everything after a literal "--" is treated as positional. Tokens that
+// look like options but name no defined flag are treated as positionals so they
+// surface to the parser unchanged.
+func PermuteArgs(args []string, short ShortFlagClassifier, long LongFlagClassifier) []string {
+	opts := make([]string, 0, len(args))
+	pos := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			pos = append(pos, args[i:]...)
+			break
+		}
+		if len(a) < 2 || a[0] != '-' {
+			pos = append(pos, a)
+			continue
+		}
+		if strings.HasPrefix(a, "--") {
+			opts = append(opts, a)
+			if long != nil && !strings.Contains(a, "=") {
+				if defined, takesValue := long(a[2:]); defined && takesValue && i+1 < len(args) {
+					opts = append(opts, args[i+1])
+					i++
+				}
+			}
+			continue
+		}
+		body := a[1:]
+		if long != nil {
+			if defined, takesValue := long(body); defined {
+				opts = append(opts, a)
+				if takesValue && i+1 < len(args) {
+					opts = append(opts, args[i+1])
+					i++
+				}
+				continue
+			}
+		}
+		_, expectsNext, ok := expandShortCluster(a, short)
+		if !ok {
+			pos = append(pos, a)
+			continue
+		}
+		opts = append(opts, a)
+		if expectsNext && i+1 < len(args) {
+			opts = append(opts, args[i+1])
+			i++
+		}
+	}
+	return append(opts, pos...)
+}
+
 // ExpandShortClusters rewrites GNU-style short-option clusters into the spaced
 // forms understood by simple token-matching parsers. It mirrors the flag
 // package's parsing boundaries: option processing stops at "--", at a bare "-",

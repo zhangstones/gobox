@@ -91,3 +91,60 @@ func TestParseFlagSetLongNamesStillWork(t *testing.T) {
 		t.Fatalf("expected -maxdepth=2, got %s", fs.Lookup("maxdepth").Value)
 	}
 }
+
+// TestParseFlagSetPermuteOptionsAfterPositional is a regression test for np's
+// arg-ordering bug: options that follow a positional (e.g. `-n 1` between the
+// scan ports and the host) were ignored and the next option token was mistaken
+// for a positional. Permutation must recover both the option value and the
+// operands.
+func TestParseFlagSetPermuteOptionsAfterPositional(t *testing.T) {
+	fs := newTestFlagSet()
+	// mirrors `np --scan 22,39999 -n 1 host`: positional, then value flag, then positional.
+	if err := ParseFlagSetPermute(fs, []string{"22,39999", "-n", "1", "host"}); err != nil {
+		t.Fatalf("ParseFlagSetPermute returned error: %v", err)
+	}
+	if fs.Lookup("n").Value.String() != "1" {
+		t.Fatalf("expected -n=1, got %s", fs.Lookup("n").Value)
+	}
+	if got := fs.Args(); !reflect.DeepEqual(got, []string{"22,39999", "host"}) {
+		t.Fatalf("expected operands [22,39999 host], got %q", got)
+	}
+}
+
+func TestPermuteArgs(t *testing.T) {
+	fs := newTestFlagSet()
+	short := func(c byte) (bool, bool) {
+		f := fs.Lookup(string(c))
+		if f == nil {
+			return false, false
+		}
+		return true, !isBoolFlag(f)
+	}
+	long := func(name string) (bool, bool) {
+		f := fs.Lookup(name)
+		if f == nil {
+			return false, false
+		}
+		return true, !isBoolFlag(f)
+	}
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"value flag after positional", []string{"ports", "-n", "1", "host"}, []string{"-n", "1", "ports", "host"}},
+		{"bool after positional", []string{"host", "-z"}, []string{"-z", "host"}},
+		{"attached value after positional", []string{"host", "-n5"}, []string{"-n5", "host"}},
+		{"already ordered untouched", []string{"-z", "-n", "1", "host"}, []string{"-z", "-n", "1", "host"}},
+		{"double-dash keeps rest positional", []string{"-z", "--", "-n", "host"}, []string{"-z", "--", "-n", "host"}},
+		{"unknown option treated as positional", []string{"-q", "host"}, []string{"-q", "host"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := PermuteArgs(tc.in, short, long)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("PermuteArgs(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

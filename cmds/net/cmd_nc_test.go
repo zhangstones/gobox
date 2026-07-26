@@ -398,6 +398,40 @@ func TestNCListenUDP(t *testing.T) {
 	}
 }
 
+// TestNCUDPClientHonorsWaitTimeout is a regression test: the UDP client used to
+// io.Copy from the connection with no read deadline, so against an open-but-
+// silent peer (no reply, no EOF) it blocked forever and ignored -w. It must now
+// exit promptly around the -w window instead of hanging.
+func TestNCUDPClientHonorsWaitTimeout(t *testing.T) {
+	// Silent UDP listener: receives datagrams but never replies.
+	ln, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start UDP listener: %v", err)
+	}
+	defer ln.Close()
+	port := ln.LocalAddr().(*net.UDPAddr).Port
+
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		_, err := runNcCmdWithStdin([]string{"-u", "-w", "1", "127.0.0.1", strconv.Itoa(port)}, "hello-udp\n")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("UDP client should treat read timeout as normal end, got err=%v", err)
+		}
+		if elapsed > 4*time.Second {
+			t.Fatalf("UDP client took %v; expected to exit near the 1s -w window", elapsed)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("UDP client hung: -w timeout not honored on the read path")
+	}
+}
+
 // ============== PORT SCAN MODE TESTS ==============
 
 func TestNCPortScanOpen(t *testing.T) {

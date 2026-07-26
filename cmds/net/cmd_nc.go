@@ -322,9 +322,19 @@ func ncClient(host, port string, udp, zeroIO, verbose, numericOnly, forceIPv4, f
 		done <- err
 	}()
 
+	// UDP has no connection close/EOF, so io.Copy would block forever when the
+	// peer never replies. Honor -w as an overall read timeout so the client
+	// exits instead of hanging; a read timeout is a normal end, not an error.
+	if udp && waitSec > 0 {
+		_ = conn.SetReadDeadline(time.Now().Add(time.Duration(waitSec) * time.Second))
+	}
+
 	// Copy connection to stdout
 	_, err = io.Copy(os.Stdout, conn)
 	if err != nil {
+		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			return nil
+		}
 		return err
 	}
 
