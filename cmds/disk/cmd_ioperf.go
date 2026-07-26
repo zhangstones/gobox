@@ -228,12 +228,26 @@ func IoperfCmd(args []string) error {
 			}
 			defer file.Close()
 
-			// Pre-allocate file if writing
-			if *rwMode == "write" || *rwMode == "randwrite" || *rwMode == "readwrite" {
+			// Pre-allocate the file so I/O has real data to touch. Write modes
+			// size the file exactly. Read modes only *grow* a short/empty file
+			// (e.g. the per-job "filename.N" files, which are freshly created and
+			// empty) up to the requested size so ReadAt returns full blocks
+			// instead of hitting EOF — otherwise reads transfer 0 bytes and
+			// bandwidth reads as 0. An existing larger file is never shrunk.
+			switch *rwMode {
+			case "write", "randwrite", "readwrite":
 				if err := file.Truncate(sizeBytes); err != nil {
 					fmt.Fprintf(os.Stderr, "ioperf: job %d: truncate %s: %v\n", jid, jobFilename, err)
 					resultChan <- jobResult{jobID: jid}
 					return
+				}
+			case "read", "randread":
+				if info, statErr := file.Stat(); statErr == nil && info.Size() < sizeBytes {
+					if err := file.Truncate(sizeBytes); err != nil {
+						fmt.Fprintf(os.Stderr, "ioperf: job %d: truncate %s: %v\n", jid, jobFilename, err)
+						resultChan <- jobResult{jobID: jid}
+						return
+					}
 				}
 			}
 

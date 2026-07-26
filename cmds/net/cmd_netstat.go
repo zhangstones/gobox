@@ -1126,7 +1126,7 @@ func parseProcNetUDP(path string, proto string) ([]tcpConn, error) {
 			UID:        uid,
 			LocalIP:    lip,
 			RemoteIP:   rip,
-			State:      tcpStateName(stateHex),
+			State:      udpStateName(stateHex),
 			Proto:      proto,
 			Timer:      timer,
 		})
@@ -1186,6 +1186,20 @@ func unixStateName(h string) string {
 		return "DISCONNECTING"
 	default:
 		return h
+	}
+}
+
+// udpStateName maps a /proc/net/udp state to what native netstat shows for UDP.
+// A UDP socket is stateless, so an unconnected socket (07 = TCP_CLOSE) is
+// displayed with a blank state; only a connected socket (01) shows ESTABLISHED.
+func udpStateName(h string) string {
+	switch strings.ToUpper(h) {
+	case "01":
+		return "ESTABLISHED"
+	case "07":
+		return ""
+	default:
+		return tcpStateName(h)
 	}
 }
 

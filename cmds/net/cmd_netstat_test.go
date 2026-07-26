@@ -96,6 +96,17 @@ func TestTCPStateName(t *testing.T) {
 	}
 }
 
+// TestUDPStateName verifies UDP state rendering: unconnected UDP sockets
+// (07 = TCP_CLOSE) show a blank state like native netstat, not "CLOSE".
+func TestUDPStateName(t *testing.T) {
+	if got := udpStateName("07"); got != "" {
+		t.Fatalf("unconnected UDP state = %q, want blank", got)
+	}
+	if got := udpStateName("01"); got != "ESTABLISHED" {
+		t.Fatalf("connected UDP state = %q, want ESTABLISHED", got)
+	}
+}
+
 func TestParseProcNetTCP(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tcp")

@@ -486,3 +486,43 @@ func TestFindAtimeEndToEnd(t *testing.T) {
 		t.Fatalf("expected -atime +1d to exclude the fresh file, got %q", output)
 	}
 }
+
+// TestFindDotRootPrefix verifies that a "." starting point is printed with the
+// GNU-style "./" prefix and that -path matches against that printed path
+// (regression: gobox previously stripped "./", so -path '*/sub/*' matched nothing).
+func TestFindDotRootPrefix(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatalf("mkdir sub: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "inner.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write inner: %v", err)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(cwd)
+
+	// Output for a "." root keeps the "./" prefix.
+	out, err := runFindCmd(t, []string{".", "-name", "inner.txt"})
+	if err != nil {
+		t.Fatalf("find . -name failed: %v", err)
+	}
+	if strings.TrimSpace(out) != "./sub/inner.txt" {
+		t.Fatalf("find . -name inner.txt = %q, want ./sub/inner.txt", strings.TrimSpace(out))
+	}
+
+	// -path '*/sub/*' matches because it is applied to the "./sub/..." path.
+	out, err = runFindCmd(t, []string{".", "-path", "*/sub/*"})
+	if err != nil {
+		t.Fatalf("find . -path failed: %v", err)
+	}
+	if !strings.Contains(out, "./sub/inner.txt") {
+		t.Fatalf("find . -path '*/sub/*' = %q, want it to contain ./sub/inner.txt", out)
+	}
+}

@@ -531,16 +531,31 @@ func TestHeadInvalidNLines(t *testing.T) {
 	}
 }
 
+// TestHeadNegativeNLines verifies GNU head's "-n -N" semantics: print all
+// lines except the last N (regression for -n +N being silently ignored).
 func TestHeadNegativeNLines(t *testing.T) {
 	tmpDir := t.TempDir()
 	filename := filepath.Join(tmpDir, "test_head_neg_n.txt")
-	content := "line1\nline2\n"
+	content := "line1\nline2\nline3\nline4\nline5\n"
 	os.WriteFile(filename, []byte(content), 0644)
 	defer os.Remove(filename)
 
-	_, err := runHeadCmd([]string{"-n", "-5", filename})
-	if err == nil {
-		t.Fatalf("head -n with negative should fail")
+	// -n -2: all but the last 2 lines.
+	out, err := runHeadCmd([]string{"-n", "-2", filename})
+	if err != nil {
+		t.Fatalf("head -n -2 unexpected error: %v", err)
+	}
+	if out != "line1\nline2\nline3\n" {
+		t.Fatalf("head -n -2 = %q, want line1..line3", out)
+	}
+
+	// -n -N where N exceeds the line count prints nothing.
+	out, err = runHeadCmd([]string{"-n", "-100", filename})
+	if err != nil {
+		t.Fatalf("head -n -100 unexpected error: %v", err)
+	}
+	if out != "" {
+		t.Fatalf("head -n -100 = %q, want empty", out)
 	}
 }
 

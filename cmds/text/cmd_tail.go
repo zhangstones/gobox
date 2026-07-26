@@ -17,6 +17,7 @@ import (
 func TailCmdWithContext(ctx context.Context, args []string) error {
 	var (
 		lines         = 10    // default number of lines
+		fromStart     = false // -n +N: output starting at line N (from the beginning)
 		follow        = false // -f: follow mode
 		followByName  = false // --follow=name: follow by filename
 		retry         = false // --retry: keep trying to open file
@@ -35,31 +36,30 @@ func TailCmdWithContext(ctx context.Context, args []string) error {
 				return fmt.Errorf("-n/--lines requires an argument")
 			}
 			i++
-			n, err := strconv.Atoi(args[i])
-			if err != nil || n < 0 {
-				return fmt.Errorf("invalid number of lines: %s", args[i])
+			n, fs, err := parseTailLines(args[i])
+			if err != nil {
+				return err
 			}
-			lines = n
+			lines, fromStart = n, fs
 		case strings.HasPrefix(arg, "-n="):
-			n, err := strconv.Atoi(arg[3:])
-			if err != nil || n < 0 {
-				return fmt.Errorf("invalid number of lines: %s", arg[3:])
+			n, fs, err := parseTailLines(arg[3:])
+			if err != nil {
+				return err
 			}
-			lines = n
+			lines, fromStart = n, fs
 		case strings.HasPrefix(arg, "--lines="):
-			val := arg[len("--lines="):]
-			n, err := strconv.Atoi(val)
-			if err != nil || n < 0 {
-				return fmt.Errorf("invalid number of lines: %s", val)
+			n, fs, err := parseTailLines(arg[len("--lines="):])
+			if err != nil {
+				return err
 			}
-			lines = n
+			lines, fromStart = n, fs
 		case strings.HasPrefix(arg, "-n") && arg != "-n":
-			// GNU-style attached value, e.g. -n5
-			n, err := strconv.Atoi(arg[2:])
-			if err != nil || n < 0 {
-				return fmt.Errorf("invalid number of lines: %s", arg[2:])
+			// GNU-style attached value, e.g. -n5 or -n+5
+			n, fs, err := parseTailLines(arg[2:])
+			if err != nil {
+				return err
 			}
-			lines = n
+			lines, fromStart = n, fs
 		case arg == "-f" || arg == "--follow":
 			follow = true
 		case arg == "--follow=name":
@@ -123,7 +123,7 @@ doneFlags:
 		if follow {
 			return fmt.Errorf("cannot follow stdin in follow mode")
 		}
-		if err := tailReader(os.Stdin, os.Stdout, lines); err != nil {
+		if err := tailReader(os.Stdin, os.Stdout, lines, fromStart); err != nil {
 			return err
 		}
 		return nil
@@ -131,7 +131,7 @@ doneFlags:
 
 	// Follow mode
 	if follow {
-		return tailFollow(ctx, files, lines, followByName, retry, quiet, multipleFiles, sleepInterval, pid)
+		return tailFollow(ctx, files, lines, fromStart, followByName, retry, quiet, multipleFiles, sleepInterval, pid)
 	}
 
 	// Normal mode - process files
@@ -139,7 +139,7 @@ doneFlags:
 		if multipleFiles && !quiet {
 			fmt.Printf("==> %s <==\n", file)
 		}
-		if err := tailFileWithRetry(file, os.Stdout, lines, retry); err != nil {
+		if err := tailFileWithRetry(file, os.Stdout, lines, fromStart, retry); err != nil {
 			return err
 		}
 		if multipleFiles && !quiet && file != files[len(files)-1] {
@@ -177,7 +177,36 @@ func printTailUsage(w io.Writer) {
 	fmt.Fprintln(w, "  gobox tail --pid=123 -f file.txt  Stop when PID 123 exits")
 }
 
-func tailReader(r io.Reader, w io.Writer, n int) error {
+// parseTailLines parses a -n/--lines value. A leading '+' selects "from start"
+// mode (GNU tail -n +N: output beginning at line N).
+func parseTailLines(s string) (n int, fromStart bool, err error) {
+	if strings.HasPrefix(s, "+") {
+		fromStart = true
+	}
+	n, convErr := strconv.Atoi(s)
+	if convErr != nil || n < 0 {
+		return 0, false, fmt.Errorf("invalid number of lines: %s", s)
+	}
+	return n, fromStart, nil
+}
+
+func tailReader(r io.Reader, w io.Writer, n int, fromStart bool) error {
+	if fromStart {
+		// Output every line from line n onward (1-indexed); +0 and +1 print all.
+		start := n
+		if start < 1 {
+			start = 1
+		}
+		lineNo := 0
+		scanner := bufio.NewScanner(r)
+		for scanner.Scan() {
+			lineNo++
+			if lineNo >= start {
+				fmt.Fprintln(w, scanner.Text())
+			}
+		}
+		return scanner.Err()
+	}
 	if n <= 0 {
 		_, err := io.Copy(io.Discard, r)
 		return err
@@ -203,11 +232,7 @@ func tailReader(r io.Reader, w io.Writer, n int) error {
 	return nil
 }
 
-func tailFile(filename string, w io.Writer, n int) error {
-	return tailFileWithRetry(filename, w, n, false)
-}
-
-func tailFileWithRetry(filename string, w io.Writer, n int, retry bool) error {
+func tailFileWithRetry(filename string, w io.Writer, n int, fromStart, retry bool) error {
 	for {
 		file, err := os.Open(filename)
 		if err != nil {
@@ -218,7 +243,7 @@ func tailFileWithRetry(filename string, w io.Writer, n int, retry bool) error {
 			return fmt.Errorf("cannot open %s: %w", filename, err)
 		}
 		defer file.Close()
-		return tailReader(file, w, n)
+		return tailReader(file, w, n, fromStart)
 	}
 }
 
@@ -246,7 +271,7 @@ func getFileInode(f *os.File) (uint64, uint64, error) {
 }
 
 // tailFollow implements the -f (follow) functionality
-func tailFollow(ctx context.Context, files []string, lines int, followByName, retry, quiet, multipleFiles bool, sleepInterval float64, pid int) error {
+func tailFollow(ctx context.Context, files []string, lines int, fromStart bool, followByName, retry, quiet, multipleFiles bool, sleepInterval float64, pid int) error {
 	// Set up signal handling for SIGINT
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -298,11 +323,18 @@ func tailFollow(ctx context.Context, files []string, lines int, followByName, re
 			reader:    f,
 			following: true,
 		}
-		// Print last n lines of initial content
+		// Print initial content: from line n with +N, else the last n lines.
 		if !quiet && multipleFiles {
 			fmt.Printf("==> %s <==\n", filename)
 		}
-		if err := tailFileReader(f, os.Stdout, lines); err != nil {
+		if fromStart {
+			if _, err := f.Seek(0, io.SeekStart); err == nil {
+				if err := tailReader(f, os.Stdout, lines, true); err != nil {
+					f.Close()
+					return err
+				}
+			}
+		} else if err := tailFileReader(f, os.Stdout, lines); err != nil {
 			f.Close()
 			return err
 		}

@@ -219,7 +219,7 @@ func printNCHelp(w io.Writer) {
 	fmt.Fprintln(w, "  -6                     Force IPv6")
 	fmt.Fprintln(w, "  -h, --help             Show this help")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Benchmark mode:")
+	fmt.Fprintln(w, "Benchmark mode (requires a matching server: gobox nc -l --bench PORT):")
 	fmt.Fprintln(w, "  --bench                Enable benchmark mode")
 	fmt.Fprintln(w, "  -c N, --concurrent=N   Concurrent connections (default 1)")
 	fmt.Fprintln(w, "  -n N, --requests=N     Total requests (default 100)")
@@ -232,8 +232,8 @@ func printNCHelp(w io.Writer) {
 	fmt.Fprintln(w, "  gobox nc -l -u 8080                 Listen on UDP port 8080")
 	fmt.Fprintln(w, "  gobox nc -zv localhost 8080         Scan port 8080")
 	fmt.Fprintln(w, "  gobox nc host.example.com 80        Connect to host")
-	fmt.Fprintln(w, "  gobox nc --bench localhost 8080      Run benchmark")
-	fmt.Fprintln(w, "  gobox nc -c 10 -n 1000 --bench localhost 8080  10 concurrent, 1000 requests")
+	fmt.Fprintln(w, "  gobox nc -l --bench 8080             Start benchmark server on 8080")
+	fmt.Fprintln(w, "  gobox nc -c 10 -n 1000 --bench localhost 8080  Run benchmark: 10 concurrent, 1000 requests")
 }
 
 // parseNCSize parses size with optional suffix B/K/M/G
@@ -831,6 +831,13 @@ func ncBenchmarkClient(host, port string, udp, verbose, numericOnly, forceIPv4, 
 
 	if connectionErrors > 0 {
 		fmt.Printf("Connection errors: %d\n", connectionErrors)
+	}
+
+	// A benchmark that moved no data almost always means the peer does not speak
+	// gobox's private echo protocol (e.g. a plain `nc -l` sink or an HTTP server).
+	// Point the user at the matching server instead of leaving a silent zero.
+	if totalBytes == 0 {
+		fmt.Fprintln(os.Stderr, "nc: no data transferred - nc --bench requires a matching server started with 'gobox nc -l --bench PORT'")
 	}
 
 	return nil

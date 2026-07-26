@@ -102,14 +102,23 @@ func FindCmd(args []string) error {
 	}
 
 	for _, root := range paths {
-		root = filepath.Clean(root)
-		baseDepth := pathDepth(root)
-		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		// Preserve the root exactly as given for display (GNU find prints the
+		// starting point verbatim, e.g. "find ." yields "./x"), but walk the
+		// cleaned path since WalkDir requires a real filesystem path.
+		origRoot := root
+		cleanRoot := filepath.Clean(root)
+		baseDepth := pathDepth(cleanRoot)
+		err := filepath.WalkDir(cleanRoot, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
-				if p == root {
+				if p == cleanRoot {
 					return err
 				}
 				return nil
+			}
+			// display is the path as GNU find would print it (root prefix preserved).
+			display := origRoot
+			if rel, relErr := filepath.Rel(cleanRoot, p); relErr == nil && rel != "." {
+				display = joinDisplayPath(origRoot, rel)
 			}
 			depth := pathDepth(p) - baseDepth
 			if *maxdepth >= 0 && depth > *maxdepth {
@@ -153,7 +162,9 @@ func FindCmd(args []string) error {
 			}
 
 			if pathPatternRe != nil {
-				candidate := filepath.ToSlash(filepath.Clean(p))
+				// GNU find matches -path against the printed path, which keeps
+				// the root prefix (so "find . -path '*/x/*'" can match "./x/...").
+				candidate := filepath.ToSlash(display)
 				apply("path", pathPatternRe.MatchString(candidate))
 			}
 
@@ -208,7 +219,7 @@ func FindCmd(args []string) error {
 			}
 
 			if matched && *printFlag {
-				fmt.Println(p)
+				fmt.Println(display)
 			}
 			return nil
 		})
@@ -318,6 +329,18 @@ func normalizeFindArgs(args []string) []string {
 		normalized = append(normalized, arg)
 	}
 	return normalized
+}
+
+// joinDisplayPath joins a root prefix with a relative path without cleaning,
+// so a "." root is preserved as "./rel" the way GNU find prints it.
+func joinDisplayPath(root, rel string) string {
+	if root == "" {
+		return rel
+	}
+	if strings.HasSuffix(root, string(filepath.Separator)) {
+		return root + rel
+	}
+	return root + string(filepath.Separator) + rel
 }
 
 func matchPathPattern(pattern, path string) bool {

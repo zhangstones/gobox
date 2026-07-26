@@ -12,11 +12,25 @@ import (
 // headCmd implements the head command
 func HeadCmd(args []string) error {
 	var (
-		lines    = 10 // default number of lines
-		bytes    = -1 // -1 means no byte limit
-		quiet    = false
-		showHelp = false
+		lines        = 10    // default number of lines
+		linesFromEnd = false // -n -N: print all but the last N lines
+		bytes        = -1    // -1 means no byte limit
+		bytesFromEnd = false // -c -N: print all but the last N bytes
+		quiet        = false
+		showHelp     = false
 	)
+
+	// parseCount parses a NUM value; a leading '-' selects "all but last N" mode.
+	parseCount := func(s, kind string) (n int, fromEnd bool, err error) {
+		v, convErr := strconv.Atoi(s)
+		if convErr != nil {
+			return 0, false, fmt.Errorf("invalid number of %s: %s", kind, s)
+		}
+		if v < 0 {
+			return -v, true, nil
+		}
+		return v, false, nil
+	}
 
 	i := 0
 	for i < len(args) {
@@ -27,61 +41,59 @@ func HeadCmd(args []string) error {
 				return fmt.Errorf("-n/--lines requires an argument")
 			}
 			i++
-			n, err := strconv.Atoi(args[i])
-			if err != nil || n < 0 {
-				return fmt.Errorf("invalid number of lines: %s", args[i])
+			n, fe, err := parseCount(args[i], "lines")
+			if err != nil {
+				return err
 			}
-			lines = n
+			lines, linesFromEnd = n, fe
 		case strings.HasPrefix(arg, "-n="):
-			n, err := strconv.Atoi(arg[3:])
-			if err != nil || n < 0 {
-				return fmt.Errorf("invalid number of lines: %s", arg[3:])
+			n, fe, err := parseCount(arg[3:], "lines")
+			if err != nil {
+				return err
 			}
-			lines = n
+			lines, linesFromEnd = n, fe
 		case strings.HasPrefix(arg, "--lines="):
-			val := arg[len("--lines="):]
-			n, err := strconv.Atoi(val)
-			if err != nil || n < 0 {
-				return fmt.Errorf("invalid number of lines: %s", val)
+			n, fe, err := parseCount(arg[len("--lines="):], "lines")
+			if err != nil {
+				return err
 			}
-			lines = n
+			lines, linesFromEnd = n, fe
 		case strings.HasPrefix(arg, "-n") && arg != "-n":
-			// GNU-style attached value, e.g. -n5
-			n, err := strconv.Atoi(arg[2:])
-			if err != nil || n < 0 {
-				return fmt.Errorf("invalid number of lines: %s", arg[2:])
+			// GNU-style attached value, e.g. -n5 or -n-2
+			n, fe, err := parseCount(arg[2:], "lines")
+			if err != nil {
+				return err
 			}
-			lines = n
+			lines, linesFromEnd = n, fe
 		case arg == "-c" || arg == "--bytes":
 			if i+1 >= len(args) {
 				return fmt.Errorf("-c/--bytes requires an argument")
 			}
 			i++
-			n, err := strconv.Atoi(args[i])
-			if err != nil || n < 0 {
-				return fmt.Errorf("invalid number of bytes: %s", args[i])
+			n, fe, err := parseCount(args[i], "bytes")
+			if err != nil {
+				return err
 			}
-			bytes = n
+			bytes, bytesFromEnd = n, fe
 		case strings.HasPrefix(arg, "-c="):
-			n, err := strconv.Atoi(arg[3:])
-			if err != nil || n < 0 {
-				return fmt.Errorf("invalid number of bytes: %s", arg[3:])
+			n, fe, err := parseCount(arg[3:], "bytes")
+			if err != nil {
+				return err
 			}
-			bytes = n
+			bytes, bytesFromEnd = n, fe
 		case strings.HasPrefix(arg, "--bytes="):
-			val := arg[len("--bytes="):]
-			n, err := strconv.Atoi(val)
-			if err != nil || n < 0 {
-				return fmt.Errorf("invalid number of bytes: %s", val)
+			n, fe, err := parseCount(arg[len("--bytes="):], "bytes")
+			if err != nil {
+				return err
 			}
-			bytes = n
+			bytes, bytesFromEnd = n, fe
 		case strings.HasPrefix(arg, "-c") && arg != "-c":
-			// GNU-style attached value, e.g. -c100
-			n, err := strconv.Atoi(arg[2:])
-			if err != nil || n < 0 {
-				return fmt.Errorf("invalid number of bytes: %s", arg[2:])
+			// GNU-style attached value, e.g. -c100 or -c-100
+			n, fe, err := parseCount(arg[2:], "bytes")
+			if err != nil {
+				return err
 			}
-			bytes = n
+			bytes, bytesFromEnd = n, fe
 		case arg == "-q" || arg == "--quiet" || arg == "--silent":
 			quiet = true
 		case arg == "-h" || arg == "--help":
@@ -106,7 +118,7 @@ doneFlags:
 
 	// If no files, read from stdin
 	if len(files) == 0 {
-		if err := headReader(os.Stdin, os.Stdout, lines, bytes); err != nil {
+		if err := headReader(os.Stdin, os.Stdout, lines, linesFromEnd, bytes, bytesFromEnd); err != nil {
 			return err
 		}
 		return nil
@@ -117,7 +129,7 @@ doneFlags:
 		if multipleFiles && !quiet {
 			fmt.Printf("==> %s <==\n", file)
 		}
-		if err := headFile(file, os.Stdout, lines, bytes); err != nil {
+		if err := headFile(file, os.Stdout, lines, linesFromEnd, bytes, bytesFromEnd); err != nil {
 			return err
 		}
 		if multipleFiles && !quiet && file != files[len(files)-1] {
@@ -145,13 +157,48 @@ func printHeadUsage(w io.Writer) {
 	fmt.Fprintln(w, "  cat file.txt | gobox head -n 5")
 }
 
-func headReader(r io.Reader, w io.Writer, lines int, bytes int) error {
+func headReader(r io.Reader, w io.Writer, lines int, linesFromEnd bool, bytes int, bytesFromEnd bool) error {
 	if bytes >= 0 {
 		// Byte mode
+		if bytesFromEnd {
+			return headBytesAllBut(r, w, bytes)
+		}
 		return headBytes(r, w, bytes)
 	}
 	// Line mode
+	if linesFromEnd {
+		return headLinesAllBut(r, w, lines)
+	}
 	return headLines(r, w, lines)
+}
+
+// headLinesAllBut prints every line except the last n (GNU head -n -N).
+func headLinesAllBut(r io.Reader, w io.Writer, n int) error {
+	scanner := bufio.NewScanner(r)
+	var buffered []string
+	for scanner.Scan() {
+		buffered = append(buffered, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	for i := 0; i < len(buffered)-n; i++ {
+		fmt.Fprintln(w, buffered[i])
+	}
+	return nil
+}
+
+// headBytesAllBut writes every byte except the last n (GNU head -c -N).
+func headBytesAllBut(r io.Reader, w io.Writer, n int) error {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	if n >= len(data) {
+		return nil
+	}
+	_, err = w.Write(data[:len(data)-n])
+	return err
 }
 
 func headLines(r io.Reader, w io.Writer, n int) error {
@@ -173,12 +220,12 @@ func headBytes(r io.Reader, w io.Writer, n int) error {
 	return err
 }
 
-func headFile(filename string, w io.Writer, lines int, bytes int) error {
+func headFile(filename string, w io.Writer, lines int, linesFromEnd bool, bytes int, bytesFromEnd bool) error {
 	file, err := os.Open(filename)
 	if err != nil {
 		return fmt.Errorf("cannot open %s: %w", filename, err)
 	}
 	defer file.Close()
 
-	return headReader(file, w, lines, bytes)
+	return headReader(file, w, lines, linesFromEnd, bytes, bytesFromEnd)
 }

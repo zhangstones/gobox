@@ -46,7 +46,7 @@ func ReadpathCmd(args []string) error {
 		fmt.Fprintln(os.Stderr, "  -q, --quiet                    suppress most error messages")
 		fmt.Fprintln(os.Stderr, "  -h, --help                     show this help")
 	}
-	if err := utils.ParseFlagSet(fsFlags, args); err != nil {
+	if err := utils.ParseFlagSetPermute(fsFlags, args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}

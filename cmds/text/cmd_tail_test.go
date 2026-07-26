@@ -193,6 +193,34 @@ func TestTailNLinesMoreThanFile(t *testing.T) {
 	}
 }
 
+// TestTailFromStartPlusN verifies GNU tail's "-n +N" semantics: output starting
+// at line N (regression for +N being silently treated as last-N).
+func TestTailFromStartPlusN(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_tail_plus.txt")
+	os.WriteFile(filename, []byte("l1\nl2\nl3\nl4\nl5\n"), 0644)
+	defer os.Remove(filename)
+
+	// +3 starts at line 3 (l3, l4, l5), NOT the last 3 lines (which happen to
+	// also be l3..l5 here, so use +4 to distinguish).
+	output, err := runTailCmd([]string{"-n", "+4", filename})
+	if err != nil {
+		t.Fatalf("tail -n +4 failed: %v", err)
+	}
+	if got := strings.TrimSpace(output); got != "l4\nl5" {
+		t.Fatalf("tail -n +4 = %q, want \"l4\\nl5\"", got)
+	}
+
+	// +1 prints the whole file.
+	output, err = runTailCmd([]string{"-n", "+1", filename})
+	if err != nil {
+		t.Fatalf("tail -n +1 failed: %v", err)
+	}
+	if got := strings.TrimSpace(output); got != "l1\nl2\nl3\nl4\nl5" {
+		t.Fatalf("tail -n +1 = %q, want whole file", got)
+	}
+}
+
 // ============== -f FLAG TESTS (FOLLOW MODE) ==============
 
 func TestTailFollowFlag(t *testing.T) {

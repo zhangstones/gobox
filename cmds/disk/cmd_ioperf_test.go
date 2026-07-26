@@ -148,6 +148,37 @@ func TestIoperfCmdRandreadMode(t *testing.T) {
 	}
 }
 
+// TestIoperfMultiJobReadBandwidth is a regression for multi-job read benchmarks
+// reporting BW=0.00MB/s: each job used a freshly-created empty per-job file and
+// only write modes pre-allocated, so reads hit EOF and transferred no bytes.
+func TestIoperfMultiJobReadBandwidth(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "testfile_mj_read")
+
+	// The primary file exists; per-job files (.0/.1) are created empty and must
+	// be laid out by ioperf so reads return real blocks.
+	if err := os.WriteFile(filename, make([]byte, 256*1024), 0o644); err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+
+	output, err := runIoperfCmd([]string{
+		"--rw=randread",
+		"--filename=" + filename,
+		"--size=256k",
+		"--bs=4k",
+		"--numjobs=2",
+	})
+	if err != nil {
+		t.Fatalf("ioperf multi-job randread failed: %v\nOutput: %s", err, output)
+	}
+	if !strings.Contains(output, "READ:") {
+		t.Fatalf("expected READ: in output, got: %s", output)
+	}
+	if strings.Contains(output, "BW=0.00MB/s") {
+		t.Fatalf("multi-job read reported zero bandwidth (regression), got: %s", output)
+	}
+}
+
 func TestIoperfCmdRandwriteMode(t *testing.T) {
 	tmpDir := t.TempDir()
 	filename := filepath.Join(tmpDir, "testfile_randwrite")

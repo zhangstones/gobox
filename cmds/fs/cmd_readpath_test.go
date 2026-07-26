@@ -429,3 +429,29 @@ func TestReadpathCmdOptionsMissingOperand(t *testing.T) {
 	}
 
 }
+
+// TestReadpathOptionAfterPositional verifies GNU-style option permutation:
+// a flag placed after a path operand is still recognized as an option
+// (regression: "-l" after the path was treated as a filename).
+func TestReadpathOptionAfterPositional(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "target")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink("target", link); err != nil {
+		t.Fatal(err)
+	}
+
+	// "-l" (readlink) comes after the path, yet must still take effect.
+	out, err := captureFsCmd(t, func() error {
+		return ReadpathCmd([]string{link, "-l"})
+	})
+	if err != nil {
+		t.Fatalf("readpath link -l failed: %v", err)
+	}
+	if strings.TrimSpace(out) != "target" {
+		t.Fatalf("readpath link -l = %q, want symlink target \"target\"", strings.TrimSpace(out))
+	}
+}
