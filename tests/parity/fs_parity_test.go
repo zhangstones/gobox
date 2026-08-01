@@ -530,8 +530,8 @@ func TestParity_FindCases(t *testing.T) {
 			NormalizeFactory: normFactory,
 		},
 		{
-			// FIND-path: -path glob filter parity.
-			ID:            "FIND-path",
+			// FIND-010: -path glob filter parity.
+			ID:            "FIND-010",
 			Name:          "find -path glob",
 			GoboxArgs:     []string{"find", "-path", "*/sub/*", "tree"},
 			NativeCommand: "find",
@@ -543,8 +543,8 @@ func TestParity_FindCases(t *testing.T) {
 			NormalizeFactory: normFactory,
 		},
 		{
-			// FIND-not: -not negate parity.
-			ID:            "FIND-not",
+			// FIND-011: -not negate parity.
+			ID:            "FIND-011",
 			Name:          "find -not -name",
 			GoboxArgs:     []string{"find", "-not", "-name", "*.txt", "tree"},
 			NativeCommand: "find",

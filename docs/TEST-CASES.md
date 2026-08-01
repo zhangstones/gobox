@@ -83,6 +83,8 @@
 | FIND-007 | `-print` | contract | `find -print` | 单文件树 | 默认与显式打印行为稳定 |
 | FIND-008 | `-size` | exact | `find -size` | 不同大小文件 | 大小过滤一致 |
 | FIND-009 | `-type` | exact | `find -type` | 文件+目录 | 类型过滤一致 |
+| FIND-010 | `-path` | exact | `find -path` | 多层目录树 | glob 全路径匹配一致 |
+| FIND-011 | `-not` | exact | `find -not` | 混合文件名 | 对后续谓词取反的匹配集合一致 |
 
 ### du
 

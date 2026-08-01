@@ -31,8 +31,8 @@ func FindCmd(args []string) error {
 	printFlag := fsFlags.Bool("print", true, "print matched paths")
 	empty := fsFlags.Bool("empty", false, "match empty files or directories")
 	size := fsFlags.String("size", "", "file size: +N (larger than N), -N (smaller than N), N (equal to N) (c/K/M/G suffixes; default unit is bytes)")
-	atime := fsFlags.String("atime", "", "file access time: +N, -N, N (N[smh] = seconds/minutes/hours/days)")
-	mtime := fsFlags.String("mtime", "", "file modify time: +N, -N, N (N[smh] = seconds/minutes/hours/days)")
+	atime := fsFlags.String("atime", "", "file access time: +N, -N, N (N[smhd] = seconds/minutes/hours/days; no suffix = days)")
+	mtime := fsFlags.String("mtime", "", "file modify time: +N, -N, N (N[smhd] = seconds/minutes/hours/days; no suffix = days)")
 
 	fsFlags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: gobox find [OPTION]... [PATH...]")

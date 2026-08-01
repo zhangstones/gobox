@@ -67,11 +67,11 @@
 
 | gobox 参数 | 对应原生命令参数/参考基线 | 实现一致性 | 功能说明 |
 |------------|---------------|------------|----------|
-| `gobox find -atime string` | `find -atime` | ✅ 一致 | 文件访问时间过滤，`+N`（N天前）、`-N`（N天内）、`N`（恰好N天）。时间单位：`s`/`m`/`h`/`d` |
+| `gobox find -atime string` | `find -atime` | ✅ 一致 | 文件访问时间过滤，`+N`（N天前）、`-N`（N天内）、`N`（恰好N天）；默认单位为天，与原生一致。`s`/`m`/`h`/`d` 后缀为 gobox 扩展（原生仅按天，分钟需 `-amin`） |
 | `gobox find -empty` | `find -empty` | ✅ 一致 | 匹配空文件或空目录 |
 | `gobox find -maxdepth int` | `find -maxdepth` | ✅ 一致 | 最大目录深度（-1=无限制） |
 | `gobox find -mindepth int` | `find -mindepth` | ✅ 一致 | 最小目录深度 |
-| `gobox find -mtime string` | `find -mtime` | ✅ 一致 | 文件修改时间过滤，格式同`-atime` |
+| `gobox find -mtime string` | `find -mtime` | ✅ 一致 | 文件修改时间过滤，格式同`-atime`（`s`/`m`/`h`/`d` 后缀为 gobox 扩展） |
 | `gobox find -name string` | `find -name` | ✅ 一致 | 按文件名匹配（支持shell glob模式） |
 | `gobox find -path string` | `find -path` | ✅ 一致 | 按完整路径匹配（支持shell glob模式） |
 | `gobox find -print` | `find -print` | ✅ 一致 | 打印匹配的文件路径（默认为true） |
@@ -271,9 +271,9 @@
 | `gobox seq LAST` | `seq LAST` | ✅ 常用一致 | 输出 `1..LAST` 的递增序列；`LAST` 为负数时输出为空，与原生一致（不再误判为未知选项） |
 | `gobox seq FIRST LAST` | `seq FIRST LAST` | ✅ 常用一致 | 输出 `FIRST..LAST`，步长默认为 `1`；支持负数 `FIRST`/`LAST` |
 | `gobox seq FIRST INC LAST` | `seq FIRST INC LAST` | ✅ 常用一致 | 输出指定起点、步长和终点的序列，支持负步长、浮点数和负数操作数；小数位数取三个操作数中最长的一个，不会因浮点累加产生误差 |
-| `gobox seq -f FORMAT ...` | `seq -f` | ✅ 常用一致 | 使用 printf 风格格式化每个数字 |
-| `gobox seq -s SEP ...` | `seq -s` | ✅ 一致 | 使用自定义分隔符替代换行 |
-| `gobox seq -w ...` | `seq -w` | ✅ 常用一致 | 按最大位宽左侧补零（仅补整数部分，小数位不变），支持负数与浮点操作数组合 |
+| `gobox seq -f FORMAT, --format=FORMAT ...` | `seq -f` | ✅ 常用一致 | 使用 printf 风格格式化每个数字 |
+| `gobox seq -s SEP, --separator=SEP ...` | `seq -s` | ✅ 一致 | 使用自定义分隔符替代换行 |
+| `gobox seq -w, --equal-width ...` | `seq -w` | ✅ 常用一致 | 按最大位宽左侧补零（仅补整数部分，小数位不变），支持负数与浮点操作数组合 |
 | `gobox seq -h` | `seq --help` | ✅ 一致 | 显示帮助信息 |
 
 ### rand
@@ -390,6 +390,8 @@
 | `gobox nc -t SEC, --time=SEC` | `iperf -t` | 🆕 gobox扩展 | 测试持续时间 |
 | `gobox nc -i SEC, --interval=SEC` | `iperf -i` | 🆕 gobox扩展 | 报告间隔（默认 1s） |
 
+> `-n` 语义按上下文消歧：非监听模式下若紧跟一个数字（如 `-n 1000`）解析为基准测试请求数（`--requests`），否则等价 `--numeric-only`（跳过 DNS 解析）。长选项 `--numeric-only` / `--requests=N` 无歧义。
+
 ### netstat
 
 | gobox 参数 | 对应原生命令参数/参考基线 | 实现一致性 | 功能说明 |
@@ -411,7 +413,7 @@
 | `gobox netstat -s` | `netstat -s` | ⚠️ 部分一致 | 显示协议统计 |
 | `gobox netstat -c` | `netstat -c` | ⚠️ 部分一致 | 持续刷新输出 |
 | `gobox netstat -tnlp` | `netstat -tnlp` | ✅ 常用一致 | 支持常见短参数合并 |
-| `gobox netstat --help` | `netstat --help` | 🆕 gobox设计 | 帮助输出按功能分组，短长参数合并为单行展示 |
+| `gobox netstat --help` | `netstat --help` | 🆕 gobox扩展 | 帮助输出按功能分组，短长参数合并为单行展示 |
 | `gobox netstat --port int` | 端口过滤 | 🆕 gobox扩展 | 按本地或远端端口精确过滤 |
 | `gobox netstat --sort string` | 排序功能 | 🆕 gobox扩展 | 排序字段：recvq\|sendq\|local\|remote\|pid |
 | `gobox netstat --state string` | 状态过滤 | 🆕 gobox扩展 | 按连接状态过滤，支持状态列表 |
@@ -627,7 +629,7 @@
 | `gobox iostat -H` | `iostat -h` | ✅ 常用一致 | 人类可读格式 |
 | `gobox iostat -z` | `iostat -z` | ✅ 常用一致 | 跳过零活动设备 |
 | `gobox iostat --cgroup` | gobox-only | 🆕 gobox扩展 | 切换到基于 cgroup `io.stat`/`blkio` 的旧输出格式 |
-| `gobox iostat --help` | `iostat --help` | 🆕 gobox设计 | 帮助输出补充位置参数、列说明和示例 |
+| `gobox iostat --help` | `iostat --help` | 🆕 gobox扩展 | 帮助输出补充位置参数、列说明和示例 |
 
 ### ioperf
 
@@ -677,13 +679,14 @@
 
 ## 实现一致性说明
 
+标签的权威定义与文档承诺约束见上文 [一致性标签定义](#一致性标签定义)；下表仅为快速查阅的简表，取值必须与该节保持一致。
+
 | 标记 | 含义 |
 |------|------|
 | ✅ 一致 | 与原生命令核心语义、退出码和常见输出契约一致 |
 | ✅ 常用一致 | 高频用法一致，但边角行为、低频格式或环境相关细节不承诺完全同形 |
 | ⚠️ 部分一致 | 功能相似但存在已知差异、限制或环境相关偏差，条目需写明边界 |
 | 🆕 gobox扩展 | 原生命令无此参数或该语义为 gobox 自有设计 |
-| 📝 计划支持 | 已纳入设计，尚未实现或尚未完成 parity 对齐 |
 
 ---
 

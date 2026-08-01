@@ -290,7 +290,7 @@ type ParityCase struct {
 
 ```text
 tests/parity/
-  helpers_test.go
+  helpers_parity_test.go
   text_parity_test.go
   fs_parity_test.go
   net_parity_test.go
@@ -300,7 +300,7 @@ tests/parity/
 
 职责划分：
 
-- `helpers_test.go`
+- `helpers_parity_test.go`
   - 提供统一执行器：运行 gobox、运行原生命令、收集 stdout/stderr/exit code
   - 提供 temp file / temp dir / local server / local socket 辅助函数
 - `*_parity_test.go`
