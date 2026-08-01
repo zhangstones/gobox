@@ -421,33 +421,47 @@ func tailFileReader(f *os.File, w io.Writer, n int) error {
 		return err
 	}
 
-	if stat.Size() == 0 {
+	fileSize := stat.Size()
+	if fileSize == 0 || n <= 0 {
 		return nil
 	}
 
-	// Read from the end
-	fileSize := stat.Size()
-	var startPos int64 = 0
-	if fileSize > 4096 {
-		startPos = fileSize - 4096
-	}
-
-	_, err = f.Seek(startPos, io.SeekStart)
-	if err != nil {
-		return err
-	}
-
+	// Read a window from the end, growing it until it holds more than n lines
+	// (so we know we captured all n complete trailing lines) or it covers the
+	// whole file. A fixed window would drop earlier lines when the last n lines
+	// exceed it.
+	var chunk int64 = 4096
 	var lines []string
-	scanner := bufio.NewScanner(f)
-	// Scanner may not see last line if no newline at end
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-		if len(lines) > n {
-			lines = lines[1:]
+	for {
+		startPos := fileSize - chunk
+		if startPos < 0 {
+			startPos = 0
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return err
+		if _, err := f.Seek(startPos, io.SeekStart); err != nil {
+			return err
+		}
+		lines = lines[:0]
+		total := 0
+		scanner := bufio.NewScanner(f)
+		// Scanner may not see last line if no newline at end
+		for scanner.Scan() {
+			lines = append(lines, scanner.Text())
+			total++
+			if len(lines) > n {
+				lines = lines[1:]
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+		// Done once we've reached the start of the file, or the window already
+		// yielded more than n lines (a partial leading line was discarded, so
+		// the retained n lines are complete). total is tracked uncapped since
+		// lines itself is trimmed back to at most n on every append.
+		if startPos == 0 || total > n {
+			break
+		}
+		chunk *= 2
 	}
 
 	for _, line := range lines {

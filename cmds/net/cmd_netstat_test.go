@@ -265,6 +265,12 @@ func TestNetstatCmdSortByPID(t *testing.T) {
 
 	prev := -1
 	for _, line := range lines[1:] {
+		// Inet and Unix sockets print as separate tables, each sorted
+		// independently; reset the running check at each section header.
+		if strings.Contains(line, "LocalAddress") {
+			prev = -1
+			continue
+		}
 		fields := strings.Fields(line)
 		if len(fields) < 7 {
 			continue
@@ -1086,5 +1092,28 @@ func TestNetstatCmdLongContinuousFlagRuns(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("NetstatCmd --continuous did not stop after interrupt")
+	}
+}
+
+// Regression: the expensive /proc-wide inode→PID scan must only run when its
+// result is actually consumed (the -p program column or --sort pid). For the
+// common default view (e.g. netstat -tuln) it must be skipped.
+func TestNetstatNeedsInodePidMap(t *testing.T) {
+	cases := []struct {
+		name     string
+		programs bool
+		sortBy   string
+		want     bool
+	}{
+		{"default view", false, "", false},
+		{"sort recvq", false, "recvq", false},
+		{"programs column", true, "", true},
+		{"sort pid", false, "pid", true},
+		{"sort pid uppercase", false, "PID", true},
+	}
+	for _, c := range cases {
+		if got := netstatNeedsInodePidMap(c.programs, c.sortBy); got != c.want {
+			t.Fatalf("%s: netstatNeedsInodePidMap(%v, %q)=%v, want %v", c.name, c.programs, c.sortBy, got, c.want)
+		}
 	}
 }

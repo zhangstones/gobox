@@ -552,6 +552,44 @@ func TestGrepFilesWithoutMatch(t *testing.T) {
 	}
 }
 
+// grep -L exit status follows GNU grep's match rule, not "did I print names":
+// exit 1 when NO line matched anywhere (even though -L prints every filename),
+// and exit 0 when some line matched (even though -L then prints nothing). Guards
+// against "fixing" this to the more intuitive ugrep semantics, which would
+// diverge from the GNU baseline the parity suite pins.
+func TestGrepFilesWithoutMatchAllNoMatchExitsOne(t *testing.T) {
+	tmpDir := t.TempDir()
+	a := filepath.Join(tmpDir, "a.txt")
+	b := filepath.Join(tmpDir, "b.txt")
+	os.WriteFile(a, []byte("world\n"), 0o644)
+	os.WriteFile(b, []byte("planet\n"), 0o644)
+
+	output, err := runGrepCmd([]string{"-L", "hello", a, b})
+	result := strings.TrimSpace(output)
+	if !strings.Contains(result, "a.txt") || !strings.Contains(result, "b.txt") {
+		t.Fatalf("expected both filenames printed, got %q", result)
+	}
+	ec, ok := err.(ExitCodeError)
+	if !ok || int(ec) != 1 {
+		t.Fatalf("grep -L with no match anywhere should exit 1 (GNU rule), got err %v", err)
+	}
+}
+
+// grep -L exits 0 when some line matched, even though it prints nothing.
+func TestGrepFilesWithoutMatchAllMatchExitsZero(t *testing.T) {
+	tmpDir := t.TempDir()
+	a := filepath.Join(tmpDir, "a.txt")
+	os.WriteFile(a, []byte("hello\n"), 0o644)
+
+	output, err := runGrepCmd([]string{"-L", "hello", a})
+	if strings.TrimSpace(output) != "" {
+		t.Fatalf("expected no filenames printed, got %q", output)
+	}
+	if err != nil {
+		t.Fatalf("grep -L with a match should exit 0 (GNU rule), got err %v", err)
+	}
+}
+
 // writeTestFile helper kept for compatibility with other test files in this package
 func writeTestFile(t *testing.T, filename, content string) {
 	err := os.WriteFile(filename, []byte(content), 0644)

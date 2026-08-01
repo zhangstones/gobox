@@ -3,6 +3,7 @@ package text
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -909,4 +910,45 @@ func getFileInfo(filename string) (uint64, error) {
 		return 0, err
 	}
 	return uint64(f.Size()), nil
+}
+
+// Regression: tailFileReader (used for -f initial output and on rotation)
+// must return the last N lines even when those N lines span more than the
+// fixed read window. Previously it only scanned the final 4096 bytes, so a
+// large N on a big file silently dropped the earliest requested lines.
+func TestTailFileReaderLargeFileReturnsLastN(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "big.log")
+
+	var sb strings.Builder
+	for i := 0; i < 100; i++ {
+		line := fmt.Sprintf("line%03d", i)
+		line += strings.Repeat("-", 100-len(line)-1) // pad each line to 100 bytes incl newline
+		sb.WriteString(line)
+		sb.WriteByte('\n')
+	}
+	if err := os.WriteFile(filename, []byte(sb.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	var out bytes.Buffer
+	if err := tailFileReader(f, &out, 60); err != nil {
+		t.Fatalf("tailFileReader: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) != 60 {
+		t.Fatalf("expected 60 lines, got %d", len(lines))
+	}
+	if !strings.HasPrefix(lines[0], "line040") {
+		t.Fatalf("expected first emitted line line040, got %q", lines[0])
+	}
+	if !strings.HasPrefix(lines[len(lines)-1], "line099") {
+		t.Fatalf("expected last emitted line line099, got %q", lines[len(lines)-1])
+	}
 }

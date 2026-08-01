@@ -230,7 +230,14 @@ func printNetstatSockets(allSockets, tcpOnly, udpOnly, unixOnly, listeningOnly, 
 		conns = filtered
 	}
 
-	inodeToPid, pidName := buildInodePidMap()
+	// buildInodePidMap walks all of /proc and readlinks every fd, which is
+	// expensive. Only pay that cost when the result is consumed: the -p
+	// PID/Program column or --sort pid. The common default view skips it.
+	var inodeToPid map[string]int
+	var pidName map[string]string
+	if netstatNeedsInodePidMap(programs, sortBy) {
+		inodeToPid, pidName = buildInodePidMap()
+	}
 
 	// Apply filtering by state and port
 	if stateFilter != "" {
@@ -291,7 +298,11 @@ func printNetstatSockets(allSockets, tcpOnly, udpOnly, unixOnly, listeningOnly, 
 		}
 	}
 
-	rows := make([]netstatSocketRow, 0, len(conns))
+	// Internet (TCP/UDP) and Unix sockets are laid out as separate tables so
+	// that long Unix socket paths do not widen the LocalAddress column of the
+	// TCP/UDP rows. Each table computes its own column widths.
+	inetRows := make([]netstatSocketRow, 0, len(conns))
+	unixRows := make([]netstatSocketRow, 0)
 	for _, c := range conns {
 		pid := "-"
 		pname := "-"
@@ -307,15 +318,28 @@ func printNetstatSockets(allSockets, tcpOnly, udpOnly, unixOnly, listeningOnly, 
 		if proto == "" {
 			proto = "TCP"
 		}
-		rows = append(rows, netstatSocketRow{
+		row := netstatSocketRow{
 			conn:       c,
 			proto:      proto,
 			local:      local,
 			remote:     remote,
 			pidProgram: pid + "/" + pname,
-		})
+		}
+		if proto == "UNIX" {
+			unixRows = append(unixRows, row)
+		} else {
+			inetRows = append(inetRows, row)
+		}
 	}
-	printNetstatTable(rows, extended, timers, programs)
+	if len(inetRows) > 0 {
+		printNetstatTable(inetRows, extended, timers, programs)
+	}
+	if len(unixRows) > 0 {
+		if len(inetRows) > 0 {
+			fmt.Println()
+		}
+		printNetstatTable(unixRows, extended, timers, programs)
+	}
 	return nil
 }
 
@@ -1230,6 +1254,12 @@ func tcpStateName(h string) string {
 	default:
 		return h
 	}
+}
+
+// netstatNeedsInodePidMap reports whether the inode→PID mapping is actually
+// used by the requested output: the -p PID/Program column or --sort pid.
+func netstatNeedsInodePidMap(programs bool, sortBy string) bool {
+	return programs || strings.EqualFold(sortBy, "pid")
 }
 
 // buildInodePidMap walks /proc and finds which pid owns a given socket inode

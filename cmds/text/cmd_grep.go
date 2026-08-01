@@ -255,6 +255,9 @@ func GrepCmd(args []string) error {
 		}
 	}
 
+	// grep's exit status (including with -l/-L) follows the normal match rule:
+	// 0 if any line matched anywhere, 1 otherwise. -l/-L only change what is
+	// printed, not the exit code. See parity cases GREP-023/024.
 	if !matchedAny {
 		return errExitQuiet
 	}

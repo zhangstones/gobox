@@ -750,8 +750,33 @@ func TestParity_NetstatCases(t *testing.T) {
 			if res.ExitCode != 0 {
 				t.Fatalf("netstat --sort pid failed: %+v", res)
 			}
-			pids := extractNetstatPIDs(res.Stdout)
-			assertMonotonic(t, pids, false)
+			// Inet (TCP/UDP) and Unix sockets print as separate tables, each
+			// sorted independently, so PIDs are ascending within a section but
+			// reset at the section boundary. Verify per-section ordering.
+			prev, count := -1, 0
+			for _, line := range nonEmptyLines(res.Stdout) {
+				if strings.Contains(line, "LocalAddress") {
+					prev = -1
+					continue
+				}
+				fields := strings.Fields(line)
+				if len(fields) == 0 {
+					continue
+				}
+				pidStr, _, _ := strings.Cut(fields[len(fields)-1], "/")
+				pid, err := strconv.Atoi(pidStr)
+				if err != nil {
+					continue
+				}
+				if prev != -1 && pid < prev {
+					t.Fatalf("expected ascending PID order within section, saw %d before %d in\n%s", prev, pid, res.Stdout)
+				}
+				prev = pid
+				count++
+			}
+			if count < 3 {
+				t.Fatalf("expected at least 3 PID rows to meaningfully verify sort order, got %d", count)
+			}
 		})
 
 		t.Run("sort-recvq", func(t *testing.T) {

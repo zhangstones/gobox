@@ -345,66 +345,66 @@ func sortLines(lines []string, cfg sortConfig) ([]string, error) {
 	}
 
 	sort.SliceStable(entries, func(i, j int) bool {
-		vi, vj := entries[i].value, entries[j].value
-
-		var cmp int
-		switch v := vi.(type) {
-		case float64:
-			vjF := vj.(float64)
-			if v < vjF {
-				cmp = -1
-			} else if v > vjF {
-				cmp = 1
-			}
-		case time.Month:
-			vjM := vj.(time.Month)
-			if v < vjM {
-				cmp = -1
-			} else if v > vjM {
-				cmp = 1
-			}
-		case int:
-			vjI := vj.(int)
-			if v < vjI {
-				cmp = -1
-			} else if v > vjI {
-				cmp = 1
-			}
-		default:
-			cmp = strings.Compare(vi.(string), vj.(string))
-		}
-
+		cmp := compareSortValues(entries[i].value, entries[j].value)
 		if cfg.reverse {
 			return cmp > 0
 		}
 		return cmp < 0
 	})
 
+	// -u removes entries whose SORT KEY compares equal to the previous kept
+	// entry (GNU sort semantics), not just byte-identical whole lines. After a
+	// stable sort, equal keys are adjacent, so a single pass suffices.
+	if cfg.unique {
+		deduped := entries[:0]
+		for _, e := range entries {
+			if len(deduped) == 0 || compareSortValues(deduped[len(deduped)-1].value, e.value) != 0 {
+				deduped = append(deduped, e)
+			}
+		}
+		entries = deduped
+	}
+
 	result := make([]string, len(entries))
 	for i, e := range entries {
 		result[i] = e.line
 	}
 
-	if cfg.unique {
-		result = uniqueLines(result)
-	}
-
 	return result, nil
 }
 
-func uniqueLines(lines []string) []string {
-	if len(lines) == 0 {
-		return lines
-	}
-	var result []string
-	seen := ""
-	for _, line := range lines {
-		if line != seen {
-			result = append(result, line)
-			seen = line
+// compareSortValues returns -1, 0, or 1 comparing two parsed sort values.
+// Within a single sort run both values always share the same dynamic type
+// (all float64, all time.Month, or all string), matching parseValue.
+func compareSortValues(vi, vj interface{}) int {
+	switch v := vi.(type) {
+	case float64:
+		vjF := vj.(float64)
+		if v < vjF {
+			return -1
+		} else if v > vjF {
+			return 1
 		}
+		return 0
+	case time.Month:
+		vjM := vj.(time.Month)
+		if v < vjM {
+			return -1
+		} else if v > vjM {
+			return 1
+		}
+		return 0
+	case int:
+		vjI := vj.(int)
+		if v < vjI {
+			return -1
+		} else if v > vjI {
+			return 1
+		}
+		return 0
+	default:
+		return strings.Compare(vi.(string), vj.(string))
 	}
-	return result
 }
 
 func checkSorted(lines []string, cfg sortConfig, sourceName string) error {
@@ -423,37 +423,8 @@ func checkSorted(lines []string, cfg sortConfig, sourceName string) error {
 	}
 
 	for i := 1; i < len(entries); i++ {
-		vi, vj := entries[i-1].value, entries[i].value
 		// cmp: -1 if prev<cur, 0 if equal, 1 if prev>cur.
-		var cmp int
-		switch v := vi.(type) {
-		case float64:
-			vjF := vj.(float64)
-			switch {
-			case v < vjF:
-				cmp = -1
-			case v > vjF:
-				cmp = 1
-			}
-		case time.Month:
-			vjM := vj.(time.Month)
-			switch {
-			case v < vjM:
-				cmp = -1
-			case v > vjM:
-				cmp = 1
-			}
-		case int:
-			vjI := vj.(int)
-			switch {
-			case v < vjI:
-				cmp = -1
-			case v > vjI:
-				cmp = 1
-			}
-		default:
-			cmp = strings.Compare(vi.(string), vj.(string))
-		}
+		cmp := compareSortValues(entries[i-1].value, entries[i].value)
 		// Equal adjacent lines are in order; only a strict inversion is disorder.
 		disorder := cmp > 0
 		if cfg.reverse {

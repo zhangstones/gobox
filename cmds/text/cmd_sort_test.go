@@ -1300,6 +1300,23 @@ func TestSortStability(t *testing.T) {
 	}
 }
 
+// Regression: sort -u must remove lines whose SORT KEY is equal, not just
+// lines that are byte-for-byte identical. With -k, two distinct lines sharing
+// the same key are duplicates and only the first (stable) one is kept.
+func TestSortUniqueByKeyDedupesOnField(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "keys.txt")
+	os.WriteFile(filename, []byte("a x\nb x\nc y\n"), 0o644)
+
+	output, err := runSortCmd([]string{"-k", "2", "-u", filename})
+	if err != nil {
+		t.Fatalf("sort -k2 -u failed: %v", err)
+	}
+	if output != "a x\nc y\n" {
+		t.Fatalf("sort -k2 -u should dedupe by key: got %q", output)
+	}
+}
+
 // Helper function to write test files
 func sortWriteTestFile(t *testing.T, filename, content string) {
 	err := os.WriteFile(filename, []byte(content), 0644)

@@ -186,7 +186,7 @@
 | GREP-005 | `--line-buffered` | behavior | `grep --line-buffered` | 流式输入 | 流式输入时每行匹配可及时输出 |
 | GREP-006 | `-n` | exact | `grep -n` | 多行文本 | 行号输出一致 |
 | GREP-007 | `-o` | exact | `grep -o` | 多匹配文本 | 仅输出匹配片段一致 |
-| GREP-008 | `-q` | exact | `grep -q` | 有匹配/无匹配 | 退出码一致 |
+| GREP-008 | `-q` | exact | `grep -q` | 有匹配文本 | 有匹配时退出码为 0 且无 stdout |
 | GREP-009 | `-r` | exact | `grep -r` | 目录树 | 递归匹配集合一致 |
 | GREP-010 | `-v` | exact | `grep -v` | 多行文本 | 反向匹配一致 |
 | GREP-011 | `-A NUM` | exact | `grep -A` | 上下文文本 | 后文上下文一致 |
@@ -197,7 +197,12 @@
 | GREP-016 | `-l` | exact | `grep -l` | 多文件 | 仅输出有匹配文件名 |
 | GREP-017 | `-L` | exact | `grep -L` | 多文件 | 仅输出无匹配文件名 |
 | GREP-018 | 非法正则语法 | contract | gobox-only | 文本文件 + 非法正则 | 非零退出且 stderr 有诊断信息 |
-| GREP-019 | 无文件参数（stdin） | exact | `grep`（stdin） | stdin 文本（含空 stdin 边界） | stdin 输入匹配结果一致 |
+| GREP-019 | 无文件参数（stdin） | exact | `grep`（stdin） | stdin 文本 | stdin 输入匹配结果一致 |
+| GREP-020 | `-q` 无匹配场景 | exact | `grep -q` | 无匹配文本 | 无匹配时退出码为 1，且无 stdout/stderr 输出 |
+| GREP-021 | `-c` 空文件边界 | exact | `grep -c` | 空文件 | 空文件计数结果与原生一致 |
+| GREP-022 | 无文件参数（stdin）空输入边界 | exact | `grep`（stdin） | 空 stdin | 空 stdin 输入时结果一致 |
+| GREP-023 | `-L` 退出码（全部不匹配） | exact | `grep -L` | 全部无匹配文件 | 打印文件名但因无任何匹配退出码为 1（GNU 规则） |
+| GREP-024 | `-L` 退出码（全部匹配） | exact | `grep -L` | 全部匹配文件 | 不打印文件名但因存在匹配退出码为 0（GNU 规则） |
 
 ### sed
 
@@ -236,10 +241,14 @@
 | SORT-006 | `-M` | exact | `sort -M` | 月份文本 | 月份排序一致 |
 | SORT-007 | `-h` | exact | `sort -h` | 1K/2M 文本 | 人类可读数字排序一致 |
 | SORT-008 | `-R` | behavior | `sort -R` | 文本 | 输出元素集合与行数保持一致，允许顺序随机 |
-| SORT-009 | `-c` | exact | `sort -c` | 已排序/未排序文本 | 退出码一致 |
+| SORT-009 | `-c` | exact | `sort -c` | 未排序文本 | 未排序时非零退出，stderr 输出乱序诊断信息 |
 | SORT-010 | `-o FILE` | exact | `sort -o` | 输出文件 | 写文件结果一致 |
 | SORT-011 | `-z` | exact | `sort -z` | 零分隔文本 | 零终止处理一致 |
-| SORT-012 | `-tCHAR` 粘连写法 / `--field-separator=CHAR` | exact | `sort -t`/`--field-separator` | 分隔列文本 | 粘连短选项和长选项形式与 `-t CHAR` 结果一致 |
+| SORT-012 | `-c` 已排序输入静默成功 | exact | `sort -c` | 已排序文本 | 已排序输入时静默退出码为 0，无 stdout/stderr 输出 |
+| SORT-013 | `-n` 空文件边界 | exact | `sort -n` | 空文件 | 空文件输入结果一致 |
+| SORT-014 | `-tCHAR` 粘连写法 | exact | `sort -t` | 分隔列文本 | 粘连短选项形式与 `-t CHAR` 结果一致 |
+| SORT-015 | `--field-separator=CHAR` | exact | `sort --field-separator` | 分隔列文本 | 长选项形式与 `-t CHAR` 结果一致 |
+| SORT-016 | `-k` + `-u` | exact | `sort -k2 -u` | 键相同但整行不同 | 按排序键去重（非整行去重），保留首个 |
 
 ### uniq
 

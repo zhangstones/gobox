@@ -584,21 +584,6 @@ func TestParity_GrepCases(t *testing.T) {
 				t.Fatalf("grep -q should produce no stdout, got %q", gobox.Stdout)
 			}
 		}},
-		{ID: "GREP-008b", Name: "grep -q no match", GoboxArgs: []string{"grep", "-q", "notfound", "input.txt"}, NativeCommand: "grep", NativeArgs: []string{"-q", "notfound", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "foo\n") }, Assert: func(t *testing.T, gobox, native parityResult) {
-			// No-match should exit 1, no stdout, no stderr.
-			if gobox.ExitCode != native.ExitCode {
-				t.Fatalf("grep -q no-match exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
-			}
-			if gobox.ExitCode != 1 {
-				t.Fatalf("grep -q no-match: expected exit 1, got %d", gobox.ExitCode)
-			}
-			if gobox.Stdout != "" {
-				t.Fatalf("grep -q no-match should produce no stdout, got %q", gobox.Stdout)
-			}
-			if strings.TrimSpace(gobox.Stderr) != "" {
-				t.Fatalf("grep -q no-match should produce no stderr, got %q", gobox.Stderr)
-			}
-		}},
 		{ID: "GREP-009", Name: "grep -r", GoboxArgs: []string{"grep", "-r", "foo", "tree"}, NativeCommand: "grep", NativeArgs: []string{"-r", "foo", "tree"}, Setup: func(t *testing.T, env *parityEnv) {
 			writeFile(t, filepath.Join(env.Dir, "tree", "a.txt"), "foo\n")
 			writeFile(t, filepath.Join(env.Dir, "tree", "sub", "b.txt"), "bar\nfoo\n")
@@ -628,8 +613,35 @@ func TestParity_GrepCases(t *testing.T) {
 			writeFile(t, filepath.Join(env.Dir, "b.txt"), "bar\n")
 		}},
 		{ID: "GREP-019", Name: "grep stdin", GoboxArgs: []string{"grep", "hello"}, NativeCommand: "grep", NativeArgs: []string{"hello"}, Stdin: "hello world\ngoodbye\n"},
-		{ID: "GREP-003b", Name: "grep -c empty file", GoboxArgs: []string{"grep", "-c", "foo", "empty.txt"}, NativeCommand: "grep", NativeArgs: []string{"-c", "foo", "empty.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "empty.txt"), "") }},
-		{ID: "GREP-019b", Name: "grep empty stdin", GoboxArgs: []string{"grep", "hello"}, NativeCommand: "grep", NativeArgs: []string{"hello"}, Stdin: ""},
+		{ID: "GREP-020", Name: "grep -q no match", GoboxArgs: []string{"grep", "-q", "notfound", "input.txt"}, NativeCommand: "grep", NativeArgs: []string{"-q", "notfound", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "foo\n") }, Assert: func(t *testing.T, gobox, native parityResult) {
+			// No-match should exit 1, no stdout, no stderr.
+			if gobox.ExitCode != native.ExitCode {
+				t.Fatalf("grep -q no-match exit mismatch gobox=%d native=%d", gobox.ExitCode, native.ExitCode)
+			}
+			if gobox.ExitCode != 1 {
+				t.Fatalf("grep -q no-match: expected exit 1, got %d", gobox.ExitCode)
+			}
+			if gobox.Stdout != "" {
+				t.Fatalf("grep -q no-match should produce no stdout, got %q", gobox.Stdout)
+			}
+			if strings.TrimSpace(gobox.Stderr) != "" {
+				t.Fatalf("grep -q no-match should produce no stderr, got %q", gobox.Stderr)
+			}
+		}},
+		{ID: "GREP-021", Name: "grep -c empty file", GoboxArgs: []string{"grep", "-c", "foo", "empty.txt"}, NativeCommand: "grep", NativeArgs: []string{"-c", "foo", "empty.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "empty.txt"), "") }},
+		{ID: "GREP-022", Name: "grep empty stdin", GoboxArgs: []string{"grep", "hello"}, NativeCommand: "grep", NativeArgs: []string{"hello"}, Stdin: ""},
+		// -L exit status follows GNU's match rule, not "did I print names": when
+		// NO file matches, -L prints every filename yet exits 1; when every file
+		// matches it prints nothing yet exits 0. Default assert compares exit
+		// codes and stdout against native.
+		{ID: "GREP-023", Name: "grep -L exit code, all non-matching", GoboxArgs: []string{"grep", "-L", "foo", "a.txt", "b.txt"}, NativeCommand: "grep", NativeArgs: []string{"-L", "foo", "a.txt", "b.txt"}, Setup: func(t *testing.T, env *parityEnv) {
+			writeFile(t, filepath.Join(env.Dir, "a.txt"), "bar\n")
+			writeFile(t, filepath.Join(env.Dir, "b.txt"), "baz\n")
+		}},
+		{ID: "GREP-024", Name: "grep -L exit code, all matching", GoboxArgs: []string{"grep", "-L", "foo", "a.txt", "b.txt"}, NativeCommand: "grep", NativeArgs: []string{"-L", "foo", "a.txt", "b.txt"}, Setup: func(t *testing.T, env *parityEnv) {
+			writeFile(t, filepath.Join(env.Dir, "a.txt"), "foo\n")
+			writeFile(t, filepath.Join(env.Dir, "b.txt"), "foo\n")
+		}},
 	})
 
 	t.Run("GREP-005", func(t *testing.T) {
@@ -861,7 +873,7 @@ func TestParity_SortCases(t *testing.T) {
 				}
 			}
 		}},
-		{ID: "SORT-009b", Name: "sort -c sorted input is silent", GoboxArgs: []string{"sort", "-c", "input.txt"}, NativeCommand: "sort", NativeArgs: []string{"-c", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "a\nb\n") }, Assert: func(t *testing.T, gobox, native parityResult) {
+		{ID: "SORT-012", Name: "sort -c sorted input is silent", GoboxArgs: []string{"sort", "-c", "input.txt"}, NativeCommand: "sort", NativeArgs: []string{"-c", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "a\nb\n") }, Assert: func(t *testing.T, gobox, native parityResult) {
 			if gobox.ExitCode != native.ExitCode {
 				t.Fatalf("sort -c exit mismatch %d != %d", gobox.ExitCode, native.ExitCode)
 			}
@@ -875,9 +887,13 @@ func TestParity_SortCases(t *testing.T) {
 				t.Fatalf("sort -c: gobox should be silent on success, got stderr %q", gobox.Stderr)
 			}
 		}},
-		{ID: "SORT-001b", Name: "sort -n empty file", GoboxArgs: []string{"sort", "-n", "empty.txt"}, NativeCommand: "sort", NativeArgs: []string{"-n", "empty.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "empty.txt"), "") }},
-		{ID: "SORT-012a", Name: "sort -tCHAR concatenated", GoboxArgs: []string{"sort", "-t,", "-k", "2", "input.txt"}, NativeCommand: "sort", NativeArgs: []string{"-t,", "-k", "2", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "a,2\nb,1\n") }},
-		{ID: "SORT-012b", Name: "sort --field-separator=CHAR", GoboxArgs: []string{"sort", "--field-separator=,", "-k", "2", "input.txt"}, NativeCommand: "sort", NativeArgs: []string{"--field-separator=,", "-k", "2", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "a,2\nb,1\n") }},
+		{ID: "SORT-013", Name: "sort -n empty file", GoboxArgs: []string{"sort", "-n", "empty.txt"}, NativeCommand: "sort", NativeArgs: []string{"-n", "empty.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "empty.txt"), "") }},
+		{ID: "SORT-014", Name: "sort -tCHAR concatenated", GoboxArgs: []string{"sort", "-t,", "-k", "2", "input.txt"}, NativeCommand: "sort", NativeArgs: []string{"-t,", "-k", "2", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "a,2\nb,1\n") }},
+		{ID: "SORT-015", Name: "sort --field-separator=CHAR", GoboxArgs: []string{"sort", "--field-separator=,", "-k", "2", "input.txt"}, NativeCommand: "sort", NativeArgs: []string{"--field-separator=,", "-k", "2", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "a,2\nb,1\n") }},
+		// -u with -k must dedupe by KEY: distinct lines sharing field 2 collapse
+		// to the first. Fixture keeps input order == last-resort order so the
+		// retained line is unambiguous across gobox and native.
+		{ID: "SORT-016", Name: "sort -k2 -u dedupes by key", GoboxArgs: []string{"sort", "-k", "2", "-u", "input.txt"}, NativeCommand: "sort", NativeArgs: []string{"-k", "2", "-u", "input.txt"}, Setup: func(t *testing.T, env *parityEnv) { writeFile(t, filepath.Join(env.Dir, "input.txt"), "a x\nb x\nc y\n") }},
 	})
 
 	t.Run("SORT-008", func(t *testing.T) {
