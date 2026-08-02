@@ -42,6 +42,12 @@ func StringsCmd(args []string) error {
 		return stringsFromReader("-", os.Stdin, *minLen, *withFile, *offsetBase)
 	}
 	for _, file := range files {
+		if file == "-" {
+			if err := stringsFromReader("-", os.Stdin, *minLen, *withFile, *offsetBase); err != nil {
+				return err
+			}
+			continue
+		}
 		f, err := os.Open(file)
 		if err != nil {
 			return err

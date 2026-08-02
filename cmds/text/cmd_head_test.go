@@ -686,3 +686,13 @@ func TestHeadMultipleFlagsOrder(t *testing.T) {
 		t.Errorf("Different flag order should produce same result: %s vs %s", output1, output2)
 	}
 }
+
+func TestHeadCmdExplicitDashReadsStdin(t *testing.T) {
+	output, err := runHeadCmdWithStdin([]string{"-n", "2", "-"}, "line1\nline2\nline3\n")
+	if err != nil {
+		t.Fatalf("head - failed: %v", err)
+	}
+	if output != "line1\nline2\n" {
+		t.Fatalf("expected first 2 lines from stdin via explicit '-', got %q", output)
+	}
+}

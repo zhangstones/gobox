@@ -29,6 +29,18 @@ func TestHexEncodeDecode(t *testing.T) {
 	}
 }
 
+func TestHexDecodeExplicitDashReadsStdin(t *testing.T) {
+	decoded, err := captureTextCmd(t, "68656c6c6f", func() error {
+		return HexCmd([]string{"--decode", "-"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded != "hello" {
+		t.Fatalf("unexpected explicit '-' decoded output %q", decoded)
+	}
+}
+
 func TestHexCmdHelpUsesModesAndOptions(t *testing.T) {
 	_, out, err := captureTextCmdFull(t, "", func() error {
 		return HexCmd([]string{"--help"})

@@ -115,6 +115,14 @@ func readAllInputs(files []string) ([]byte, error) {
 	}
 	var out []byte
 	for _, file := range files {
+		if file == "-" {
+			b, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, b...)
+			continue
+		}
 		b, err := os.ReadFile(file)
 		if err != nil {
 			return nil, err

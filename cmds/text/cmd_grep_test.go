@@ -590,6 +590,16 @@ func TestGrepFilesWithoutMatchAllMatchExitsZero(t *testing.T) {
 	}
 }
 
+func TestGrepCmdExplicitDashReadsStdin(t *testing.T) {
+	output, err := runGrepCmdWithStdin([]string{"line2", "-"}, "line1\nline2\nline3\n")
+	if err != nil {
+		t.Fatalf("grep - failed: %v", err)
+	}
+	if strings.TrimSpace(output) != "line2" {
+		t.Fatalf("expected match from stdin via explicit '-', got %q", output)
+	}
+}
+
 // writeTestFile helper kept for compatibility with other test files in this package
 func writeTestFile(t *testing.T, filename, content string) {
 	err := os.WriteFile(filename, []byte(content), 0644)

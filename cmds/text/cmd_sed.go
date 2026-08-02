@@ -51,7 +51,7 @@ func SedCmd(args []string) error {
 			inPlace = arg[2:]
 			inPlaceSeen = true
 		default:
-			if strings.HasPrefix(arg, "-") {
+			if len(arg) > 1 && strings.HasPrefix(arg, "-") {
 				return fmt.Errorf("unknown option: %s", arg)
 			}
 			// Not a flag, stop parsing
@@ -500,6 +500,9 @@ func processReplacement(replacement string) string {
 }
 
 func sedFile(filename string, out io.Writer, commands []sedCommand, quiet bool) error {
+	if filename == "-" {
+		return sedReader(os.Stdin, out, commands, quiet)
+	}
 	file, err := os.Open(filename)
 	if err != nil {
 		return fmt.Errorf("cannot open %s: %w", filename, err)

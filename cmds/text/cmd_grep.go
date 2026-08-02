@@ -265,6 +265,9 @@ func GrepCmd(args []string) error {
 }
 
 func grepFile(path, pattern string, regex *regexp.Regexp, opts grepOptions) (grepResult, error) {
+	if path == "-" {
+		return grepReader(os.Stdin, pattern, regex, opts, path)
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return grepResult{}, fmt.Errorf("cannot open %s: %w", path, err)

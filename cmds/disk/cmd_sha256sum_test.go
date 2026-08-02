@@ -95,6 +95,31 @@ func TestSha256sumDefaultAndCheck(t *testing.T) {
 	}
 }
 
+func TestSha256sumCmdCheckStdinDash(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureSha256Cmd(t, "", func() error {
+		return Sha256sumCmd([]string{file})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// "-c -" must read the checksum list from stdin, matching GNU sha256sum.
+	checkOut, err := captureSha256Cmd(t, out, func() error {
+		return Sha256sumCmd([]string{"-c", "-"})
+	})
+	if err != nil {
+		t.Fatalf("sha256sum -c - failed: %v, output: %s", err, checkOut)
+	}
+	if !strings.Contains(checkOut, "OK") {
+		t.Fatalf("unexpected check output %q", checkOut)
+	}
+}
+
 func TestSha256sumCmdOptionsStdin(t *testing.T) {
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()

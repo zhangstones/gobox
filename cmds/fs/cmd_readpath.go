@@ -65,7 +65,12 @@ func ReadpathCmd(args []string) error {
 		out, err := resolveReadpath(p, *readlinkMode, *canonicalize, *mustExist, *allowMissing)
 		if err != nil {
 			hadErr = true
-			if !*quiet {
+			// GNU readlink is silent by default on failure (it only reports
+			// errors with --verbose, which gobox does not implement); GNU
+			// realpath, by contrast, always prints a diagnostic. Since -l
+			// selects readlink semantics, suppress the message there even
+			// without -q to match native readlink's default silence.
+			if !*quiet && !*readlinkMode {
 				fmt.Fprintf(os.Stderr, "readpath: %s: %v\n", p, err)
 			}
 			continue

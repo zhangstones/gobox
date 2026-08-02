@@ -233,8 +233,11 @@ func TestReadpathCmdOptionsReadlinkNonSymlinkErrors(t *testing.T) {
 	if stdout != "" {
 		t.Fatalf("expected no stdout for non-symlink readlink, got %q", stdout)
 	}
-	if !strings.Contains(stderr, file) {
-		t.Fatalf("expected stderr to mention target file, got %q", stderr)
+	// Native `readlink` on a non-symlink is silent by default (no stdout, no
+	// stderr, exit 1) -- it only reports errors with --verbose, which gobox
+	// does not implement. readpath -l must match that silence.
+	if stderr != "" {
+		t.Fatalf("expected no stderr for non-symlink readlink (native readlink is silent by default), got %q", stderr)
 	}
 
 }

@@ -460,6 +460,25 @@ func TestMd5sumCmdCheckInvalid(t *testing.T) {
 	}
 }
 
+func TestMd5sumCmdCheckStdinDash(t *testing.T) {
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "test.txt")
+	content := "hello world"
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatalf("write test file: %v", err)
+	}
+
+	// "-c -" must read the checksum list from stdin, matching GNU md5sum.
+	checksumContent := "5eb63bbbe01eeed093cb22bb8f5acdc3  test.txt\n"
+	output, err := runMd5sumCmdWithStdin([]string{"-c", "-"}, checksumContent, dir)
+	if err != nil {
+		t.Fatalf("md5sum -c - failed: %v, output: %s", err, output)
+	}
+	if !strings.Contains(output, "test.txt: OK") {
+		t.Errorf("expected 'test.txt: OK' in output, got: %s", output)
+	}
+}
+
 func TestMd5sumCmdCheckBSDFormat(t *testing.T) {
 	dir := t.TempDir()
 	testFile := filepath.Join(dir, "test.txt")

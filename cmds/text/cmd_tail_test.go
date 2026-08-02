@@ -952,3 +952,13 @@ func TestTailFileReaderLargeFileReturnsLastN(t *testing.T) {
 		t.Fatalf("expected last emitted line line099, got %q", lines[len(lines)-1])
 	}
 }
+
+func TestTailCmdExplicitDashReadsStdin(t *testing.T) {
+	output, err := runTailCmdWithStdin([]string{"-n", "2", "-"}, "line1\nline2\nline3\n")
+	if err != nil {
+		t.Fatalf("tail - failed: %v", err)
+	}
+	if output != "line2\nline3\n" {
+		t.Fatalf("expected last 2 lines from stdin via explicit '-', got %q", output)
+	}
+}

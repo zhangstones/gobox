@@ -98,7 +98,7 @@ func HeadCmd(args []string) error {
 			quiet = true
 		case arg == "-h" || arg == "--help":
 			showHelp = true
-		case strings.HasPrefix(arg, "-"):
+		case len(arg) > 1 && strings.HasPrefix(arg, "-"):
 			return fmt.Errorf("unknown option: %s", arg)
 		default:
 			// Not a flag, stop parsing
@@ -221,6 +221,9 @@ func headBytes(r io.Reader, w io.Writer, n int) error {
 }
 
 func headFile(filename string, w io.Writer, lines int, linesFromEnd bool, bytes int, bytesFromEnd bool) error {
+	if filename == "-" {
+		return headReader(os.Stdin, w, lines, linesFromEnd, bytes, bytesFromEnd)
+	}
 	file, err := os.Open(filename)
 	if err != nil {
 		return fmt.Errorf("cannot open %s: %w", filename, err)

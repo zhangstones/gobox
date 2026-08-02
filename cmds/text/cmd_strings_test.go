@@ -167,6 +167,18 @@ func TestStringsCmdOptionsStdin(t *testing.T) {
 
 }
 
+func TestStringsCmdExplicitDashReadsStdin(t *testing.T) {
+	out, err := captureTextCmd(t, "\x00stdin-text\x00", func() error {
+		return StringsCmd([]string{"-n", "5", "-"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "stdin-text" {
+		t.Fatalf("unexpected explicit '-' strings output %q", out)
+	}
+}
+
 func TestStringsCmdOptionsOffsetOctalAndHex(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "bin")

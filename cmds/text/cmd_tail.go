@@ -100,7 +100,7 @@ func TailCmdWithContext(ctx context.Context, args []string) error {
 			pid = p
 		case arg == "-h" || arg == "--help":
 			showHelp = true
-		case strings.HasPrefix(arg, "-"):
+		case len(arg) > 1 && strings.HasPrefix(arg, "-"):
 			return fmt.Errorf("unknown option: %s", arg)
 		default:
 			// Not a flag, stop parsing
@@ -233,6 +233,9 @@ func tailReader(r io.Reader, w io.Writer, n int, fromStart bool) error {
 }
 
 func tailFileWithRetry(filename string, w io.Writer, n int, fromStart, retry bool) error {
+	if filename == "-" {
+		return tailReader(os.Stdin, w, n, fromStart)
+	}
 	for {
 		file, err := os.Open(filename)
 		if err != nil {

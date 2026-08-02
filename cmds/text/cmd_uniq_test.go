@@ -1077,6 +1077,16 @@ func TestUniqWhitespace(t *testing.T) {
 	}
 }
 
+func TestUniqCmdExplicitDashReadsStdin(t *testing.T) {
+	output, err := runUniqCmdWithStdin([]string{"-"}, "a\na\nb\n")
+	if err != nil {
+		t.Fatalf("uniq - failed: %v", err)
+	}
+	if output != "a\nb\n" {
+		t.Fatalf("expected deduped stdin via explicit '-', got %q", output)
+	}
+}
+
 // Helper function to write test files
 func uniqWriteTestFile(t *testing.T, tmpDir, filename, content string) {
 	err := os.WriteFile(filepath.Join(tmpDir, filename), []byte(content), 0644)

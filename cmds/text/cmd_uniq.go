@@ -90,7 +90,7 @@ func UniqCmd(args []string) error {
 				return fmt.Errorf("invalid number: %s", numStr)
 			}
 			skipFields = num
-		case strings.HasPrefix(arg, "-"):
+		case len(arg) > 1 && strings.HasPrefix(arg, "-"):
 			return fmt.Errorf("unknown option: %s", arg)
 		default:
 			// Not a flag, stop parsing
@@ -148,6 +148,9 @@ func printUniqUsage(w io.Writer) {
 }
 
 func uniqFile(filename string, out io.Writer, showCount, showRepeated, showUnique, ignoreCase bool, checkChars, skipFields int) error {
+	if filename == "-" {
+		return uniqReader(os.Stdin, out, showCount, showRepeated, showUnique, ignoreCase, checkChars, skipFields)
+	}
 	file, err := os.Open(filename)
 	if err != nil {
 		return fmt.Errorf("cannot open %s: %w", filename, err)

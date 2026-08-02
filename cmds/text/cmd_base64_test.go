@@ -42,6 +42,18 @@ func TestBase64EncodeDecode(t *testing.T) {
 	}
 }
 
+func TestBase64DecodeExplicitDashReadsStdin(t *testing.T) {
+	decoded, err := captureTextCmd(t, "aGVsbG8=", func() error {
+		return Base64Cmd([]string{"-d", "-"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded != "hello" {
+		t.Fatalf("unexpected explicit '-' decoded output %q", decoded)
+	}
+}
+
 func TestBase64CmdOptionsWrapOutput(t *testing.T) {
 	dir := t.TempDir()
 	input := filepath.Join(dir, "input")

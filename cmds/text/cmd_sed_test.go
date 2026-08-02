@@ -819,3 +819,13 @@ func TestSedDotPattern(t *testing.T) {
 		t.Errorf("Expected 'testXtxt' unchanged, got: %s", result)
 	}
 }
+
+func TestSedCmdExplicitDashReadsStdin(t *testing.T) {
+	output, err := runSedCmdWithStdin([]string{"s/line/L/", "-"}, "line1\nline2\n")
+	if err != nil {
+		t.Fatalf("sed - failed: %v", err)
+	}
+	if output != "L1\nL2\n" {
+		t.Fatalf("expected substitution applied to stdin via explicit '-', got %q", output)
+	}
+}

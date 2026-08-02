@@ -176,6 +176,14 @@ func md5sumCheck(files []string, warn, status, quiet bool) error {
 	var hasError bool
 
 	for _, file := range files {
+		// "-" as a checksum-file operand means read the checksum list from
+		// stdin, matching GNU md5sum -c -.
+		if file == "-" {
+			if md5sumCheckReader(os.Stdin, "-", warn, status, quiet) {
+				hasError = true
+			}
+			continue
+		}
 		f, err := os.Open(file)
 		if err != nil {
 			if !quiet {

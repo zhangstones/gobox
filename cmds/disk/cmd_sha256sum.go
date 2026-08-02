@@ -126,6 +126,18 @@ func printSHA256(file, sum string, tag, quiet bool) {
 func sha256sumCheck(files []string, warn, status, quiet bool) error {
 	var failed bool
 	for _, file := range files {
+		// "-" as a checksum-file operand means read the checksum list from
+		// stdin, matching GNU sha256sum -c -.
+		if file == "-" {
+			ok, err := sha256sumCheckReader(os.Stdin, "-", warn, status, quiet)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				failed = true
+			}
+			continue
+		}
 		f, err := os.Open(file)
 		if err != nil {
 			failed = true
@@ -134,47 +146,62 @@ func sha256sumCheck(files []string, warn, status, quiet bool) error {
 			}
 			continue
 		}
-		scanner := bufio.NewScanner(f)
-		lineNo := 0
-		for scanner.Scan() {
-			lineNo++
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
-				continue
-			}
-			expected, name, ok := parseSHA256CheckLine(line)
-			if !ok {
-				failed = true
-				if warn && !status {
-					fmt.Fprintf(os.Stderr, "sha256sum: %s:%d: improperly formatted checksum line\n", file, lineNo)
-				}
-				continue
-			}
-			actual, err := sha256File(name)
-			if err != nil {
-				failed = true
-				if !status {
-					fmt.Fprintf(os.Stderr, "sha256sum: %s: %v\n", name, err)
-					fmt.Printf("%s: FAILED\n", name)
-				}
-			} else if !strings.EqualFold(actual, expected) {
-				failed = true
-				if !status {
-					fmt.Printf("%s: FAILED\n", name)
-				}
-			} else if !status && !quiet {
-				fmt.Printf("%s: OK\n", name)
-			}
-		}
+		ok, err := sha256sumCheckReader(f, file, warn, status, quiet)
 		_ = f.Close()
-		if err := scanner.Err(); err != nil {
+		if err != nil {
 			return err
+		}
+		if !ok {
+			failed = true
 		}
 	}
 	if failed {
 		return sha256sumExitError{code: 1, err: errors.New("checksum verification failed")}
 	}
 	return nil
+}
+
+// sha256sumCheckReader verifies a checksum list read from r, reporting via
+// sourceName in diagnostics. Returns ok=false if any line failed to parse or
+// any referenced file's checksum did not match.
+func sha256sumCheckReader(r io.Reader, sourceName string, warn, status, quiet bool) (bool, error) {
+	ok := true
+	scanner := bufio.NewScanner(r)
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		expected, name, parsed := parseSHA256CheckLine(line)
+		if !parsed {
+			ok = false
+			if warn && !status {
+				fmt.Fprintf(os.Stderr, "sha256sum: %s:%d: improperly formatted checksum line\n", sourceName, lineNo)
+			}
+			continue
+		}
+		actual, err := sha256File(name)
+		if err != nil {
+			ok = false
+			if !status {
+				fmt.Fprintf(os.Stderr, "sha256sum: %s: %v\n", name, err)
+				fmt.Printf("%s: FAILED\n", name)
+			}
+		} else if !strings.EqualFold(actual, expected) {
+			ok = false
+			if !status {
+				fmt.Printf("%s: FAILED\n", name)
+			}
+		} else if !status && !quiet {
+			fmt.Printf("%s: OK\n", name)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return false, err
+	}
+	return ok, nil
 }
 
 func parseSHA256CheckLine(line string) (string, string, bool) {
