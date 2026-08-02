@@ -473,6 +473,27 @@ func TestSortMonth(t *testing.T) {
 	}
 }
 
+func TestSortMonthWithTrailingContent(t *testing.T) {
+	// GNU sort -M matches only the leading month abbreviation, ignoring any
+	// trailing content on the line (day, timestamp, etc.) -- this is the
+	// realistic case (log lines, "Mon Day" pairs), not bare month names.
+	content := "Jan 5\nMar 2\nFeb 9\nDec 1\n"
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "test_sort_month_trailing.txt")
+	os.WriteFile(filename, []byte(content), 0644)
+	defer os.Remove(filename)
+
+	output, err := runSortCmd([]string{"-M", filename})
+	if err != nil {
+		t.Fatalf("sort command failed: %v", err)
+	}
+
+	expected := "Jan 5\nFeb 9\nMar 2\nDec 1\n"
+	if output != expected {
+		t.Errorf("Expected:\n%s\nGot:\n%s", expected, output)
+	}
+}
+
 func TestSortMonthReverse(t *testing.T) {
 	content := "Mar\nJan\nFeb\nDec\nNov\n"
 	tmpDir := t.TempDir()

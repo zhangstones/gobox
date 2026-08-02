@@ -49,6 +49,12 @@ func SeqCmd(args []string) error {
 		case arg == "-h" || arg == "--help":
 			printSeqUsage(os.Stdout)
 			return nil
+		case arg == "--":
+			// GNU-style end-of-options marker: everything after it is a
+			// positional operand, even if it looks like a flag (e.g. a
+			// dynamically-constructed negative FIRST value).
+			i++
+			goto doneFlags
 		default:
 			if strings.HasPrefix(arg, "-") {
 				// A dash-prefixed token that parses as a number is a

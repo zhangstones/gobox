@@ -577,6 +577,8 @@
 | XARGS-006 | `-r` | exact | `xargs -r` | 空 stdin | 无输入时不执行 |
 | XARGS-007 | `-t` | exact | `xargs -t` | stdin tokens | 执行前打印命令一致 |
 | XARGS-008 | `-v`（`-t` 的别名） | exact | `xargs -t` | stdin tokens | `-v` 与 `-t` 输出一致 |
+| XARGS-009 | `-I string`（单行内含空白） | exact | `xargs -I` | 单行、行内含空白的 stdin | `-I` 隐含 `-L 1`，行内空白不作为条目分隔符，整行作为单一条目 |
+| XARGS-010 | `-i string`（多行，行内含空白） | exact | `xargs -i` | 多行、每行含空白的 stdin | 行边界仍是条目边界，但行内空白不再拆分条目 |
 
 ### kill
 

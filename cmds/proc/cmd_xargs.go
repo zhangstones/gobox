@@ -72,7 +72,7 @@ func XargsCmd(args []string) error {
 	}
 
 	// Read input
-	inputs, err := parseXargsInputs(os.Stdin, *delimiter)
+	inputs, err := parseXargsInputs(os.Stdin, *delimiter, hasReplace)
 	if err != nil {
 		return err
 	}
@@ -135,18 +135,41 @@ func normalizeLegacyXargsArgs(args []string) []string {
 	return out
 }
 
-func parseXargsInputs(r io.Reader, delimiter string) ([]string, error) {
+func parseXargsInputs(r io.Reader, delimiter string, lineMode bool) ([]string, error) {
+	if delimiter == "\n" {
+		if lineMode {
+			// -I/-i implies GNU xargs's -L 1: each line is a single item and
+			// blanks within the line are NOT item separators (only leading
+			// blanks are stripped), unlike the word-split default below.
+			var inputs []string
+			scanner := bufio.NewScanner(r)
+			for scanner.Scan() {
+				line := strings.TrimLeft(scanner.Text(), " \t")
+				if line != "" {
+					inputs = append(inputs, line)
+				}
+			}
+			if err := scanner.Err(); err != nil {
+				return nil, err
+			}
+			return inputs, nil
+		}
+		// Default mode (no -d given): GNU xargs splits items on any run of
+		// blank characters (spaces, tabs, newlines), not only on newlines --
+		// a single line like "a b c" is 3 items, not 1.
+		data, err := io.ReadAll(r)
+		if err != nil {
+			return nil, err
+		}
+		return strings.Fields(string(data)), nil
+	}
+
 	var inputs []string
 	scanner := bufio.NewScanner(r)
-	if delimiter != "\n" {
-		scanner.Split(makeDelimiterSplitFunc(delimiter))
-	}
+	scanner.Split(makeDelimiterSplitFunc(delimiter))
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if delimiter == "\n" {
-			line = strings.TrimSpace(line)
-		}
 		if line != "" {
 			inputs = append(inputs, line)
 		}

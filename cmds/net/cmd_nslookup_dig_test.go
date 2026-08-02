@@ -103,6 +103,42 @@ func TestDigTypeTXT(t *testing.T) {
 	}
 }
 
+// TestCnameIsSelf is a regression test for the helper that detects when
+// net.Resolver.LookupCNAME returned the host's own canonical name (its
+// documented behavior when there is no real CNAME record), which must not
+// be reported as an actual CNAME answer.
+func TestCnameIsSelf(t *testing.T) {
+	cases := []struct {
+		host, cname string
+		want        bool
+	}{
+		{"www.example.com", "www.example.com.", true},
+		{"www.example.com.", "www.example.com", true},
+		{"WWW.Example.com", "www.example.com.", true},
+		{"www.example.com", "other.example.com.", false},
+		{"example.com", "www.example.com.", false},
+	}
+	for _, c := range cases {
+		if got := cnameIsSelf(c.host, c.cname); got != c.want {
+			t.Errorf("cnameIsSelf(%q, %q) = %v, want %v", c.host, c.cname, got, c.want)
+		}
+	}
+}
+
+// TestDigCNAMENoRealRecordProducesNoAnswer is a regression test: a domain
+// with no real CNAME record (only an A record) must report no CNAME answer,
+// not a fabricated self-referential one. www.example.com is known to have
+// no CNAME record (verified against real dig).
+func TestDigCNAMENoRealRecordProducesNoAnswer(t *testing.T) {
+	output, err := runDigCmd([]string{"-t", "CNAME", "www.example.com"})
+	if err != nil {
+		t.Fatalf("dig -t CNAME www.example.com failed: %v", err)
+	}
+	if strings.Contains(output, "CNAME\twww.example.com") {
+		t.Fatalf("expected no self-referential CNAME answer, got: %s", output)
+	}
+}
+
 func TestDigTypeNS(t *testing.T) {
 	// Test dig with -t NS flag
 	output, err := runDigCmd([]string{"-t", "NS", "com"})

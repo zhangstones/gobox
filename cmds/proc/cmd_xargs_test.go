@@ -79,7 +79,7 @@ func TestXargsCmdShortIDoesNotConsumeCommandToken(t *testing.T) {
 
 func TestParseXargsInputsDefaultDelimiterTrimsWhitespace(t *testing.T) {
 	input := "  alpha  \n\nbeta\n"
-	got, err := parseXargsInputs(strings.NewReader(input), "\n")
+	got, err := parseXargsInputs(strings.NewReader(input), "\n", false)
 	if err != nil {
 		t.Fatalf("parseXargsInputs returned error: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestParseXargsInputsDefaultDelimiterTrimsWhitespace(t *testing.T) {
 
 func TestParseXargsInputsCustomDelimiterPreservesWhitespace(t *testing.T) {
 	input := " alpha , beta ,gamma "
-	got, err := parseXargsInputs(strings.NewReader(input), ",")
+	got, err := parseXargsInputs(strings.NewReader(input), ",", false)
 	if err != nil {
 		t.Fatalf("parseXargsInputs returned error: %v", err)
 	}
@@ -147,6 +147,19 @@ func TestXargsCmdBatchSizeSplitsIntoMultipleInvocations(t *testing.T) {
 	want := "a b\nc d\n"
 	if out != want {
 		t.Fatalf("expected -n 2 to batch inputs two at a time producing %q, got %q", want, out)
+	}
+}
+
+// TestXargsCmdDefaultModeSplitsOnAnyWhitespaceWithinALine is a regression
+// test: GNU xargs's default mode splits items on any run of blank
+// characters, not only on newlines, so a single line like "a b c" is 3
+// items -- with -n 1 that must produce 3 separate invocations, not one
+// invocation receiving the whole line as a single argument.
+func TestXargsCmdDefaultModeSplitsOnAnyWhitespaceWithinALine(t *testing.T) {
+	out := runXargsWithStdin(t, []string{"-n", "1", "echo"}, "a b c\n")
+	want := "a\nb\nc\n"
+	if out != want {
+		t.Fatalf("expected -n 1 to split a single whitespace-separated line into 3 invocations producing %q, got %q", want, out)
 	}
 }
 

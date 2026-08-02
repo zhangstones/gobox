@@ -532,7 +532,7 @@
 | `gobox top -c` | `top -c` | ✅ 常用一致 | 显示完整命令行 |
 | `gobox top -o FIELD` | `top -o` | ⚠️ 部分一致 | 按字段排序 |
 | `gobox top -r` | reverse sort (gobox-only) | 🆕 gobox扩展 | 反向排序开关；不复用原生 `top -r` 的语义 |
-| `gobox top --sort string` | `top -o` (排序键) | 🆕 gobox扩展 | 排序字段：pid\|cpu\|rss\|vms\|cmd |
+| `gobox top --sort string` | `top -o` (排序键) | 🆕 gobox扩展 | 排序字段：pid\|cpu\|rss\|vms\|pmem\|cmd\|comm\|user\|ppid\|start\|etime\|time；非法字段报错退出（与 `ps --sort` 一致），不再静默回退默认排序 |
 
 > 注意：gobox top 是 top 命令的简化实现，不复用 `ps` 的输出。`TIME+`、状态列 `S` 等排版已对齐原生；不显示 `N users,`、`PR`/`NI`/`SHR` 列（需新增 `/proc/PID/stat` 采集，本轮不做）。
 

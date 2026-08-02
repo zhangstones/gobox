@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"gobox/cmds/utils"
@@ -276,11 +277,19 @@ func npTCPWorker(workerId int, opts *npOptions, sent, received, errors, seqCount
 		default:
 		}
 
-		if opts.count > 0 && atomic.LoadInt64(sent) >= int64(opts.count) {
+		// Atomically reserve a sequence number before dialing: a plain
+		// load-then-later-increment (checking sent<count now, incrementing
+		// sent only after the dial returns) let multiple workers pass the
+		// check in the window while dials were in flight, overshooting -c
+		// under concurrency (-w). Claiming a unique seq up front instead
+		// (seq is 0-indexed, so valid seqs for a count of N are 0..N-1)
+		// ensures at most opts.count workers ever proceed to dial, and
+		// leaves "sent" itself (used for progress/summary display) only
+		// ever incremented for a dial that actually happened.
+		seq := atomic.AddInt64(seqCounter, 1)
+		if opts.count > 0 && seq >= int64(opts.count) {
 			return
 		}
-
-		seq := atomic.AddInt64(seqCounter, 1)
 
 		start := time.Now()
 
@@ -743,6 +752,22 @@ func configureNpDialer(dialer *net.Dialer, network string, opts *npOptions) {
 			dialer.LocalAddr = &net.UDPAddr{IP: ip, Port: opts.sourcePort}
 		default:
 			dialer.LocalAddr = &net.TCPAddr{IP: ip, Port: opts.sourcePort}
+		}
+		if opts.sourcePort > 0 {
+			// A fixed source port can still be lingering in TIME_WAIT from a
+			// prior probe's connection when the next probe (-c > 1) tries to
+			// rebind it, causing "address already in use". SO_REUSEADDR lets
+			// the new socket bind to the port anyway, matching how -r/--reuse
+			// enables it for tw's listener (see reuseListener in cmd_tw.go).
+			dialer.Control = func(_, _ string, c syscall.RawConn) error {
+				var controlErr error
+				if err := c.Control(func(fd uintptr) {
+					controlErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+				}); err != nil {
+					return err
+				}
+				return controlErr
+			}
 		}
 	}
 }

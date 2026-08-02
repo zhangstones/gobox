@@ -72,6 +72,9 @@ func TopCmd(args []string) error {
 	if sortField == "" {
 		sortField = "cpu"
 	}
+	if !isSupportedTopSortField(sortField) {
+		return fmt.Errorf("unsupported sort field: %s", strings.TrimSpace(*sortBy))
+	}
 	descendingDefault := topSortDefaultDescending(sortField)
 	effectiveRev := *rev
 	if sortReverse {
@@ -719,6 +722,21 @@ func pluralSuffix(v int) string {
 
 func bytesToMiB(v uint64) float64 {
 	return float64(v) / 1024.0 / 1024.0
+}
+
+// isSupportedTopSortField reports whether field is one sortTopInfos actually
+// implements a comparator for. Anything else previously fell through to
+// sortTopInfos's default case (silent pid-order fallback, exit 0) instead of
+// erroring like ps's equivalent --sort validation does for the same kind of
+// bad input.
+func isSupportedTopSortField(field string) bool {
+	switch field {
+	case "pid", "cpu", "pcpu", "pmem", "rss", "vms", "vsize", "vsz",
+		"cmd", "args", "command", "comm", "user", "uid", "ppid", "start", "etime", "time":
+		return true
+	default:
+		return false
+	}
 }
 
 func topSortDefaultDescending(sortField string) bool {

@@ -463,6 +463,63 @@ func TestNpCmdTcpModeMultipleWorkers(t *testing.T) {
 	_ = err
 }
 
+// npTestListener starts a TCP listener on an ephemeral port that accepts and
+// immediately closes every connection, enough for npTCP's connect-then-close
+// probes to count as successful.
+func npTestListener(t *testing.T) (port int, closeFn func()) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+	return ln.Addr().(*net.TCPAddr).Port, func() { ln.Close() }
+}
+
+// TestNpCmdTcpModeSourcePortMultiplePacketsAllSucceed is a regression test:
+// a fixed source port (-s) combined with -c > 1 used to fail on the 2nd+
+// probe with "bind: address already in use" because the port was still in
+// TIME_WAIT from the previous probe's connection.
+func TestNpCmdTcpModeSourcePortMultiplePacketsAllSucceed(t *testing.T) {
+	skipIfNotLinux(t)
+	port, closeFn := npTestListener(t)
+	defer closeFn()
+
+	output, err := runNpCmd([]string{"--tcp", "-p", strconv.Itoa(port), "-s", "41234", "-c", "3", "-W", "1", "-v", "127.0.0.1"})
+	if err != nil {
+		t.Fatalf("np --tcp -s 41234 -c 3 failed: %v", err)
+	}
+	if !strings.Contains(output, "3 packets transmitted, 3 packets received, 0 errors") {
+		t.Fatalf("expected all 3 probes with a fixed source port to succeed, got: %s", output)
+	}
+}
+
+// TestNpCmdTcpModeWorkersRespectExactCount is a regression test: a race
+// between checking and incrementing the shared sent counter let concurrent
+// workers (-w) send more probes than requested (-c) when -c wasn't evenly
+// divisible by the worker count.
+func TestNpCmdTcpModeWorkersRespectExactCount(t *testing.T) {
+	skipIfNotLinux(t)
+	port, closeFn := npTestListener(t)
+	defer closeFn()
+
+	output, err := runNpCmd([]string{"--tcp", "-p", strconv.Itoa(port), "-w", "4", "-c", "10", "-W", "1", "-v", "127.0.0.1"})
+	if err != nil {
+		t.Fatalf("np --tcp -w 4 -c 10 failed: %v", err)
+	}
+	if !strings.Contains(output, "10 packets transmitted, 10 packets received, 0 errors") {
+		t.Fatalf("expected exactly 10 packets transmitted regardless of worker count, got: %s", output)
+	}
+}
+
 // ============== UDP MODE TESTS ==============
 
 func TestNpCmdUdpModeBasic(t *testing.T) {

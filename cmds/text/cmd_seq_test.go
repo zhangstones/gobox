@@ -158,6 +158,22 @@ func TestSeqCmdNegativeRange(t *testing.T) {
 	}
 }
 
+// TestSeqCmdDoubleDashEndOfOptions is a regression test: "--" must be
+// accepted as the GNU end-of-options marker, letting a dynamically
+// constructed negative FIRST operand be passed defensively (e.g. in a
+// script) without gobox mistaking it for an unrecognized flag.
+func TestSeqCmdDoubleDashEndOfOptions(t *testing.T) {
+	output, err := runSeqCmd([]string{"--", "-3", "-1"})
+	if err != nil {
+		t.Fatalf("seq -- -3 -1 failed: %v", err)
+	}
+	result := strings.TrimSpace(output)
+	expected := "-3\n-2\n-1"
+	if result != expected {
+		t.Errorf("Expected:\n%s\nGot:\n%s", expected, result)
+	}
+}
+
 func TestSeqCmdNegativeWithIncrement(t *testing.T) {
 	// Regression test: negative FIRST/LAST operands must be accepted (e.g.
 	// "seq -10 2 -2" ascends from -10 to -2 in steps of 2), matching native

@@ -216,10 +216,14 @@ func md5sumCheckStdin(warn, status, quiet bool) error {
 
 // md5sumCheckReader reads a checksum list (POSIX "<hash>  <filename>" or BSD
 // "MD5 (filename) = hash" format) from r and verifies each referenced file,
-// reporting via sourceName in diagnostics. Returns true if any line failed
-// to parse or any referenced file's checksum did not match.
+// reporting via sourceName in diagnostics. Returns true if any referenced
+// file's checksum did not match or could not be read. Malformed lines alone
+// do not make it return true -- matching GNU md5sum, they only ever produce
+// a warning (optionally per-line via -w, always as a trailing summary),
+// never a checksum-verification failure.
 func md5sumCheckReader(r io.Reader, sourceName string, warn, status, quiet bool) bool {
 	var hasError bool
+	var malformed, processed int
 	scanner := bufio.NewScanner(r)
 	lineNum := 0
 	for scanner.Scan() {
@@ -240,7 +244,7 @@ func md5sumCheckReader(r io.Reader, sourceName string, warn, status, quiet bool)
 				if warn {
 					fmt.Fprintf(os.Stderr, "md5sum: %s:%d: improperly formatted BSD style checksum line\n", sourceName, lineNum)
 				}
-				hasError = true
+				malformed++
 				continue
 			}
 			// Extract filename from "MD5 (filename)"
@@ -249,7 +253,7 @@ func md5sumCheckReader(r io.Reader, sourceName string, warn, status, quiet bool)
 				if warn {
 					fmt.Fprintf(os.Stderr, "md5sum: %s:%d: improperly formatted BSD style checksum line\n", sourceName, lineNum)
 				}
-				hasError = true
+				malformed++
 				continue
 			}
 			filename = strings.TrimSuffix(middle, ")")
@@ -262,7 +266,7 @@ func md5sumCheckReader(r io.Reader, sourceName string, warn, status, quiet bool)
 				if warn {
 					fmt.Fprintf(os.Stderr, "md5sum: %s:%d: improperly formatted checksum line\n", sourceName, lineNum)
 				}
-				hasError = true
+				malformed++
 				continue
 			}
 			expectedHash = parts[0]
@@ -270,12 +274,14 @@ func md5sumCheckReader(r io.Reader, sourceName string, warn, status, quiet bool)
 				if warn {
 					fmt.Fprintf(os.Stderr, "md5sum: %s:%d: improperly formatted checksum line\n", sourceName, lineNum)
 				}
-				hasError = true
+				malformed++
 				continue
 			}
 			// Filename might have spaces, so join remaining parts; strip binary-mode prefix
 			filename = strings.TrimPrefix(strings.Join(parts[1:], " "), "*")
 		}
+
+		processed++
 
 		// Compute actual hash
 		fileToCheck, err := os.Open(filename)
@@ -323,6 +329,24 @@ func md5sumCheckReader(r io.Reader, sourceName string, warn, status, quiet bool)
 			fmt.Fprintf(os.Stderr, "md5sum: %s: error reading: %v\n", sourceName, err)
 		}
 		hasError = true
+	}
+
+	if malformed > 0 {
+		if processed == 0 {
+			// No line in the whole checksum list could be verified at all --
+			// GNU treats this as a hard failure with its own message, not
+			// merely a warning.
+			hasError = true
+			if !quiet {
+				fmt.Fprintf(os.Stderr, "md5sum: %s: no properly formatted MD5 checksum lines found\n", sourceName)
+			}
+		} else if !status {
+			if malformed == 1 {
+				fmt.Fprintln(os.Stderr, "md5sum: WARNING: 1 line is improperly formatted")
+			} else {
+				fmt.Fprintf(os.Stderr, "md5sum: WARNING: %d lines are improperly formatted\n", malformed)
+			}
+		}
 	}
 	return hasError
 }

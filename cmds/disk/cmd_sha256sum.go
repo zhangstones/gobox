@@ -162,10 +162,15 @@ func sha256sumCheck(files []string, warn, status, quiet bool) error {
 }
 
 // sha256sumCheckReader verifies a checksum list read from r, reporting via
-// sourceName in diagnostics. Returns ok=false if any line failed to parse or
-// any referenced file's checksum did not match.
+// sourceName in diagnostics. Returns ok=false if any referenced file's checksum
+// did not match or could not be read. Malformed lines alone do not make it
+// return false -- matching GNU sha256sum, they only ever produce a warning
+// (optionally per-line via -w, always as a trailing summary), never a
+// checksum-verification failure, unless the checksum list contained no
+// parseable line at all.
 func sha256sumCheckReader(r io.Reader, sourceName string, warn, status, quiet bool) (bool, error) {
 	ok := true
+	var malformed, processed int
 	scanner := bufio.NewScanner(r)
 	lineNo := 0
 	for scanner.Scan() {
@@ -176,12 +181,13 @@ func sha256sumCheckReader(r io.Reader, sourceName string, warn, status, quiet bo
 		}
 		expected, name, parsed := parseSHA256CheckLine(line)
 		if !parsed {
-			ok = false
+			malformed++
 			if warn && !status {
 				fmt.Fprintf(os.Stderr, "sha256sum: %s:%d: improperly formatted checksum line\n", sourceName, lineNo)
 			}
 			continue
 		}
+		processed++
 		actual, err := sha256File(name)
 		if err != nil {
 			ok = false
@@ -200,6 +206,20 @@ func sha256sumCheckReader(r io.Reader, sourceName string, warn, status, quiet bo
 	}
 	if err := scanner.Err(); err != nil {
 		return false, err
+	}
+	if malformed > 0 {
+		if processed == 0 {
+			ok = false
+			if !quiet {
+				fmt.Fprintf(os.Stderr, "sha256sum: %s: no properly formatted SHA256 checksum lines found\n", sourceName)
+			}
+		} else if !status {
+			if malformed == 1 {
+				fmt.Fprintln(os.Stderr, "sha256sum: WARNING: 1 line is improperly formatted")
+			} else {
+				fmt.Fprintf(os.Stderr, "sha256sum: WARNING: %d lines are improperly formatted\n", malformed)
+			}
+		}
 	}
 	return ok, nil
 }

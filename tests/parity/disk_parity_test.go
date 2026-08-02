@@ -198,15 +198,20 @@ func TestParity_Md5sumCases(t *testing.T) {
 	})
 
 	t.Run("MD5-005-mixed", func(t *testing.T) {
-		// Mixed file: one valid checksum line and one malformed line.
+		// Mixed file: one valid checksum line and one malformed line. Real
+		// GNU md5sum exits 0 here -- a malformed line next to at least one
+		// verified line is only a WARNING, not a verification failure --
+		// so this compares gobox against native directly instead of a
+		// hardcoded exit-code assumption.
 		env := t.TempDir()
 		writeFile(t, filepath.Join(env, "good.txt"), "hello")
 		sum := runNativeCLI(t, env, "", "md5sum", "good.txt")
 		content := normalizeText(sum.Stdout) + "\n" + "not a valid checksum line\n"
 		writeFile(t, filepath.Join(env, "checksums.md5"), content)
+		native := runNativeCLI(t, env, "", "md5sum", "--warn", "--check", "checksums.md5")
 		gobox := runGoboxCLI(t, env, "", "md5sum", "--warn", "--check", "checksums.md5")
-		if gobox.ExitCode == 0 {
-			t.Fatalf("md5sum --warn with malformed line should fail, got exit 0: %+v", gobox)
+		if gobox.ExitCode != native.ExitCode {
+			t.Fatalf("md5sum --warn mixed exit mismatch gobox=%d native=%d (native=%+v gobox=%+v)", gobox.ExitCode, native.ExitCode, native, gobox)
 		}
 		if findLineContaining(strings.ToLower(gobox.Stderr), "improperly formatted") == "" {
 			t.Fatalf("md5sum --warn mixed: missing per-line warning on stderr: %+v", gobox)

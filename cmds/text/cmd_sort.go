@@ -271,7 +271,17 @@ func getField(line string, key int, sep string) string {
 
 func parseValue(field string, cfg sortConfig) interface{} {
 	if cfg.month {
-		lower := strings.ToLower(field)
+		// GNU sort -M matches only the leading month abbreviation and ignores
+		// any trailing content on the line (e.g. "Jan 5", "Mar 15 12:00 ..."),
+		// rather than requiring the whole field to equal a month name.
+		token := field
+		if fields := strings.Fields(field); len(fields) > 0 {
+			token = fields[0]
+		}
+		lower := strings.ToLower(token)
+		if len(lower) > 3 {
+			lower = lower[:3]
+		}
 		if month, ok := monthNames[lower]; ok {
 			return month
 		}

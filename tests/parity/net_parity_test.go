@@ -2697,8 +2697,14 @@ func TestParity_NcCases(t *testing.T) {
 		{"NC-010", []string{"nc", "--bench", "-c", "2", "-n", "4", "-s", "16B"}, nil, "64B", 0, 5, 0, ""},
 		{"NC-011", []string{"nc", "--bench", "-n", "3", "-s", "16B"}, nil, "48B", 0, 5, 0, ""},
 		{"NC-012", []string{"nc", "--bench", "-n", "2", "-s", "32B"}, nil, "64B", 0, 5, 0, ""},
-		{"NC-013", []string{"nc", "--bench", "-t", "1", "-n", "200000", "-s", "16B"}, []string{"nc", "--bench", "-n", "2", "-s", "16B"}, "", 0, 5, 800 * time.Millisecond, ""},
-		{"NC-014", []string{"nc", "--bench", "-t", "3", "-n", "200000", "-s", "16B", "-i", "2"}, []string{"nc", "--bench", "-t", "3", "-n", "200000", "-s", "16B"}, "", 0, 5, 2500 * time.Millisecond, "[ 1]"},
+		// -n and -t are mutually exclusive (see cmd_nc.go's own --help text
+		// and the requestsSet/testDuration check in CurlCmd's nc equivalent
+		// NcCmd): these used to also pass a large -n alongside -t to lean on
+		// the old (buggy) silent "-t wins" fallback. Now that combining them
+		// correctly errors, -t alone is sufficient to exercise time-based
+		// duration and interval reporting.
+		{"NC-013", []string{"nc", "--bench", "-t", "1", "-s", "16B"}, []string{"nc", "--bench", "-n", "2", "-s", "16B"}, "", 0, 5, 800 * time.Millisecond, ""},
+		{"NC-014", []string{"nc", "--bench", "-t", "3", "-s", "16B", "-i", "2"}, []string{"nc", "--bench", "-t", "3", "-s", "16B"}, "", 0, 5, 2500 * time.Millisecond, "[ 1]"},
 	} {
 		t.Run(tc.id, func(t *testing.T) {
 			_, port, closeFn := startTCPEchoServer(t, "127.0.0.1:0")

@@ -590,6 +590,37 @@ func TestMd5sumCmdCheckEmptyFile(t *testing.T) {
 	}
 }
 
+// TestMd5sumCmdCheckMalformedLineAlongsideValidLineExitsZero is a regression
+// test: when the checksum list has a malformed line AND a valid, matching
+// line, GNU md5sum exits 0 (the malformed line is only a warning, not a
+// verification failure) -- gobox used to always exit 1 in this case, wrongly
+// treating the format warning as a checksum-verification failure. Verified
+// against real GNU md5sum.
+func TestMd5sumCmdCheckMalformedLineAlongsideValidLineExitsZero(t *testing.T) {
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "good.txt")
+	if err := os.WriteFile(testFile, []byte("hello"), 0644); err != nil {
+		t.Fatalf("write test file: %v", err)
+	}
+	checkFile := filepath.Join(dir, "checks.md5")
+	// MD5 of "hello" is 5d41402abc4b2a76b9719d911017c592
+	content := "not-a-valid-checksum-line\n5d41402abc4b2a76b9719d911017c592  good.txt\n"
+	if err := os.WriteFile(checkFile, []byte(content), 0644); err != nil {
+		t.Fatalf("write checksum file: %v", err)
+	}
+
+	stdout, stderr, err := runMd5sumCmdFull([]string{"-c", "-w", "checks.md5"}, dir)
+	if err != nil {
+		t.Fatalf("expected exit 0 when at least one valid checksum matches, got err=%v stdout=%q stderr=%q", err, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "good.txt: OK") {
+		t.Fatalf("expected 'good.txt: OK', got stdout=%q", stdout)
+	}
+	if !strings.Contains(stderr, "WARNING: 1 line is improperly formatted") {
+		t.Fatalf("expected a WARNING summary for the malformed line, got stderr=%q", stderr)
+	}
+}
+
 // ============== QUIET MODE TESTS ==============
 
 func TestMd5sumCmdQuietMode(t *testing.T) {

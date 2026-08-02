@@ -49,6 +49,29 @@ func curlLongClassifier(name string) (defined, takesValue bool) {
 	return false, false
 }
 
+// splitCurlLongFlagEquals rewrites "--flag=value" into ["--flag", "value"]
+// for long flags that take a value. CurlCmd's manual parser below only
+// matches exact flag tokens (e.g. arg == "--concurrent") and expects the
+// value as a separate following argument, so without this the attached-value
+// form documented in curl's own --help (e.g. --concurrent=N) was rejected as
+// an unknown option.
+func splitCurlLongFlagEquals(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--") {
+			if eq := strings.IndexByte(arg, '='); eq > 2 {
+				name := arg[2:eq]
+				if defined, takesValue := curlLongClassifier(name); defined && takesValue {
+					out = append(out, arg[:eq], arg[eq+1:])
+					continue
+				}
+			}
+		}
+		out = append(out, arg)
+	}
+	return out
+}
+
 type resolveHost struct {
 	host string
 	port string
@@ -122,6 +145,10 @@ func CurlCmd(args []string) error {
 		warmupRequests int
 		requestTimeout time.Duration
 	)
+
+	// Split "--flag=value" into two tokens so the token-matching parser below
+	// (which expects the value as a separate following argument) accepts it.
+	args = splitCurlLongFlagEquals(args)
 
 	// Expand GNU-style short-flag clusters (e.g. -sI -> -s -I, -m5 -> -m 5) so
 	// the token-matching parser below accepts bundled and attached forms.

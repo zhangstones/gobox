@@ -863,6 +863,31 @@ func TestNCBenchmarkClient(t *testing.T) {
 	t.Logf("Benchmark client completed")
 }
 
+// TestNCBenchRequestsAndTimeAreMutuallyExclusive is a regression test:
+// nc's own help text documents -t as "mutually exclusive with -n", but
+// passing both used to silently run in time-based mode and drop -n with no
+// warning, instead of erroring.
+func TestNCBenchRequestsAndTimeAreMutuallyExclusive(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start listener: %v", err)
+	}
+	defer ln.Close()
+	go func() { _ = ncBenchServer(ln, false, 64*1024, false) }()
+	port := ln.Addr().(*net.TCPAddr).Port
+	if !waitForPort(port, time.Second) {
+		t.Fatalf("server did not start listening on port %d", port)
+	}
+
+	_, err = runNcCmd([]string{"--bench", "-n", "10", "-t", "2", "127.0.0.1", strconv.Itoa(port)})
+	if err == nil {
+		t.Fatal("expected an error when both -n and -t are given, got success")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected a mutually-exclusive error, got: %v", err)
+	}
+}
+
 func TestNCBenchmarkModeWithRequests(t *testing.T) {
 	// Start a TCP server that we can benchmark against
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

@@ -484,7 +484,7 @@ func TestSha256sumCmdOptionsWarnMalformed(t *testing.T) {
 
 }
 
-func TestSha256sumCmdOptionsStatusMalformedIsSilent(t *testing.T) {
+func TestSha256sumCmdOptionsStatusMalformedStillReportsNoValidLines(t *testing.T) {
 	dir := t.TempDir()
 	oldWd, err := os.Getwd()
 	if err != nil {
@@ -506,8 +506,16 @@ func TestSha256sumCmdOptionsStatusMalformedIsSilent(t *testing.T) {
 	stdout, stderr, err := captureSha256CmdFull(t, "", func() error {
 		return Sha256sumCmd([]string{"-c", "-s", "status-malformed.check"})
 	})
-	if stdout != "" || stderr != "" {
-		t.Fatalf("expected status mode silence, stdout=%q stderr=%q", stdout, stderr)
+	// Verified against real GNU sha256sum/md5sum: --status does not suppress
+	// the "no properly formatted checksum lines found" diagnostic (unlike
+	// the per-file OK/FAILED lines, which it does suppress) -- there's
+	// nothing to check at all, so stdout stays empty but stderr still
+	// reports why.
+	if stdout != "" {
+		t.Fatalf("expected no stdout in status mode, got %q", stdout)
+	}
+	if !strings.Contains(stderr, "no properly formatted") {
+		t.Fatalf("expected a 'no properly formatted' diagnostic even under --status, got stderr=%q", stderr)
 	}
 	if exitErr, ok := err.(sha256sumExitError); !ok || exitErr.ExitCode() != 1 {
 		t.Fatalf("expected malformed status exit 1, got %T %v", err, err)
@@ -639,6 +647,43 @@ func TestSha256sumCmdOptionsQuietCheckStillReportsFailed(t *testing.T) {
 	exitErr, ok := err.(sha256sumExitError)
 	if !ok || exitErr.ExitCode() != 1 {
 		t.Fatalf("expected quiet check failure exit 1, got %T %v", err, err)
+	}
+}
+
+// TestSha256sumCmdCheckMalformedLineAlongsideValidLineExitsZero mirrors
+// TestMd5sumCmdCheckMalformedLineAlongsideValidLineExitsZero: a malformed
+// line next to a valid, matching one must exit 0 (warning only), not 1.
+func TestSha256sumCmdCheckMalformedLineAlongsideValidLineExitsZero(t *testing.T) {
+	dir := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(oldWd) }()
+
+	if err := os.WriteFile("good.txt", []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const helloSHA = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+	content := "not-a-valid-checksum-line\n" + helloSHA + "  good.txt\n"
+	if err := os.WriteFile("checks.sha256", []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := captureSha256CmdFull(t, "", func() error {
+		return Sha256sumCmd([]string{"-c", "-w", "checks.sha256"})
+	})
+	if err != nil {
+		t.Fatalf("expected exit 0 when at least one valid checksum matches, got err=%v stdout=%q stderr=%q", err, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "good.txt: OK") {
+		t.Fatalf("expected 'good.txt: OK', got stdout=%q", stdout)
+	}
+	if !strings.Contains(stderr, "WARNING: 1 line is improperly formatted") {
+		t.Fatalf("expected a WARNING summary for the malformed line, got stderr=%q", stderr)
 	}
 }
 

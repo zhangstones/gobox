@@ -24,6 +24,22 @@ func TestTopCmdHelpPrefersCanonicalSortFlag(t *testing.T) {
 	}
 }
 
+// TestTopCmdInvalidSortFieldErrorsLikePs is a regression test: an
+// unsupported --sort field used to be silently ignored (falling back to
+// default pid order, exit 0), unlike ps's --sort which correctly errors on
+// the same kind of bad input.
+func TestTopCmdInvalidSortFieldErrorsLikePs(t *testing.T) {
+	_, err := captureProcOutput(t, func() error {
+		return TopCmd([]string{"--sort", "badfield", "-n", "1", "-b"})
+	})
+	if err == nil {
+		t.Fatal("expected an error for an unsupported --sort field, got success")
+	}
+	if !strings.Contains(err.Error(), "unsupported sort field") {
+		t.Fatalf("expected an 'unsupported sort field' error, got: %v", err)
+	}
+}
+
 func TestNormalizeTopOrderBy(t *testing.T) {
 	for _, tc := range []struct {
 		in   string

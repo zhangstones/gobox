@@ -972,6 +972,26 @@ func TestCurlBenchBasic(t *testing.T) {
 	}
 }
 
+// TestCurlBenchAttachedLongFlagEquals is a regression test: curl's own
+// --help documents long flags like "--concurrent=N", but the manual parser
+// only matched the space-separated form ("--concurrent N"), rejecting the
+// attached "=value" form it advertises with "unknown option".
+func TestCurlBenchAttachedLongFlagEquals(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "bench content")
+	}))
+	defer server.Close()
+
+	output, err := runCurlCmd([]string{"--bench", "--concurrent=2", "--requests=10", "--warmup=1", server.URL})
+	if err != nil {
+		t.Fatalf("curl --concurrent=2 --requests=10 --warmup=1 failed: %v", err)
+	}
+	result := string(output)
+	if !strings.Contains(result, "Requests:") {
+		t.Errorf("Expected benchmark output with Requests, got: %s", result)
+	}
+}
+
 func TestCurlBenchWarmup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "warmup content")

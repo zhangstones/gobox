@@ -207,6 +207,30 @@ func TestParity_XargsCases(t *testing.T) {
 			Stdin:         "abc\n",
 		},
 		{
+			// GNU xargs's -I implies -L 1: blanks within a line are NOT item
+			// separators there, unlike xargs' word-split default mode -- a
+			// single "a b" line must stay one item, not become two. XARGS-001
+			// doesn't catch this because its stdin ("abc\n") has no embedded
+			// blank to split on.
+			ID:            "XARGS-009",
+			Name:          "xargs -I preserves whole line with embedded blanks",
+			GoboxArgs:     []string{"xargs", "-I", "{}", "echo", "pre:{}:post"},
+			NativeCommand: "xargs",
+			NativeArgs:    []string{"-I", "{}", "echo", "pre:{}:post"},
+			Stdin:         "a b\n",
+		},
+		{
+			// Same regression via the BSD-style -i{} alias, and across
+			// multiple lines to also confirm line boundaries still separate
+			// items (only within-line blanks are preserved).
+			ID:            "XARGS-010",
+			Name:          "xargs -i preserves whole line with embedded blanks, multi-line",
+			GoboxArgs:     []string{"xargs", "-i{}", "echo", "pre:{}:post"},
+			NativeCommand: "xargs",
+			NativeArgs:    []string{"-i{}", "echo", "pre:{}:post"},
+			Stdin:         "a b\nc d\n",
+		},
+		{
 			ID:            "XARGS-003",
 			Name:          "xargs -d",
 			GoboxArgs:     []string{"xargs", "-d", ",", "echo"},

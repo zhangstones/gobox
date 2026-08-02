@@ -19,6 +19,19 @@ import (
 // fixed field layout).
 const digDefaultTTL = 300
 
+// cnameIsSelf reports whether cname is just the canonicalized form of host
+// itself. Go's net.Resolver.LookupCNAME never errors when a host has no
+// CNAME record -- per its documented contract, it instead returns the host's
+// own canonical name in that case. Without this check, a domain with no
+// CNAME record at all would be reported as having a self-referential CNAME,
+// which real dig/nslookup never show.
+func cnameIsSelf(host, cname string) bool {
+	norm := func(s string) string {
+		return strings.ToLower(strings.TrimSuffix(s, "."))
+	}
+	return norm(cname) == norm(host)
+}
+
 // DigCmd implements dig functionality
 func DigCmd(args []string) error {
 	return runDNSLookup("dig", args)
@@ -250,6 +263,10 @@ func lookupCNAME(host string, resolver *net.Resolver) error {
 		return fmt.Errorf("lookup failed: %w", err)
 	}
 	fmt.Printf("Name:   %s\n", host)
+	if cnameIsSelf(host, cname) {
+		fmt.Println()
+		return nil
+	}
 	fmt.Printf("Canonical name: %s\n\n", cname)
 	return nil
 }
@@ -355,7 +372,7 @@ func digShortOutput(host, queryType, dnsServer string, useTCP bool) error {
 		}
 	case "CNAME":
 		cname, err := resolver.LookupCNAME(context.Background(), host)
-		if err != nil {
+		if err != nil || cnameIsSelf(host, cname) {
 			return nil
 		}
 		fmt.Println(cname)
@@ -436,7 +453,7 @@ func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 		}
 	case "CNAME":
 		cname, err := resolver.LookupCNAME(context.Background(), host)
-		if err != nil {
+		if err != nil || cnameIsSelf(host, cname) {
 			fmt.Printf("%s. IN CNAME\n", host)
 			return nil
 		}
@@ -538,7 +555,7 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 	case "CNAME":
 		cname, err := resolver.LookupCNAME(context.Background(), host)
 		queryErr = err
-		if err == nil {
+		if err == nil && !cnameIsSelf(host, cname) {
 			fmt.Printf("%s.\t\t%d\tIN\tCNAME\t%s\n", host, digDefaultTTL, cname)
 			hasAnswer = true
 		}

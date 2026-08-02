@@ -53,6 +53,7 @@ func NcCmdWithContext(ctx context.Context, args []string) error {
 		testDuration   int   = 0 // 0 means use totalRequests
 		reportInterval int   = 1
 		showHelp       bool
+		requestsSet    bool // whether -n/--requests was given an explicit bench request count
 	)
 
 	// Expand GNU-style short-flag clusters (e.g. -zv -> -z -v) so the
@@ -90,6 +91,7 @@ func NcCmdWithContext(ctx context.Context, args []string) error {
 				if next, err := strconv.Atoi(args[i+1]); err == nil {
 					i++
 					totalRequests = next
+					requestsSet = true
 					break
 				}
 			}
@@ -140,8 +142,10 @@ func NcCmdWithContext(ctx context.Context, args []string) error {
 				i++
 				totalRequests, _ = strconv.Atoi(args[i])
 			}
+			requestsSet = true
 		case strings.HasPrefix(arg, "--requests="):
 			totalRequests, _ = strconv.Atoi(arg[11:])
+			requestsSet = true
 		case strings.HasPrefix(arg, "-t"):
 			// -tSEC or -t SEC
 			if len(arg) > 2 {
@@ -197,6 +201,9 @@ doneFlags:
 	port := remaining[1]
 
 	if benchMode {
+		if requestsSet && testDuration != 0 {
+			return fmt.Errorf("nc: -n/--requests and -t/--time are mutually exclusive")
+		}
 		return ncBenchmarkClient(host, port, udpMode, verbose, numericOnly, forceIPv4, forceIPv6,
 			concurrent, totalRequests, testDuration, reportInterval, int(blockSize), waitSec)
 	}
