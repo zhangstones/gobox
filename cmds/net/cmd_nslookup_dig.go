@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"gobox/cmds/utils"
 )
 
 // digDefaultTTL is used to render the TTL column of dig's answer lines.
@@ -71,7 +73,10 @@ func runDNSLookup(progName string, args []string) error {
 			useTCP = true
 		case strings.HasPrefix(arg, "@") && len(arg) > 1:
 			dnsServer = arg[1:]
-		case (arg == "-t" || arg == "--type") && i+1 < len(args):
+		case arg == "-t" || arg == "--type":
+			if i+1 >= len(args) || utils.LooksLikeFlag(args[i+1]) {
+				return fmt.Errorf("%s requires an argument", arg)
+			}
 			i++
 			queryType = args[i]
 		case strings.HasPrefix(arg, "-t") && len(arg) > 2:

@@ -820,6 +820,20 @@ func TestSedDotPattern(t *testing.T) {
 	}
 }
 
+// TestSedScriptFlagRejectsSwallowingNextFlag is a regression test for
+// `sed -e -n file`: -e (add script) previously bound the script to the
+// literal string "-n", silently dropping -n/quiet mode. The guard must now
+// error instead of consuming "-n".
+func TestSedScriptFlagRejectsSwallowingNextFlag(t *testing.T) {
+	_, err := runSedCmdWithStdin([]string{"-e", "-n", "-"}, "line1\n")
+	if err == nil {
+		t.Fatal("sed -e -n - = nil error, want an error instead of silently dropping -n")
+	}
+	if !strings.Contains(err.Error(), "-e") {
+		t.Fatalf("expected error to name -e as missing its value, got %v", err)
+	}
+}
+
 func TestSedCmdExplicitDashReadsStdin(t *testing.T) {
 	output, err := runSedCmdWithStdin([]string{"s/line/L/", "-"}, "line1\nline2\n")
 	if err != nil {

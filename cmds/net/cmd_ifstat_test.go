@@ -695,11 +695,15 @@ func TestIfstatCmdMissingIntervalArg(t *testing.T) {
 func TestIfstatCmdMissingCountArg(t *testing.T) {
 	skipIfNoInterfaces(t)
 
-	// -n without argument should error
+	// -n immediately followed by another real flag (-p) has no value to
+	// consume: the arg parser must reject this rather than swallow -p's name
+	// as -n's value (which previously surfaced as a stdlib "invalid value"
+	// int-parse error once -p had already been silently absorbed).
 	stdout, stderr, err := runIfstatCmdFull([]string{"-n", "-p", "1"})
 	if err == nil {
 		t.Errorf("Expected error when -n is missing argument")
-	} else if !strings.Contains(err.Error(), "invalid value") && !strings.Contains(stderr, "invalid value") {
+	} else if !strings.Contains(err.Error(), "invalid value") && !strings.Contains(stderr, "invalid value") &&
+		!strings.Contains(err.Error(), "flag needs an argument") && !strings.Contains(stderr, "flag needs an argument") {
 		t.Fatalf("unexpected missing -n arg error stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
 }

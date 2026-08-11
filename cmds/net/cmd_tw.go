@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"gobox/cmds/utils"
 )
 
 // twCmd implements a tiny web server
@@ -34,17 +36,14 @@ func TwCmd(args []string) error {
 			reuse = true
 		case arg == "--bench":
 			bench = true
-		case (arg == "-p" || arg == "--port") && i+1 < len(args):
-			i++
-			var portStr string
-			if strings.HasPrefix(arg, "--port=") {
-				portStr = arg[7:]
-			} else {
-				portStr = args[i]
+		case arg == "-p" || arg == "--port":
+			if i+1 >= len(args) || utils.LooksLikeFlag(args[i+1]) {
+				return fmt.Errorf("%s requires an argument", arg)
 			}
-			parsedPort, err := strconv.Atoi(portStr)
+			i++
+			parsedPort, err := strconv.Atoi(args[i])
 			if err != nil || parsedPort <= 0 || parsedPort > 65535 {
-				return fmt.Errorf("invalid port: %s", portStr)
+				return fmt.Errorf("invalid port: %s", args[i])
 			}
 			port = parsedPort
 		case strings.HasPrefix(arg, "--port="):
@@ -53,13 +52,12 @@ func TwCmd(args []string) error {
 				return fmt.Errorf("invalid port: %s", arg[7:])
 			}
 			port = parsedPort
-		case (arg == "-d" || arg == "--dir") && i+1 < len(args):
-			i++
-			if strings.HasPrefix(arg, "--dir=") {
-				dir = arg[6:]
-			} else {
-				dir = args[i]
+		case arg == "-d" || arg == "--dir":
+			if i+1 >= len(args) || utils.LooksLikeFlag(args[i+1]) {
+				return fmt.Errorf("%s requires an argument", arg)
 			}
+			i++
+			dir = args[i]
 		case strings.HasPrefix(arg, "--dir="):
 			dir = arg[6:]
 		default:

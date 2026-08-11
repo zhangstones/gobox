@@ -2105,9 +2105,69 @@ func TestCurlExpandShortClusters(t *testing.T) {
 		{[]string{"http://x"}, []string{"http://x"}},
 	}
 	for _, tc := range cases {
-		got := utils.ExpandShortClusters(tc.in, curlShortClassifier, curlLongClassifier)
+		got, err := utils.ExpandShortClusters(tc.in, curlShortClassifier, curlLongClassifier)
+		if err != nil {
+			t.Errorf("curl expand %q returned error: %v", tc.in, err)
+			continue
+		}
 		if !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("curl expand %q = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestCurlOutputFlagRejectsSwallowingNextFlag is a regression test for
+// `curl -o -s URL`: -o (output file) previously bound outputFile to the
+// literal string "-s", silently dropping -s/--silent and creating a stray
+// file named "-s" in the working directory once the request succeeded.
+// nextCurlArg must now refuse to consume "-s" and error instead.
+func TestCurlOutputFlagRejectsSwallowingNextFlag(t *testing.T) {
+	dir := t.TempDir()
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(oldwd) }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "body")
+	}))
+	defer server.Close()
+
+	_, err = runCurlCmd([]string{"-o", "-s", server.URL})
+	if err == nil {
+		t.Fatal("curl -o -s URL = nil error, want an error instead of writing to a file named \"-s\"")
+	}
+	if !strings.Contains(err.Error(), "-o") {
+		t.Fatalf("expected error to name -o as missing its value, got %v", err)
+	}
+	if _, statErr := os.Stat("-s"); statErr == nil {
+		t.Fatal("curl -o -s URL created a stray file named \"-s\"; -s should never have been treated as -o's value")
+	}
+}
+
+// TestCurlDataFlagStillAcceptsValueThatLooksLikeAFlagCluster locks in the
+// deliberate flip side of the fix above: -d's value is arbitrary POST data,
+// and real curl takes the very next argument literally even when it happens
+// to look like a short-flag cluster. Rejecting "-sI" here would be a
+// gobox-specific regression, not a fix, so this must keep working exactly as
+// TestCurlExpandShortClusters's "-d -sI" case already asserts at the
+// expansion layer -- this test asserts it end-to-end through CurlCmd.
+func TestCurlDataFlagStillAcceptsValueThatLooksLikeAFlagCluster(t *testing.T) {
+	var gotBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+	}))
+	defer server.Close()
+
+	if _, err := runCurlCmd([]string{"-d", "-sI", server.URL}); err != nil {
+		t.Fatalf("curl -d -sI URL failed: %v", err)
+	}
+	if gotBody != "-sI" {
+		t.Fatalf("expected POST body %q, got %q", "-sI", gotBody)
 	}
 }

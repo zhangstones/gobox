@@ -9,6 +9,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"gobox/cmds/utils"
 )
 
 type randConfig struct {
@@ -58,7 +60,7 @@ func RandCmd(args []string) error {
 			cfg.base64 = true
 			cfg.hex = false
 		case arg == "-out":
-			if i+1 >= len(args) {
+			if i+1 >= len(args) || utils.LooksLikeFlag(args[i+1]) || isRandFlag(args[i+1]) {
 				return fmt.Errorf("-out requires an argument")
 			}
 			i++
@@ -142,6 +144,17 @@ doneFlags:
 
 	fmt.Fprintln(out, outData)
 	return nil
+}
+
+// isRandFlag reports whether tok is exactly one of rand's own single-dash
+// long-style flags (-hex, -base64). utils.LooksLikeFlag can't catch these on
+// its own: it only flags "--long" (double-dash) and exact two-character
+// short tokens, by design, to avoid rejecting legitimate multi-character
+// dash-prefixed values elsewhere (see its doc comment). rand's -hex/-base64
+// are single-dash yet multi-character, so -out's swallow guard needs this
+// extra exact-match check alongside LooksLikeFlag.
+func isRandFlag(tok string) bool {
+	return tok == "-hex" || tok == "-base64" || tok == "-h" || tok == "--help"
 }
 
 // isDigits reports whether s is non-empty and contains only ASCII digits.

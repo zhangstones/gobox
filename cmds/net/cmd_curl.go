@@ -152,10 +152,25 @@ func CurlCmd(args []string) error {
 
 	// Expand GNU-style short-flag clusters (e.g. -sI -> -s -I, -m5 -> -m 5) so
 	// the token-matching parser below accepts bundled and attached forms.
-	args = utils.ExpandShortClusters(args, curlShortClassifier, curlLongClassifier)
+	expanded, err := utils.ExpandShortClusters(args, curlShortClassifier, curlLongClassifier)
+	if err != nil {
+		return err
+	}
+	args = expanded
 
 	// Parse flags manually
 	i := 0
+	// nextCurlArg returns the value for a space-separated option, refusing to
+	// swallow the next token when it looks like another flag (e.g. `curl -o -s
+	// URL` previously bound outputFile to "-s" and silently dropped -s/silent
+	// mode instead of erroring).
+	nextCurlArg := func(flagName string) (string, error) {
+		if i+1 >= len(args) || utils.LooksLikeFlag(args[i+1]) {
+			return "", fmt.Errorf("%s requires an argument", flagName)
+		}
+		i++
+		return args[i], nil
+	}
 	for i < len(args) {
 		arg := args[i]
 		switch {
@@ -164,11 +179,11 @@ func CurlCmd(args []string) error {
 		case arg == "-S" || arg == "--show-error":
 			showError = true
 		case arg == "-o" || arg == "--output":
-			if i+1 >= len(args) {
-				return fmt.Errorf("-o requires an argument")
+			v, err := nextCurlArg("-o")
+			if err != nil {
+				return err
 			}
-			i++
-			outputFile = args[i]
+			outputFile = v
 		case arg == "-O" || arg == "--remote-name":
 			remoteName = true
 		case arg == "-L" || arg == "--location":
@@ -176,51 +191,51 @@ func CurlCmd(args []string) error {
 		case arg == "-I" || arg == "--head":
 			head = true
 		case arg == "-w" || arg == "--write-out":
-			if i+1 >= len(args) {
-				return fmt.Errorf("-w requires an argument")
-			}
-			i++
-			writeOut = args[i]
-		case arg == "-m" || arg == "--max-time":
-			if i+1 >= len(args) {
-				return fmt.Errorf("-m requires an argument")
-			}
-			i++
-			sec, err := strconv.ParseFloat(args[i], 64)
+			v, err := nextCurlArg("-w")
 			if err != nil {
-				return fmt.Errorf("invalid timeout value: %s", args[i])
+				return err
+			}
+			writeOut = v
+		case arg == "-m" || arg == "--max-time":
+			v, err := nextCurlArg("-m")
+			if err != nil {
+				return err
+			}
+			sec, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return fmt.Errorf("invalid timeout value: %s", v)
 			}
 			maxTime = time.Duration(sec * float64(time.Second))
 		case arg == "-X" || arg == "--request":
-			if i+1 >= len(args) {
-				return fmt.Errorf("-X requires an argument")
+			v, err := nextCurlArg("-X")
+			if err != nil {
+				return err
 			}
-			i++
-			request = args[i]
+			request = v
 		case arg == "-H" || arg == "--header":
-			if i+1 >= len(args) {
-				return fmt.Errorf("-H requires an argument")
+			v, err := nextCurlArg("-H")
+			if err != nil {
+				return err
 			}
-			i++
-			headers = append(headers, args[i])
+			headers = append(headers, v)
 		case arg == "-d" || arg == "--data":
-			if i+1 >= len(args) {
-				return fmt.Errorf("-d requires an argument")
+			v, err := nextCurlArg("-d")
+			if err != nil {
+				return err
 			}
-			i++
-			postData = args[i]
+			postData = v
 		case arg == "-T" || arg == "--upload-file":
-			if i+1 >= len(args) {
-				return fmt.Errorf("-T requires an argument")
+			v, err := nextCurlArg("-T")
+			if err != nil {
+				return err
 			}
-			i++
-			uploadFile = args[i]
+			uploadFile = v
 		case arg == "-F" || arg == "--form":
-			if i+1 >= len(args) {
-				return fmt.Errorf("-F requires an argument")
+			v, err := nextCurlArg("-F")
+			if err != nil {
+				return err
 			}
-			i++
-			field, err := parseCurlFormField(args[i])
+			field, err := parseCurlFormField(v)
 			if err != nil {
 				return err
 			}
@@ -228,21 +243,21 @@ func CurlCmd(args []string) error {
 		case arg == "-k" || arg == "--insecure":
 			insecure = true
 		case arg == "--connect-timeout":
-			if i+1 >= len(args) {
-				return fmt.Errorf("--connect-timeout requires an argument")
-			}
-			i++
-			sec, err := strconv.ParseFloat(args[i], 64)
+			v, err := nextCurlArg("--connect-timeout")
 			if err != nil {
-				return fmt.Errorf("invalid connect-timeout value: %s", args[i])
+				return err
+			}
+			sec, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return fmt.Errorf("invalid connect-timeout value: %s", v)
 			}
 			connectTimeout = time.Duration(sec * float64(time.Second))
 		case arg == "--resolve":
-			if i+1 >= len(args) {
-				return fmt.Errorf("--resolve requires an argument")
+			v, err := nextCurlArg("--resolve")
+			if err != nil {
+				return err
 			}
-			i++
-			parts := strings.Split(args[i], ":")
+			parts := strings.Split(v, ":")
 			if len(parts) != 3 {
 				return fmt.Errorf("--resolve requires HOST:PORT:ADDR format")
 			}
@@ -254,43 +269,43 @@ func CurlCmd(args []string) error {
 		case arg == "--bench":
 			benchMode = true
 		case arg == "-c" || arg == "--concurrent":
-			if i+1 >= len(args) {
-				return fmt.Errorf("-c requires an argument")
+			v, err := nextCurlArg("-c")
+			if err != nil {
+				return err
 			}
-			i++
-			n, err := strconv.Atoi(args[i])
+			n, err := strconv.Atoi(v)
 			if err != nil || n < 1 {
-				return fmt.Errorf("invalid concurrent value: %s", args[i])
+				return fmt.Errorf("invalid concurrent value: %s", v)
 			}
 			concurrent = n
 		case arg == "-n" || arg == "--requests":
-			if i+1 >= len(args) {
-				return fmt.Errorf("-n requires an argument")
+			v, err := nextCurlArg("-n")
+			if err != nil {
+				return err
 			}
-			i++
-			n, err := strconv.Atoi(args[i])
+			n, err := strconv.Atoi(v)
 			if err != nil || n < 1 {
-				return fmt.Errorf("invalid requests value: %s", args[i])
+				return fmt.Errorf("invalid requests value: %s", v)
 			}
 			totalRequests = n
 		case arg == "--warmup":
-			if i+1 >= len(args) {
-				return fmt.Errorf("--warmup requires an argument")
+			v, err := nextCurlArg("--warmup")
+			if err != nil {
+				return err
 			}
-			i++
-			n, err := strconv.Atoi(args[i])
+			n, err := strconv.Atoi(v)
 			if err != nil || n < 0 {
-				return fmt.Errorf("invalid warmup value: %s", args[i])
+				return fmt.Errorf("invalid warmup value: %s", v)
 			}
 			warmupRequests = n
 		case arg == "-t" || arg == "--timeout":
-			if i+1 >= len(args) {
-				return fmt.Errorf("-t requires an argument")
-			}
-			i++
-			sec, err := strconv.ParseFloat(args[i], 64)
+			v, err := nextCurlArg("-t")
 			if err != nil {
-				return fmt.Errorf("invalid timeout value: %s", args[i])
+				return err
+			}
+			sec, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return fmt.Errorf("invalid timeout value: %s", v)
 			}
 			requestTimeout = time.Duration(sec * float64(time.Second))
 		case arg == "-h" || arg == "--help":

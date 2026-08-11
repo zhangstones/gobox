@@ -58,7 +58,11 @@ func NcCmdWithContext(ctx context.Context, args []string) error {
 
 	// Expand GNU-style short-flag clusters (e.g. -zv -> -z -v) so the
 	// token-matching parser below accepts bundled boolean flags.
-	args = utils.ExpandShortClusters(args, ncShortClassifier, nil)
+	expanded, err := utils.ExpandShortClusters(args, ncShortClassifier, nil)
+	if err != nil {
+		return err
+	}
+	args = expanded
 
 	// -n never consumes the next token when -l/--listen is present, so port parsing doesn't depend on flag order.
 	hasListenFlag := false
@@ -71,6 +75,17 @@ func NcCmdWithContext(ctx context.Context, args []string) error {
 
 	// Parse flags
 	i := 0
+	// nextNCArg returns the following token as a space-separated option's
+	// value, refusing to swallow it when it looks like another flag (e.g.
+	// `nc -w -v host port` previously bound waitSec's parse to "-v", silently
+	// failing Atoi and dropping -v/verbose instead of erroring).
+	nextNCArg := func(flagName string) (string, error) {
+		if i+1 >= len(args) || utils.LooksLikeFlag(args[i+1]) {
+			return "", fmt.Errorf("%s requires an argument", flagName)
+		}
+		i++
+		return args[i], nil
+	}
 	for i < len(args) {
 		arg := args[i]
 		switch {
@@ -106,9 +121,12 @@ func NcCmdWithContext(ctx context.Context, args []string) error {
 			// -wSEC or -w SEC
 			if len(arg) > 2 {
 				waitSec, _ = strconv.Atoi(arg[2:])
-			} else if i+1 < len(args) {
-				i++
-				waitSec, _ = strconv.Atoi(args[i])
+			} else {
+				v, err := nextNCArg("-w")
+				if err != nil {
+					return err
+				}
+				waitSec, _ = strconv.Atoi(v)
 			}
 		case strings.HasPrefix(arg, "--wait="):
 			waitSec, _ = strconv.Atoi(arg[7:])
@@ -118,9 +136,12 @@ func NcCmdWithContext(ctx context.Context, args []string) error {
 			// -sN or -s N
 			if len(arg) > 2 {
 				blockSize = parseNCSize(arg[2:])
-			} else if i+1 < len(args) {
-				i++
-				blockSize = parseNCSize(args[i])
+			} else {
+				v, err := nextNCArg("-s")
+				if err != nil {
+					return err
+				}
+				blockSize = parseNCSize(v)
 			}
 		case strings.HasPrefix(arg, "--size="):
 			blockSize = parseNCSize(arg[7:])
@@ -128,9 +149,12 @@ func NcCmdWithContext(ctx context.Context, args []string) error {
 			// -cN or -c N
 			if len(arg) > 2 {
 				concurrent, _ = strconv.Atoi(arg[2:])
-			} else if i+1 < len(args) {
-				i++
-				concurrent, _ = strconv.Atoi(args[i])
+			} else {
+				v, err := nextNCArg("-c")
+				if err != nil {
+					return err
+				}
+				concurrent, _ = strconv.Atoi(v)
 			}
 		case strings.HasPrefix(arg, "--concurrent="):
 			concurrent, _ = strconv.Atoi(arg[13:])
@@ -150,9 +174,12 @@ func NcCmdWithContext(ctx context.Context, args []string) error {
 			// -tSEC or -t SEC
 			if len(arg) > 2 {
 				testDuration, _ = strconv.Atoi(arg[2:])
-			} else if i+1 < len(args) {
-				i++
-				testDuration, _ = strconv.Atoi(args[i])
+			} else {
+				v, err := nextNCArg("-t")
+				if err != nil {
+					return err
+				}
+				testDuration, _ = strconv.Atoi(v)
 			}
 		case strings.HasPrefix(arg, "--time="):
 			testDuration, _ = strconv.Atoi(arg[7:])
@@ -160,9 +187,12 @@ func NcCmdWithContext(ctx context.Context, args []string) error {
 			// -iSEC or -i SEC
 			if len(arg) > 2 {
 				reportInterval, _ = strconv.Atoi(arg[2:])
-			} else if i+1 < len(args) {
-				i++
-				reportInterval, _ = strconv.Atoi(args[i])
+			} else {
+				v, err := nextNCArg("-i")
+				if err != nil {
+					return err
+				}
+				reportInterval, _ = strconv.Atoi(v)
 			}
 		case strings.HasPrefix(arg, "--interval="):
 			reportInterval, _ = strconv.Atoi(arg[11:])

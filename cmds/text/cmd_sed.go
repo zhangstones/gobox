@@ -8,17 +8,19 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"gobox/cmds/utils"
 )
 
 // sedCmd implements a subset of sed functionality
 func SedCmd(args []string) error {
 	var (
-		quiet        bool
-		inPlace      string
-		inPlaceSeen  bool
-		expressions  []string
-		scriptFile   string
-		showHelp     bool
+		quiet       bool
+		inPlace     string
+		inPlaceSeen bool
+		expressions []string
+		scriptFile  string
+		showHelp    bool
 	)
 
 	// Manual flag parsing to handle -i.bak style
@@ -31,13 +33,13 @@ func SedCmd(args []string) error {
 		case arg == "-h" || arg == "--help":
 			showHelp = true
 		case arg == "-e":
-			if i+1 >= len(args) {
+			if i+1 >= len(args) || utils.LooksLikeFlag(args[i+1]) {
 				return fmt.Errorf("-e requires an argument")
 			}
 			i++
 			expressions = append(expressions, args[i])
 		case arg == "-f":
-			if i+1 >= len(args) {
+			if i+1 >= len(args) || utils.LooksLikeFlag(args[i+1]) {
 				return fmt.Errorf("-f requires an argument")
 			}
 			i++

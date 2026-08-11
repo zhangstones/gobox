@@ -1416,6 +1416,18 @@ func TestTwBenchModeSmokeTest(t *testing.T) {
 	}
 }
 
+// TestTwDirFlagRejectsSwallowingNextFlag is a regression test for
+// `tw -d -r`: -d (serve directory) previously bound dir to the literal
+// string "-r", silently dropping -r/--reuse. The guard must now error
+// instead of consuming "-r", and must do so before ever binding a listener.
+func TestTwDirFlagRejectsSwallowingNextFlag(t *testing.T) {
+	if _, err := runTwCmd([]string{"-d", "-r"}); err == nil {
+		t.Fatal("tw -d -r = nil error, want an error instead of silently dropping -r")
+	} else if !strings.Contains(err.Error(), "-d") {
+		t.Fatalf("expected error to name -d as missing its value, got %v", err)
+	}
+}
+
 func TestTwStaticServingSmokeTest(t *testing.T) {
 	tmpDir := t.TempDir()
 	// Create test files

@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gobox/cmds/utils"
 )
 
 type sortConfig struct {
@@ -80,7 +82,7 @@ func SortCmd(args []string) error {
 		case arg == "-z" || arg == "--zero-terminated":
 			cfg.zeroTerminated = true
 		case arg == "-k":
-			if i+1 >= len(args) {
+			if i+1 >= len(args) || utils.LooksLikeFlag(args[i+1]) {
 				return fmt.Errorf("-k requires an argument")
 			}
 			i++
@@ -106,7 +108,7 @@ func SortCmd(args []string) error {
 			}
 			cfg.key = key
 		case arg == "-t":
-			if i+1 >= len(args) {
+			if i+1 >= len(args) || utils.LooksLikeFlag(args[i+1]) {
 				return fmt.Errorf("-t requires an argument")
 			}
 			i++
@@ -118,7 +120,7 @@ func SortCmd(args []string) error {
 		case strings.HasPrefix(arg, "--field-separator="):
 			cfg.sep = arg[len("--field-separator="):]
 		case arg == "-o":
-			if i+1 >= len(args) {
+			if i+1 >= len(args) || utils.LooksLikeFlag(args[i+1]) {
 				return fmt.Errorf("-o requires an argument")
 			}
 			i++

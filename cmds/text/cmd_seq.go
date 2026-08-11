@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"gobox/cmds/utils"
 )
 
 func SeqCmd(args []string) error {
@@ -22,7 +24,7 @@ func SeqCmd(args []string) error {
 		arg := args[i]
 		switch {
 		case arg == "-f" || arg == "--format":
-			if i+1 >= len(args) {
+			if i+1 >= len(args) || utils.LooksLikeFlag(args[i+1]) {
 				return fmt.Errorf("-f requires an argument")
 			}
 			i++
@@ -35,7 +37,7 @@ func SeqCmd(args []string) error {
 			format = arg[9:]
 			formatExplicit = true
 		case arg == "-s" || arg == "--separator":
-			if i+1 >= len(args) {
+			if i+1 >= len(args) || utils.LooksLikeFlag(args[i+1]) {
 				return fmt.Errorf("-s requires an argument")
 			}
 			i++

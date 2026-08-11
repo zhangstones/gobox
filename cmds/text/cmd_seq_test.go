@@ -794,6 +794,22 @@ func TestSeqCmdFloatingPointAccumulationDoesNotDrift(t *testing.T) {
 	}
 }
 
+// TestSeqFormatFlagRejectsSwallowingNextFlag is a regression test for
+// `seq -f -w 5`: -f (printf-style format) previously bound format to the
+// literal string "-w", silently dropping -w/--equal-width and leaking a Go
+// fmt verb-mismatch error string (e.g. "-w%!(EXTRA float64=1)") into the
+// output instead of failing outright. The guard must now error instead of
+// consuming "-w".
+func TestSeqFormatFlagRejectsSwallowingNextFlag(t *testing.T) {
+	_, err := runSeqCmd([]string{"-f", "-w", "5"})
+	if err == nil {
+		t.Fatal("seq -f -w 5 = nil error, want an error instead of silently dropping -w")
+	}
+	if !strings.Contains(err.Error(), "-f") {
+		t.Fatalf("expected error to name -f as missing its value, got %v", err)
+	}
+}
+
 // TestSeqCmdEqualWidthWithDecimals is a regression test for -w combined
 // with fractional operands: native seq pads the integer part with leading
 // zeros while keeping the shared decimal precision, e.g. "0.00".."1.00".

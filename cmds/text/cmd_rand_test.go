@@ -685,6 +685,30 @@ func TestRandCmdCombinedShortFlags(t *testing.T) {
 	}
 }
 
+// TestRandOutFlagRejectsSwallowingNextFlag is a regression test for
+// `rand -out -hex`: -out previously bound cfg.output to the literal string
+// "-hex", silently dropping the -hex encoding flag and creating a stray file
+// literally named "-hex" in the working directory. The guard must now error
+// instead of consuming "-hex".
+func TestRandOutFlagRejectsSwallowingNextFlag(t *testing.T) {
+	dir := t.TempDir()
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(oldwd) }()
+
+	if _, err := runRandCmd([]string{"-out", "-hex"}); err == nil {
+		t.Fatal("rand -out -hex = nil error, want an error instead of writing to a file named \"-hex\"")
+	}
+	if _, statErr := os.Stat("-hex"); statErr == nil {
+		t.Fatal("rand -out -hex created a stray file named \"-hex\"; -hex should never have been treated as -out's value")
+	}
+}
+
 func TestRandCmdCombinedNHex(t *testing.T) {
 	// Test -n16 -hex (16 bytes with hex explicit)
 	output, err := runRandCmd([]string{"-n16", "-hex"})

@@ -1338,6 +1338,35 @@ func TestSortUniqueByKeyDedupesOnField(t *testing.T) {
 	}
 }
 
+// TestSortOutputFlagRejectsSwallowingNextFlag is a regression test for
+// `sort -o -u file`: -o (output file) previously bound cfg.output to the
+// literal string "-u", silently dropping -u/--unique and writing
+// un-deduplicated content to a stray file named "-u" in the working
+// directory. The guard must now error instead of consuming "-u".
+func TestSortOutputFlagRejectsSwallowingNextFlag(t *testing.T) {
+	dir := t.TempDir()
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(oldwd) }()
+
+	filename := filepath.Join(dir, "in.txt")
+	if err := os.WriteFile(filename, []byte("b\na\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runSortCmd([]string{"-o", "-u", filename}); err == nil {
+		t.Fatal("sort -o -u file = nil error, want an error instead of writing to a file named \"-u\"")
+	}
+	if _, statErr := os.Stat("-u"); statErr == nil {
+		t.Fatal("sort -o -u file created a stray file named \"-u\"; -u should never have been treated as -o's value")
+	}
+}
+
 // Helper function to write test files
 func sortWriteTestFile(t *testing.T, filename, content string) {
 	err := os.WriteFile(filename, []byte(content), 0644)

@@ -1104,7 +1104,11 @@ func TestNcExpandShortClusters(t *testing.T) {
 		{[]string{"host", "80"}, []string{"host", "80"}},
 	}
 	for _, tc := range cases {
-		got := utils.ExpandShortClusters(tc.in, ncShortClassifier, nil)
+		got, err := utils.ExpandShortClusters(tc.in, ncShortClassifier, nil)
+		if err != nil {
+			t.Errorf("nc expand %q returned error: %v", tc.in, err)
+			continue
+		}
 		if !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("nc expand %q = %q, want %q", tc.in, got, tc.want)
 		}
@@ -1145,5 +1149,20 @@ func TestNCBenchClientDoesNotHangOnSilentPeer(t *testing.T) {
 		// returned within the timeout: good
 	case <-time.After(8 * time.Second):
 		t.Fatal("nc --bench hung against a non-echoing peer")
+	}
+}
+
+// TestNcWaitFlagRejectsSwallowingNextFlag is a regression test for
+// `nc -w -v host port`: -w's space-separated form previously ignored a
+// failed strconv.Atoi and silently left waitSec at 0 while consuming "-v" as
+// though it were the timeout value, so -v/--verbose silently never took
+// effect. nextNCArg must now refuse to consume "-v" and error instead.
+func TestNcWaitFlagRejectsSwallowingNextFlag(t *testing.T) {
+	_, _, err := runNcCmdFull([]string{"-w", "-v", "127.0.0.1", "1"})
+	if err == nil {
+		t.Fatal("nc -w -v host port = nil error, want an error instead of silently dropping -v")
+	}
+	if !strings.Contains(err.Error(), "-w") {
+		t.Fatalf("expected error to name -w as missing its value, got %v", err)
 	}
 }

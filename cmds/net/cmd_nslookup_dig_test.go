@@ -433,6 +433,18 @@ func TestDigLocalhost(t *testing.T) {
 	}
 }
 
+// TestDigTypeFlagRejectsSwallowingNextFlag is a regression test for
+// `dig -t -h example.com`: -t (query type) previously bound queryType to the
+// literal string "-h", silently dropping -h/--help. The guard must now error
+// before attempting any DNS lookup.
+func TestDigTypeFlagRejectsSwallowingNextFlag(t *testing.T) {
+	if _, err := runDigCmd([]string{"-t", "-h", "example.com"}); err == nil {
+		t.Fatal("dig -t -h example.com = nil error, want an error instead of silently dropping -h")
+	} else if !strings.Contains(err.Error(), "-t") {
+		t.Fatalf("expected error to name -t as missing its value, got %v", err)
+	}
+}
+
 func TestDigShortLocalhost(t *testing.T) {
 	// Test dig +short for localhost
 	output, err := runDigCmd([]string{"+short", "localhost"})

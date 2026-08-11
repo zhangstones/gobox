@@ -35,6 +35,52 @@ func TestKillDryRunMatchesProcess(t *testing.T) {
 	}
 }
 
+// TestKillCmdDryRunAfterFullMatchFlagIsRejectedNotSwallowed is a regression
+// test for the actual reported vulnerable ordering: `kill -f --dry-run
+// PATTERN` (dry-run AFTER -f, not before). Every other dry-run test in this
+// file puts --dry-run first, which never exercised the bug. Before the fix,
+// -f's flag.String greedily consumed "--dry-run" as the match pattern,
+// leaving dryRun at its false default and matching processes by the literal
+// string "--dry-run" instead -- so this must now fail to parse and, above
+// all, must never reach signalMatches (verified by overriding killSignal so
+// any real signal call fails the test instead of silently succeeding).
+func TestKillCmdDryRunAfterFullMatchFlagIsRejectedNotSwallowed(t *testing.T) {
+	origKill := killSignal
+	defer func() { killSignal = origKill }()
+	killSignal = func(pid int, sig syscall.Signal) error {
+		t.Fatalf("kill must not signal pid %d: -f --dry-run should have failed to parse before matching anything", pid)
+		return nil
+	}
+
+	err := KillCmd([]string{"-f", "--dry-run", "sleep 999999"})
+	if err == nil {
+		t.Fatal("KillCmd([-f --dry-run PATTERN]) = nil error, want an error instead of silently disabling --dry-run")
+	}
+	if !strings.Contains(err.Error(), "-f") {
+		t.Fatalf("expected error to name -f as missing its value, got %v", err)
+	}
+}
+
+// TestKillCmdDryRunAfterExactMatchFlagIsRejected is the -x (exact command
+// name match) counterpart to the -f case above; -x is a flag.String value
+// flag with the identical swallowing exposure.
+func TestKillCmdDryRunAfterExactMatchFlagIsRejected(t *testing.T) {
+	origKill := killSignal
+	defer func() { killSignal = origKill }()
+	killSignal = func(pid int, sig syscall.Signal) error {
+		t.Fatalf("kill must not signal pid %d: -x --dry-run should have failed to parse before matching anything", pid)
+		return nil
+	}
+
+	err := KillCmd([]string{"-x", "--dry-run", "sleep"})
+	if err == nil {
+		t.Fatal("KillCmd([-x --dry-run PATTERN]) = nil error, want an error instead of silently disabling --dry-run")
+	}
+	if !strings.Contains(err.Error(), "-x") {
+		t.Fatalf("expected error to name -x as missing its value, got %v", err)
+	}
+}
+
 func TestKillCmdHelpUsesGroupedSections(t *testing.T) {
 	out, err := captureProcOutput(t, func() error {
 		return KillCmd([]string{"--help"})
