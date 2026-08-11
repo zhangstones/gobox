@@ -573,6 +573,7 @@
 | `gobox kill -l, --list [SIGNAL]` | `kill -l` | ✅ 常用一致 | 列出完整 64 个 Linux 信号（含实时信号），5 列编号表格与 GNU kill -l 输出一致 |
 | `gobox kill -s SIGNAL PID...` | `kill -s` | ✅ 一致 | 指定要发送的信号 |
 | `gobox kill -SIGNAL PID...` | `kill -SIGNAL` | ✅ 一致 | 使用短格式指定信号 |
+| `gobox kill -0 PID...` / `-s 0` / `-s EXIT` | `kill -0` | ✅ 一致 | 空信号（signal 0）：不发送真实信号，仅做进程存活/权限探测 |
 | `gobox kill -f PATTERN` | `pkill -f` | ⚠️ 部分一致 | 按完整命令行匹配进程；单个匹配失败时跳过继续处理（对齐 `pkill`），匹配范围仍为精简实现 |
 | `gobox kill -x PATTERN` | `pkill -x` | ⚠️ 部分一致 | 按进程名精确匹配 |
 | `gobox kill -P PPID` | `pkill -P` | ⚠️ 部分一致 | 匹配指定父进程下的子进程 |

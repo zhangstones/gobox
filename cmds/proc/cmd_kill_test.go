@@ -399,6 +399,61 @@ func TestKillCmdOptionsNonexistentPidReturnsESRCH(t *testing.T) {
 	}
 }
 
+// TestKillCmdSignalZeroExistenceCheck covers the `-0` null-signal idiom
+// (POSIX: "no actual signal is sent, but error checking is still
+// performed") used to probe whether a pid is alive. Signal 0 previously
+// wasn't in supportedSignals, so parseSignal rejected it with "unsupported
+// signal 0" even for a live pid.
+func TestKillCmdSignalZeroExistenceCheck(t *testing.T) {
+	if err := KillCmd([]string{"-0", strconv.Itoa(os.Getpid())}); err != nil {
+		t.Fatalf("kill -0 on live pid should succeed, got: %v", err)
+	}
+
+	pid := findUnusedPID(t)
+	err := KillCmd([]string{"-0", strconv.Itoa(pid)})
+	if err == nil {
+		t.Fatalf("expected an error for kill -0 on nonexistent pid %d, got success", pid)
+	}
+	if !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("expected ESRCH for kill -0 on nonexistent pid %d, got: %v", pid, err)
+	}
+}
+
+// TestKillCmdSignalZeroViaSOption covers `-s 0` and `-s EXIT`, the
+// long-form equivalents of `-0`.
+func TestKillCmdSignalZeroViaSOption(t *testing.T) {
+	if err := KillCmd([]string{"-s", "0", strconv.Itoa(os.Getpid())}); err != nil {
+		t.Fatalf("kill -s 0 on live pid should succeed, got: %v", err)
+	}
+	if err := KillCmd([]string{"-s", "EXIT", strconv.Itoa(os.Getpid())}); err != nil {
+		t.Fatalf("kill -s EXIT on live pid should succeed, got: %v", err)
+	}
+}
+
+// TestKillCmdListSignalZeroName covers `-l 0` / `-l EXIT`, matching GNU
+// kill's naming of the null signal as "EXIT".
+func TestKillCmdListSignalZeroName(t *testing.T) {
+	out, err := captureProcCmd(t, func() error {
+		return KillCmd([]string{"-l", "0"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "EXIT" {
+		t.Fatalf("unexpected signal-0 name output %q", out)
+	}
+
+	out, err = captureProcCmd(t, func() error {
+		return KillCmd([]string{"-l", "EXIT"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "0" {
+		t.Fatalf("unexpected EXIT signal number output %q", out)
+	}
+}
+
 func TestKillCmdOptionsMissingOperand(t *testing.T) {
 
 	if err := KillCmd(nil); err == nil {

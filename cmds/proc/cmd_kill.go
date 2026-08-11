@@ -309,6 +309,9 @@ func readProcMatch(pid int) (procMatch, error) {
 }
 
 func signalName(sig syscall.Signal) (string, bool) {
+	if sig == 0 {
+		return "EXIT", true
+	}
 	for _, spec := range supportedSignals {
 		if spec.sig == sig {
 			return spec.name, true

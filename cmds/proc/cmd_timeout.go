@@ -122,6 +122,11 @@ func parseDurationArg(s string) (time.Duration, error) {
 
 func parseSignal(s string) (os.Signal, error) {
 	s = strings.TrimPrefix(strings.ToUpper(s), "SIG")
+	if s == "0" || s == "EXIT" {
+		// Signal 0 is the POSIX "null signal": no signal is actually sent,
+		// but existence/permission checks still run (e.g. `kill -0 PID`).
+		return syscall.Signal(0), nil
+	}
 	for _, spec := range supportedSignals {
 		if s == spec.name || s == strconv.Itoa(int(spec.sig)) {
 			return spec.sig, nil

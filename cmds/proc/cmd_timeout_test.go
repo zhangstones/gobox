@@ -141,6 +141,23 @@ func TestTimeoutCmdOptionsUnsupportedSignal(t *testing.T) {
 
 }
 
+// TestTimeoutCmdOptionsSignalZeroAccepted covers `-s 0` / `-s EXIT` through
+// parseSignal, shared with cmd_kill.go. Signal 0 is the POSIX null signal:
+// it delivers nothing, so the child must survive past the timeout and only
+// die once -k's grace period elapses and a real SIGKILL is sent.
+func TestTimeoutCmdOptionsSignalZeroAccepted(t *testing.T) {
+
+	start := time.Now()
+	err := TimeoutCmd([]string{"-s", "0", "-k", "0.1s", "0.1s", "sh", "-c", "trap '' TERM; while true; do sleep 1; done"})
+	if exitErr, ok := err.(timeoutExitError); !ok || exitErr.ExitCode() != 137 {
+		t.Fatalf("expected timeout exit 137 (child only dies from the -k SIGKILL), got %T %v", err, err)
+	}
+	if elapsed := time.Since(start); elapsed < 180*time.Millisecond {
+		t.Fatalf("expected kill-after grace period, elapsed=%v", elapsed)
+	}
+
+}
+
 func TestTimeoutCmdOptionsMissingCommand(t *testing.T) {
 
 	if err := TimeoutCmd([]string{"1s"}); err == nil {
