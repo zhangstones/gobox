@@ -136,9 +136,11 @@ func md5sumStdin(tag, quiet bool) error {
 }
 
 func md5sumFiles(files []string, tag, quiet bool) error {
+	var hadErr bool
 	for _, file := range files {
 		f, err := os.Open(file)
 		if err != nil {
+			hadErr = true
 			if !quiet {
 				fmt.Fprintf(os.Stderr, "md5sum: %s: %v\n", file, err)
 			}
@@ -147,6 +149,7 @@ func md5sumFiles(files []string, tag, quiet bool) error {
 		hash, err := computeMD5(f)
 		f.Close()
 		if err != nil {
+			hadErr = true
 			if !quiet {
 				fmt.Fprintf(os.Stderr, "md5sum: %s: %v\n", file, err)
 			}
@@ -160,6 +163,9 @@ func md5sumFiles(files []string, tag, quiet bool) error {
 		} else {
 			fmt.Printf("%s  %s\n", hashStr, file)
 		}
+	}
+	if hadErr {
+		return md5sumExitError{code: 1}
 	}
 	return nil
 }

@@ -253,6 +253,24 @@ func TestNpCmdVerboseMode(t *testing.T) {
 	// May error but should produce output
 }
 
+func TestNpCmdTCPUnreachableHostNoSpuriousZeroProgressLine(t *testing.T) {
+	skipIfNotLinux(t)
+
+	// Regression: the periodic progress reporter used to print a transient
+	// "Sent=0 Received=0 Errors=0" line before the first (and only) probe
+	// against an unreachable host had finished its -W wait, since "sent" is
+	// only incremented once the dial attempt resolves. 10.255.255.1 is a
+	// non-routable address (used elsewhere in this suite the same way) that
+	// reliably blocks for the full wait instead of getting a quick refusal.
+	output, err := runNpCmd([]string{"--tcp", "-p", "80", "-c", "1", "-W", "2", "10.255.255.1"})
+	if err != nil {
+		t.Fatalf("unexpected error pinging an unreachable host: %v (output: %s)", err, output)
+	}
+	if strings.Contains(output, "Sent=0 Received=0 Errors=0") {
+		t.Fatalf("expected no spurious all-zero progress line, got: %s", output)
+	}
+}
+
 func TestNpCmdFloodMode(t *testing.T) {
 	skipIfNotLinux(t)
 

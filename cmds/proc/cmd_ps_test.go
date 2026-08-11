@@ -191,6 +191,60 @@ func TestNormalizePSArgsParsesBSDLettersIndividually(t *testing.T) {
 	}
 }
 
+func TestNormalizePSArgsPreservesFullFilterValueMadeOfBSDLetters(t *testing.T) {
+	args, bsdMode := normalizePSArgs([]string{"--full", "a"})
+	if len(args) != 2 || args[0] != "--full" || args[1] != "a" {
+		t.Fatalf("expected --full's value %q to be preserved verbatim, got normalized args: %v", "a", args)
+	}
+	if bsdMode.allUsers || bsdMode.includeNoTTY || bsdMode.userFormat {
+		t.Fatalf("expected --full's value not to be treated as a BSD mode word, got %+v", bsdMode)
+	}
+}
+
+func TestNormalizePSArgsPreservesCommFilterValueMadeOfBSDLetters(t *testing.T) {
+	args, bsdMode := normalizePSArgs([]string{"--comm", "aux"})
+	if len(args) != 2 || args[0] != "--comm" || args[1] != "aux" {
+		t.Fatalf("expected --comm's value %q to be preserved verbatim, got normalized args: %v", "aux", args)
+	}
+	if bsdMode.allUsers || bsdMode.includeNoTTY || bsdMode.userFormat {
+		t.Fatalf("expected --comm's value not to be treated as a BSD mode word, got %+v", bsdMode)
+	}
+}
+
+func TestPsCmdFullFilterValueMadeOfBSDLettersFiltersCorrectly(t *testing.T) {
+	// Regression: a --full value consisting only of the letters a/u/x must
+	// still be treated as the filter's value, not silently stripped as a
+	// BSD mode word (which would switch the command into "ps aux"-style
+	// column output instead of applying the pgrep-style filter).
+	output, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"--full", "a", "-n", "1", "-i", "1"})
+	})
+	if err != nil {
+		t.Fatalf("PsCmd failed for --full a: %v", err)
+	}
+	if strings.Contains(output, "USER") {
+		t.Fatalf("expected --full a to stay in pgrep-style filter mode, not fall back to BSD aux columns, got: %s", output)
+	}
+
+	// The check above only rules out the BSD-mode misparse; it would still
+	// pass if --full's value had instead been silently dropped/ignored
+	// (leaving PsCmd to just list all processes). Prove the value is
+	// genuinely wired through as the regex filter by using a pattern made
+	// only of a/u/x letters that is virtually guaranteed to match no real
+	// process's full command line, and confirming it actually filters
+	// everything out (header only, no data rows).
+	noMatchOutput, err := captureProcOutput(t, func() error {
+		return PsCmd([]string{"--full", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "-i", "1"})
+	})
+	if err != nil {
+		t.Fatalf("PsCmd failed for improbable --full pattern: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(noMatchOutput), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected --full with an unmatchable pattern to filter out all rows, got: %s", noMatchOutput)
+	}
+}
+
 func TestApplyPSBSDSelection(t *testing.T) {
 	currentUID := os.Geteuid()
 	otherUID := currentUID + 1

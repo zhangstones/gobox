@@ -118,6 +118,14 @@ doneFlags:
 	files := args[i:]
 	multipleFiles := len(files) > 1
 
+	// --retry only makes sense together with follow mode; GNU tail warns and
+	// ignores it otherwise. Without this, tailFileWithRetry would loop
+	// forever waiting for a file that will never be watched into existence.
+	if retry && !follow {
+		fmt.Fprintln(os.Stderr, "tail: warning: --retry ignored; --retry is useful only when following")
+		retry = false
+	}
+
 	// If no files, read from stdin (but not in follow mode)
 	if len(files) == 0 {
 		if follow {

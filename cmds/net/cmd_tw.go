@@ -77,6 +77,16 @@ doneFlags:
 		return nil
 	}
 
+	if !bench {
+		info, err := os.Stat(dir)
+		if err != nil {
+			return fmt.Errorf("invalid directory %s: %w", dir, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("invalid directory %s: not a directory", dir)
+		}
+	}
+
 	addr := fmt.Sprintf(":%d", port)
 
 	// Use a dedicated mux so repeated TwCmd calls do not mutate the global DefaultServeMux.

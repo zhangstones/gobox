@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // runDigCmd runs DigCmd with args and captures stdout and stderr
@@ -271,6 +272,60 @@ func TestDigNonexistentHost(t *testing.T) {
 	// Should still have dig header format
 	if !strings.Contains(result, "DiG") {
 		t.Errorf("Expected dig header format in output, got: %s", result)
+	}
+}
+
+func TestDigInvalidTypeFallsBackToACorrectlyLabeled(t *testing.T) {
+	// Regression: an invalid -t value used to silently fall back to querying
+	// A/AAAA records while still labeling the answer lines with the bogus
+	// type (e.g. "IN BOGUS"), which misrepresents what was actually looked
+	// up. It must now warn and label the fallback query as what it is: A.
+	output, err := runDigCmd([]string{"-t", "BOGUS", "example.com"})
+	if err != nil {
+		t.Fatalf("dig -t BOGUS example.com failed: %v", err)
+	}
+	warning := "ignoring invalid type BOGUS"
+	if !strings.Contains(output, warning) {
+		t.Fatalf("expected a warning about the invalid type, got: %s", output)
+	}
+	// Strip the warning line itself, then verify BOGUS does not also leak
+	// into the query/answer labels (e.g. "IN BOGUS").
+	rest := strings.Replace(output, warning, "", 1)
+	if strings.Contains(rest, "BOGUS") {
+		t.Fatalf("expected BOGUS to appear only in the warning, not in the query/answer labels, got: %s", output)
+	}
+	if !strings.Contains(output, "Query: example.com. 300 IN A") {
+		t.Fatalf("expected fallback query to be labeled IN A, got: %s", output)
+	}
+	if strings.Contains(output, "IN\tBOGUS") {
+		t.Fatalf("expected answer lines not to be mislabeled as IN BOGUS, got: %s", output)
+	}
+}
+
+func TestDigUnreachableServerDoesNotHangForever(t *testing.T) {
+	// Regression: querying an unreachable/silent DNS server (192.0.2.1 is
+	// TEST-NET-1, reserved by RFC 5737 and never routable) used to block
+	// forever since context.Background() carried no deadline. It must now
+	// give up within dnsQueryTimeout. The test itself is guarded by a hard
+	// deadline so a regression fails the test instead of hanging the suite.
+	done := make(chan struct{})
+	var output string
+	var err error
+	go func() {
+		output, err = runDigCmd([]string{"@192.0.2.1", "-t", "A", "example.com"})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if err != nil {
+			t.Fatalf("unexpected error from dig against an unreachable server: %v (output: %s)", err, output)
+		}
+		if !strings.Contains(output, "No answer") {
+			t.Fatalf("expected a 'No answer' timeout result, got: %s", output)
+		}
+	case <-time.After(dnsQueryTimeout + 10*time.Second):
+		t.Fatal("dig against an unreachable DNS server hung well past its bounded timeout")
 	}
 }
 

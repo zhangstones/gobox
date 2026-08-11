@@ -94,7 +94,7 @@ func parseDiffArgs(args []string) (diffOptions, []string, error) {
 		return opts, nil, fmt.Errorf("diff requires two operands")
 	}
 	if files[0] == "-" && files[1] == "-" {
-		return opts, nil, fmt.Errorf("diff: both operands cannot be standard input")
+		return opts, nil, fmt.Errorf("both operands cannot be standard input")
 	}
 	return opts, files, nil
 }
@@ -133,10 +133,10 @@ func diffPaths(a, b string, opts diffOptions) (bool, error) {
 	}
 	if infoA.IsDir() || infoB.IsDir() {
 		if !infoA.IsDir() || !infoB.IsDir() {
-			return false, fmt.Errorf("diff: file/directory comparisons require matching operand types")
+			return false, fmt.Errorf("file/directory comparisons require matching operand types")
 		}
 		if !opts.recursive {
-			return false, fmt.Errorf("diff: %s and %s are directories; use -r", a, b)
+			return false, fmt.Errorf("%s and %s are directories; use -r", a, b)
 		}
 		return diffDirectories(a, b, opts)
 	}
@@ -217,7 +217,7 @@ func diffDirectories(a, b string, opts diffOptions) (bool, error) {
 		}
 		if leftOK && rightOK && (left.IsDir() || right.IsDir()) {
 			if left.IsDir() != right.IsDir() {
-				return false, fmt.Errorf("diff: %s and %s are different file types", leftName, rightName)
+				return false, fmt.Errorf("%s and %s are different file types", leftName, rightName)
 			}
 			continue
 		}

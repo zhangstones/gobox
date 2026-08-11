@@ -106,8 +106,33 @@ func resolveReadpath(p string, readlinkMode, canonicalize, mustExist, allowMissi
 	if resolved, err := filepath.EvalSymlinks(p); err == nil {
 		return filepath.Abs(resolved)
 	}
-	parent := filepath.Dir(p)
-	base := filepath.Base(p)
+	// p itself may be a (possibly chained) dangling symlink: follow it to its
+	// ultimate target instead of reconstructing the link's own path, matching
+	// GNU realpath's default behavior of resolving symlinks even when the
+	// final target does not exist.
+	target := p
+	seen := make(map[string]bool)
+	for i := 0; i < 40; i++ {
+		cleaned := filepath.Clean(target)
+		if seen[cleaned] {
+			return "", fmt.Errorf("too many levels of symbolic links: %s", p)
+		}
+		seen[cleaned] = true
+		info, lerr := os.Lstat(target)
+		if lerr != nil || info.Mode()&os.ModeSymlink == 0 {
+			break
+		}
+		link, rerr := os.Readlink(target)
+		if rerr != nil {
+			break
+		}
+		if !filepath.IsAbs(link) {
+			link = filepath.Join(filepath.Dir(target), link)
+		}
+		target = link
+	}
+	parent := filepath.Dir(target)
+	base := filepath.Base(target)
 	if parent == "." || parent == "" {
 		parent = "."
 	}

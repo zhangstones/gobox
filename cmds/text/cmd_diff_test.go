@@ -155,6 +155,34 @@ func TestDiffRecursiveNewFileSkipsMissingDirectoryEntries(t *testing.T) {
 	}
 }
 
+func TestDiffTwoDirectoriesWithoutRecursiveErrorHasNoDoublePrefix(t *testing.T) {
+	dir := t.TempDir()
+	left := filepath.Join(dir, "left")
+	right := filepath.Join(dir, "right")
+	if err := os.MkdirAll(left, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(right, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := captureTextCmd(t, "", func() error {
+		return DiffCmd([]string{left, right})
+	})
+	if err == nil {
+		t.Fatal("expected error comparing two directories without -r")
+	}
+	// DiffCmd's own error must not embed a "diff: " prefix itself, since the
+	// CLI dispatcher (main.go) already prepends "<cmd>: " to every returned
+	// error; embedding it here would double up into "diff: diff: ...".
+	if strings.HasPrefix(err.Error(), "diff: ") {
+		t.Fatalf("expected error without embedded %q prefix (dispatcher adds its own), got %q", "diff: ", err.Error())
+	}
+	if !strings.Contains(err.Error(), "are directories; use -r") {
+		t.Fatalf("expected directory-comparison guidance in error, got %q", err.Error())
+	}
+}
+
 func TestDiffStripTrailingCR(t *testing.T) {
 	dir := t.TempDir()
 	a := writeDiffTestFile(t, dir, "a", "one\r\ntwo\r\n")

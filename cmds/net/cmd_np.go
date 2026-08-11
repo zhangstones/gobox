@@ -790,8 +790,19 @@ func npProgressReporter(sent, received, errors *int64, opts *npOptions, stopChan
 			e := atomic.LoadInt64(errors)
 			if !opts.quiet {
 				if interactive {
+					// A live terminal overwrites this line in place each
+					// tick, so printing an all-zero line here is harmless
+					// and doubles as a "still probing" liveness indicator
+					// during a long -W wait.
 					fmt.Printf("\rSent=%d Received=%d Errors=%d", s, r, e)
-				} else if s != lastSent || r != lastReceived || e != lastErrors {
+				} else if (s != 0 || r != 0 || e != 0) && (s != lastSent || r != lastReceived || e != lastErrors) {
+					// sent is only incremented once a probe's dial/timeout
+					// has resolved, so an all-zero tick means no probe has
+					// completed yet. Unlike the interactive redraw, a
+					// non-interactive run appends a new line per tick, so
+					// printing that transient "Sent=0 Received=0 Errors=0"
+					// line would persist as pure noise instead of real
+					// progress — skip it here specifically.
 					fmt.Printf("Sent=%d Received=%d Errors=%d\n", s, r, e)
 				}
 			}

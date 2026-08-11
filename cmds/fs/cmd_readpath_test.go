@@ -91,6 +91,70 @@ func TestReadpathCmdOptionsCanonicalizeExistingSymlink(t *testing.T) {
 
 }
 
+func TestReadpathCmdOptionsCanonicalizeDanglingSymlinkFollowsTarget(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "broken")
+	target := filepath.Join(dir, "nonexistent-target")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := captureFsCmd(t, func() error {
+		return ReadpathCmd([]string{"-f", link})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != target {
+		t.Fatalf("expected dangling symlink to resolve to its target %q, got %q", target, out)
+	}
+}
+
+func TestReadpathCmdOptionsCanonicalizeChainedDanglingSymlinkFollowsFinalTarget(t *testing.T) {
+	dir := t.TempDir()
+	link1 := filepath.Join(dir, "link1")
+	link2 := filepath.Join(dir, "link2")
+	target := filepath.Join(dir, "nonexistent-target")
+	if err := os.Symlink(target, link2); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(link2, link1); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := captureFsCmd(t, func() error {
+		return ReadpathCmd([]string{"-f", link1})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != target {
+		t.Fatalf("expected chained dangling symlink to resolve to final target %q, got %q", target, out)
+	}
+}
+
+func TestReadpathCmdOptionsCanonicalizeSymlinkCycleErrors(t *testing.T) {
+	dir := t.TempDir()
+	linkA := filepath.Join(dir, "cycleA")
+	linkB := filepath.Join(dir, "cycleB")
+	if err := os.Symlink(linkB, linkA); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(linkA, linkB); err != nil {
+		t.Fatal(err)
+	}
+
+	_, errOut, err := captureFsCmdFull(t, func() error {
+		return ReadpathCmd([]string{"-f", linkA})
+	})
+	if err == nil {
+		t.Fatal("expected an error resolving a symlink cycle, got nil")
+	}
+	if !strings.Contains(errOut, "too many levels of symbolic links") {
+		t.Fatalf("expected an ELOOP-style diagnostic on stderr, got %q", errOut)
+	}
+}
+
 func TestReadpathCmdOptionsCanonicalizeMissingFinalComponent(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "target")

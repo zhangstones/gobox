@@ -287,6 +287,22 @@ func TestTailRetryFlag(t *testing.T) {
 	}
 }
 
+func TestTailRetryWithoutFollowOnMissingFileDoesNotHang(t *testing.T) {
+	tmpDir := t.TempDir()
+	missing := filepath.Join(tmpDir, "does-not-exist.txt")
+
+	// Regression: --retry without -f used to loop forever waiting for a file
+	// that will never be watched into existence. It must instead behave like
+	// GNU tail: ignore --retry and fail immediately.
+	_, err := runTailCmdWithTimeout([]string{"--retry", missing}, 2*time.Second)
+	if err == context.DeadlineExceeded {
+		t.Fatal("tail --retry without -f hung on a missing file instead of returning promptly")
+	}
+	if err == nil {
+		t.Fatal("expected an error for a missing file")
+	}
+}
+
 // ============== -q FLAG TESTS (QUIET MODE) ==============
 
 func TestTailQuietMode(t *testing.T) {

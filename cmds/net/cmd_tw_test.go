@@ -154,6 +154,40 @@ func TestTwCmdStaticServerServesConfiguredDirectory(t *testing.T) {
 	}
 }
 
+// TestTwCmdRejectsNonexistentDirectoryAtStartup is a regression test: -d
+// pointing at a directory that does not exist used to be accepted silently,
+// starting a server that returned a misleading empty "Directory listing"
+// for every request instead of failing fast with a clear error.
+func TestTwCmdRejectsNonexistentDirectoryAtStartup(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "does-not-exist")
+	port := freeTCPPort(t)
+
+	err := TwCmd([]string{"-p", strconv.Itoa(port), "-d", missing})
+	if err == nil {
+		t.Fatal("expected TwCmd to fail for a nonexistent -d directory")
+	}
+	if !strings.Contains(err.Error(), missing) {
+		t.Fatalf("expected error to mention the missing directory %q, got: %v", missing, err)
+	}
+}
+
+// TestTwCmdRejectsFileAsDirectory is a regression companion: -d pointing at
+// a regular file (not a directory) must also be rejected up front.
+func TestTwCmdRejectsFileAsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "not-a-dir.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	port := freeTCPPort(t)
+
+	err := TwCmd([]string{"-p", strconv.Itoa(port), "-d", file})
+	if err == nil {
+		t.Fatal("expected TwCmd to fail when -d points at a regular file")
+	}
+}
+
 // TestTwReuseStaticModeLogsServerNotBenchmark is a regression test: the
 // -r/--reuse startup log unconditionally said "starting benchmark server"
 // even in plain static-file mode (no --bench). It must describe the actual

@@ -101,6 +101,10 @@ func runDNSLookup(progName string, args []string) error {
 	if queryType == "" {
 		queryType = "A"
 	}
+	if !isSupportedDNSQueryType(queryType) {
+		fmt.Fprintf(os.Stderr, "Warning, ignoring invalid type %s\n", strings.ToUpper(queryType))
+		queryType = "A"
+	}
 
 	// Default DNS server
 	if dnsServer == "" {
@@ -121,6 +125,18 @@ func runDNSLookup(progName string, args []string) error {
 	return digFullOutput(host, queryType, dnsServer, useTCP)
 }
 
+// isSupportedDNSQueryType reports whether typ is one of the record types
+// gobox actually knows how to query. Anything else (e.g. a typo like
+// "BOGUS") must not be silently queried and mislabeled as if it were valid.
+func isSupportedDNSQueryType(typ string) bool {
+	switch strings.ToUpper(typ) {
+	case "A", "AAAA", "TXT", "CNAME", "NS", "MX", "SRV", "PTR":
+		return true
+	default:
+		return false
+	}
+}
+
 func digUsage(w io.Writer, progName string) {
 	fmt.Fprintf(w, "Usage: gobox %s [@DNS_SERVER] HOST [DNS_SERVER] [OPTIONS]\n", progName)
 	fmt.Fprintln(w, "DNS lookup utility")
@@ -139,6 +155,18 @@ func digUsage(w io.Writer, progName string) {
 	fmt.Fprintf(w, "  gobox %s -t MX example.com\n", progName)
 	fmt.Fprintf(w, "  gobox %s +short example.com\n", progName)
 	fmt.Fprintf(w, "  gobox %s +noall +answer example.com\n", progName)
+}
+
+// dnsQueryTimeout bounds how long a single DNS exchange may wait for a
+// response. Without it, a query against an unreachable/silent server (e.g.
+// UDP to a dead host, where dial succeeds instantly but no reply ever
+// arrives) blocks forever, since net.Resolver honors no deadline of its own.
+// GNU dig gives up after ~15s (5s timeout x 3 tries by default); this
+// mirrors that upper bound with a single bounded context.
+const dnsQueryTimeout = 15 * time.Second
+
+func dnsQueryContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), dnsQueryTimeout)
 }
 
 func doDNSQuery(host, queryType, dnsServer string) error {
@@ -190,7 +218,9 @@ func doDNSQueryWithResolver(host, queryType string, resolver *net.Resolver) erro
 }
 
 func lookupA(host string, resolver *net.Resolver) error {
-	ips, err := resolver.LookupHost(context.Background(), host)
+	ctx, cancel := dnsQueryContext()
+	defer cancel()
+	ips, err := resolver.LookupHost(ctx, host)
 	if err != nil {
 		// Check if it's a DNS error or no such host
 		if _, ok := err.(*net.DNSError); ok {
@@ -214,7 +244,9 @@ func lookupA(host string, resolver *net.Resolver) error {
 }
 
 func lookupAAAA(host string, resolver *net.Resolver) error {
-	addrs, err := resolver.LookupHost(context.Background(), host)
+	ctx, cancel := dnsQueryContext()
+	defer cancel()
+	addrs, err := resolver.LookupHost(ctx, host)
 	if err != nil {
 		if _, ok := err.(*net.DNSError); ok {
 			fmt.Printf("** server can't find %s: NXDOMAIN\n", host)
@@ -239,7 +271,9 @@ func lookupAAAA(host string, resolver *net.Resolver) error {
 }
 
 func lookupTXT(host string, resolver *net.Resolver) error {
-	txts, err := resolver.LookupTXT(context.Background(), host)
+	ctx, cancel := dnsQueryContext()
+	defer cancel()
+	txts, err := resolver.LookupTXT(ctx, host)
 	if err != nil {
 		if _, ok := err.(*net.DNSError); ok {
 			fmt.Printf("** server can't find %s: NXDOMAIN\n", host)
@@ -255,7 +289,9 @@ func lookupTXT(host string, resolver *net.Resolver) error {
 }
 
 func lookupCNAME(host string, resolver *net.Resolver) error {
-	cname, err := resolver.LookupCNAME(context.Background(), host)
+	ctx, cancel := dnsQueryContext()
+	defer cancel()
+	cname, err := resolver.LookupCNAME(ctx, host)
 	if err != nil {
 		if _, ok := err.(*net.DNSError); ok {
 			fmt.Printf("** server can't find %s: NXDOMAIN\n", host)
@@ -272,7 +308,9 @@ func lookupCNAME(host string, resolver *net.Resolver) error {
 }
 
 func lookupNS(host string, resolver *net.Resolver) error {
-	nameservers, err := resolver.LookupNS(context.Background(), host)
+	ctx, cancel := dnsQueryContext()
+	defer cancel()
+	nameservers, err := resolver.LookupNS(ctx, host)
 	if err != nil {
 		if _, ok := err.(*net.DNSError); ok {
 			fmt.Printf("** server can't find %s: NXDOMAIN\n", host)
@@ -288,7 +326,9 @@ func lookupNS(host string, resolver *net.Resolver) error {
 }
 
 func lookupMX(host string, resolver *net.Resolver) error {
-	mxs, err := resolver.LookupMX(context.Background(), host)
+	ctx, cancel := dnsQueryContext()
+	defer cancel()
+	mxs, err := resolver.LookupMX(ctx, host)
 	if err != nil {
 		if _, ok := err.(*net.DNSError); ok {
 			fmt.Printf("** server can't find %s: NXDOMAIN\n", host)
@@ -306,7 +346,9 @@ func lookupMX(host string, resolver *net.Resolver) error {
 func lookupSRV(host string, resolver *net.Resolver) error {
 	// SRV record format: _service._proto.name
 	// Try to parse and lookup SRV record
-	_, addrs, err := resolver.LookupSRV(context.Background(), "", "", host)
+	ctx, cancel := dnsQueryContext()
+	defer cancel()
+	_, addrs, err := resolver.LookupSRV(ctx, "", "", host)
 	if err != nil {
 		if _, ok := err.(*net.DNSError); ok {
 			fmt.Printf("** server can't find %s: NXDOMAIN\n", host)
@@ -323,7 +365,9 @@ func lookupSRV(host string, resolver *net.Resolver) error {
 
 func lookupPTR(host string, resolver *net.Resolver) error {
 	// Reverse lookup
-	names, err := resolver.LookupAddr(context.Background(), host)
+	ctx, cancel := dnsQueryContext()
+	defer cancel()
+	names, err := resolver.LookupAddr(ctx, host)
 	if err != nil {
 		if _, ok := err.(*net.DNSError); ok {
 			fmt.Printf("** server can't find %s: NXDOMAIN\n", host)
@@ -339,10 +383,12 @@ func lookupPTR(host string, resolver *net.Resolver) error {
 func digShortOutput(host, queryType, dnsServer string, useTCP bool) error {
 	queryType = strings.ToUpper(queryType)
 	resolver := newResolver(dnsServer, useTCP)
+	ctx, cancel := dnsQueryContext()
+	defer cancel()
 
 	switch queryType {
 	case "A":
-		ips, err := resolver.LookupHost(context.Background(), host)
+		ips, err := resolver.LookupHost(ctx, host)
 		if err != nil {
 			return nil
 		}
@@ -352,7 +398,7 @@ func digShortOutput(host, queryType, dnsServer string, useTCP bool) error {
 			}
 		}
 	case "AAAA":
-		addrs, err := resolver.LookupHost(context.Background(), host)
+		addrs, err := resolver.LookupHost(ctx, host)
 		if err != nil {
 			return nil
 		}
@@ -363,7 +409,7 @@ func digShortOutput(host, queryType, dnsServer string, useTCP bool) error {
 			}
 		}
 	case "TXT":
-		txts, err := resolver.LookupTXT(context.Background(), host)
+		txts, err := resolver.LookupTXT(ctx, host)
 		if err != nil {
 			return nil
 		}
@@ -371,13 +417,13 @@ func digShortOutput(host, queryType, dnsServer string, useTCP bool) error {
 			fmt.Println(txt)
 		}
 	case "CNAME":
-		cname, err := resolver.LookupCNAME(context.Background(), host)
+		cname, err := resolver.LookupCNAME(ctx, host)
 		if err != nil || cnameIsSelf(host, cname) {
 			return nil
 		}
 		fmt.Println(cname)
 	case "NS":
-		nss, err := resolver.LookupNS(context.Background(), host)
+		nss, err := resolver.LookupNS(ctx, host)
 		if err != nil {
 			return nil
 		}
@@ -385,7 +431,7 @@ func digShortOutput(host, queryType, dnsServer string, useTCP bool) error {
 			fmt.Println(ns.Host)
 		}
 	case "MX":
-		mxs, err := resolver.LookupMX(context.Background(), host)
+		mxs, err := resolver.LookupMX(ctx, host)
 		if err != nil {
 			return nil
 		}
@@ -393,7 +439,7 @@ func digShortOutput(host, queryType, dnsServer string, useTCP bool) error {
 			fmt.Printf("%d %s\n", mx.Pref, mx.Host)
 		}
 	case "SRV":
-		_, addrs, err := resolver.LookupSRV(context.Background(), "", "", host)
+		_, addrs, err := resolver.LookupSRV(ctx, "", "", host)
 		if err != nil {
 			return nil
 		}
@@ -401,7 +447,7 @@ func digShortOutput(host, queryType, dnsServer string, useTCP bool) error {
 			fmt.Printf("%d %d %d %s\n", srv.Priority, srv.Weight, srv.Port, srv.Target)
 		}
 	default:
-		ips, err := resolver.LookupHost(context.Background(), host)
+		ips, err := resolver.LookupHost(ctx, host)
 		if err != nil {
 			return nil
 		}
@@ -416,11 +462,13 @@ func digShortOutput(host, queryType, dnsServer string, useTCP bool) error {
 func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 	queryType = strings.ToUpper(queryType)
 	resolver := newResolver(dnsServer, useTCP)
+	ctx, cancel := dnsQueryContext()
+	defer cancel()
 
 	fmt.Printf(";; ANSWER SECTION:\n")
 	switch queryType {
 	case "A":
-		ips, err := resolver.LookupHost(context.Background(), host)
+		ips, err := resolver.LookupHost(ctx, host)
 		if err != nil {
 			fmt.Printf("%s. IN A\n", host)
 			return nil
@@ -431,7 +479,7 @@ func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 			}
 		}
 	case "AAAA":
-		addrs, err := resolver.LookupHost(context.Background(), host)
+		addrs, err := resolver.LookupHost(ctx, host)
 		if err != nil {
 			fmt.Printf("%s. IN AAAA\n", host)
 			return nil
@@ -443,7 +491,7 @@ func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 			}
 		}
 	case "TXT":
-		txts, err := resolver.LookupTXT(context.Background(), host)
+		txts, err := resolver.LookupTXT(ctx, host)
 		if err != nil {
 			fmt.Printf("%s. IN TXT\n", host)
 			return nil
@@ -452,14 +500,14 @@ func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 			fmt.Printf("%s.\t\t%d\tIN\tTXT\t\"%s\"\n", host, digDefaultTTL, txt)
 		}
 	case "CNAME":
-		cname, err := resolver.LookupCNAME(context.Background(), host)
+		cname, err := resolver.LookupCNAME(ctx, host)
 		if err != nil || cnameIsSelf(host, cname) {
 			fmt.Printf("%s. IN CNAME\n", host)
 			return nil
 		}
 		fmt.Printf("%s.\t\t%d\tIN\tCNAME\t%s\n", host, digDefaultTTL, cname)
 	case "NS":
-		nss, err := resolver.LookupNS(context.Background(), host)
+		nss, err := resolver.LookupNS(ctx, host)
 		if err != nil {
 			fmt.Printf("%s. IN NS\n", host)
 			return nil
@@ -468,7 +516,7 @@ func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 			fmt.Printf("%s.\t\t%d\tIN\tNS\t%s\n", host, digDefaultTTL, ns.Host)
 		}
 	case "MX":
-		mxs, err := resolver.LookupMX(context.Background(), host)
+		mxs, err := resolver.LookupMX(ctx, host)
 		if err != nil {
 			fmt.Printf("%s. IN MX\n", host)
 			return nil
@@ -477,7 +525,7 @@ func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 			fmt.Printf("%s.\t\t%d\tIN\tMX\t%d %s\n", host, digDefaultTTL, mx.Pref, mx.Host)
 		}
 	case "SRV":
-		_, addrs, err := resolver.LookupSRV(context.Background(), "", "", host)
+		_, addrs, err := resolver.LookupSRV(ctx, "", "", host)
 		if err != nil {
 			fmt.Printf("%s. IN SRV\n", host)
 			return nil
@@ -486,7 +534,7 @@ func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 			fmt.Printf("%s.\t\t%d\tIN\tSRV\t%d %d %d %s\n", host, digDefaultTTL, srv.Priority, srv.Weight, srv.Port, srv.Target)
 		}
 	default:
-		ips, err := resolver.LookupHost(context.Background(), host)
+		ips, err := resolver.LookupHost(ctx, host)
 		if err != nil {
 			fmt.Printf("%s. IN A\n", host)
 			return nil
@@ -502,6 +550,8 @@ func digAnswerOnly(host, queryType, dnsServer string, useTCP bool) error {
 func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 	queryType = strings.ToUpper(queryType)
 	resolver := newResolver(dnsServer, useTCP)
+	ctx, cancel := dnsQueryContext()
+	defer cancel()
 
 	// Header
 	fmt.Printf("; <<>> DiG 9.18.0 <<>> %s %s @%s\n", queryType, host, dnsServer)
@@ -521,7 +571,7 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 	var queryErr error
 	switch queryType {
 	case "A":
-		ips, err := resolver.LookupHost(context.Background(), host)
+		ips, err := resolver.LookupHost(ctx, host)
 		queryErr = err
 		if err == nil {
 			for _, ip := range ips {
@@ -532,7 +582,7 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 			}
 		}
 	case "AAAA":
-		addrs, err := resolver.LookupHost(context.Background(), host)
+		addrs, err := resolver.LookupHost(ctx, host)
 		queryErr = err
 		if err == nil {
 			for _, addr := range addrs {
@@ -544,7 +594,7 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 			}
 		}
 	case "TXT":
-		txts, err := resolver.LookupTXT(context.Background(), host)
+		txts, err := resolver.LookupTXT(ctx, host)
 		queryErr = err
 		if err == nil {
 			for _, txt := range txts {
@@ -553,14 +603,14 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 			}
 		}
 	case "CNAME":
-		cname, err := resolver.LookupCNAME(context.Background(), host)
+		cname, err := resolver.LookupCNAME(ctx, host)
 		queryErr = err
 		if err == nil && !cnameIsSelf(host, cname) {
 			fmt.Printf("%s.\t\t%d\tIN\tCNAME\t%s\n", host, digDefaultTTL, cname)
 			hasAnswer = true
 		}
 	case "NS":
-		nss, err := resolver.LookupNS(context.Background(), host)
+		nss, err := resolver.LookupNS(ctx, host)
 		queryErr = err
 		if err == nil {
 			for _, ns := range nss {
@@ -569,7 +619,7 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 			}
 		}
 	case "MX":
-		mxs, err := resolver.LookupMX(context.Background(), host)
+		mxs, err := resolver.LookupMX(ctx, host)
 		queryErr = err
 		if err == nil {
 			for _, mx := range mxs {
@@ -578,7 +628,7 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 			}
 		}
 	case "SRV":
-		_, addrs, err := resolver.LookupSRV(context.Background(), "", "", host)
+		_, addrs, err := resolver.LookupSRV(ctx, "", "", host)
 		queryErr = err
 		if err == nil {
 			for _, srv := range addrs {
@@ -587,7 +637,7 @@ func digFullOutput(host, queryType, dnsServer string, useTCP bool) error {
 			}
 		}
 	default:
-		ips, err := resolver.LookupHost(context.Background(), host)
+		ips, err := resolver.LookupHost(ctx, host)
 		queryErr = err
 		if err == nil {
 			for _, ip := range ips {

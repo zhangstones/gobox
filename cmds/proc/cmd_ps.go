@@ -303,12 +303,31 @@ func printPSUsage() {
 	fmt.Fprintln(os.Stderr, "  ps aux            BSD-style process table with user-oriented columns")
 }
 
+// psValueFlags lists ps flags that consume the next token as their value.
+// A bare word immediately following one of these must never be reinterpreted
+// as a BSD-style mode word (e.g. "--full a" or "--comm aux" would otherwise
+// have their value "a"/"aux" mistaken for BSD "a"/"aux" mode flags, since
+// both are strings made only of the letters a/u/x).
+var psValueFlags = map[string]bool{
+	"-sort": true, "--sort": true,
+	"-o": true, "--o": true,
+	"-u": true, "--u": true,
+	"-p": true, "--p": true,
+	"-C": true, "--C": true,
+	"-maxcmd": true, "--maxcmd": true,
+	"-n": true, "--n": true,
+	"-i": true, "--i": true,
+	"-full": true, "--full": true,
+	"-comm": true, "--comm": true,
+}
+
 func normalizePSArgs(args []string) ([]string, psBSDMode) {
 	out := make([]string, 0, len(args))
 	mode := psBSDMode{}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		if !strings.HasPrefix(arg, "-") && isBSDPSMode(arg) {
+		prevConsumesValue := i > 0 && psValueFlags[args[i-1]]
+		if !prevConsumesValue && !strings.HasPrefix(arg, "-") && isBSDPSMode(arg) {
 			if strings.ContainsRune(arg, 'a') {
 				mode.allUsers = true
 			}

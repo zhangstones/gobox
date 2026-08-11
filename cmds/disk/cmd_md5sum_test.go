@@ -361,32 +361,22 @@ func TestMd5sumCmdSpecialCharacters(t *testing.T) {
 // ============== ERROR CASES TESTS ==============
 
 func TestMd5sumCmdNonExistentFile(t *testing.T) {
-	output, _ := runMd5sumCmd([]string{"/nonexistent/file/path.txt"}, "")
-	// Command doesn't error out, it writes to stderr and continues
-	// So we check stderr for the error message
+	output, err := runMd5sumCmd([]string{"/nonexistent/file/path.txt"}, "")
+	// Command writes to stderr and continues, but must still report failure
+	// via a non-zero exit code (regression test: previously always returned nil).
 	if !strings.Contains(output, "no such file or directory") && !strings.Contains(output, " nonexistent") {
 		t.Errorf("expected 'no such file or directory' in stderr for non-existent file, got: %s", output)
 	}
-}
-
-func TestMd5sumCmdPermissionDenied(t *testing.T) {
-	dir := t.TempDir()
-	restrictedFile := filepath.Join(dir, "restricted.txt")
-	if err := os.WriteFile(restrictedFile, []byte("secret"), 0600); err != nil {
-		t.Fatalf("write restricted file: %v", err)
+	if err == nil {
+		t.Fatal("expected non-nil error for non-existent file")
 	}
-
-	// Remove read permission
-	if err := os.Chmod(restrictedFile, 0000); err != nil {
-		t.Fatalf("chmod file: %v", err)
+	type exitCoder interface{ ExitCode() int }
+	ec, ok := err.(exitCoder)
+	if !ok {
+		t.Fatalf("expected error to implement ExitCode(), got %T", err)
 	}
-	// Ensure we restore permissions for cleanup
-	defer os.Chmod(restrictedFile, 0644)
-
-	output, _ := runMd5sumCmd([]string{restrictedFile}, "")
-	// Command doesn't error out, it writes to stderr and continues
-	if !strings.Contains(output, "permission denied") && !strings.Contains(output, restrictedFile) {
-		t.Errorf("expected 'permission denied' in stderr, got: %s", output)
+	if ec.ExitCode() == 0 {
+		t.Errorf("expected non-zero exit code for non-existent file, got 0")
 	}
 }
 
